@@ -1,0 +1,25 @@
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+IMAGE   ?= tickets
+
+.PHONY: build test lint run run-stdio docker tidy
+
+build:
+	go build -ldflags="-X main.version=$(VERSION)" -o bin/server ./cmd/server
+
+test:
+	go test -race -count=1 ./...
+
+lint:
+	golangci-lint run ./...
+
+tidy:
+	go mod tidy
+
+run:
+	go run ./cmd/server
+
+run-stdio:
+	MCP_TRANSPORT=stdio go run ./cmd/server
+
+docker:
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .

@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+# Pin both images by digest (Renovate/Dependabot keep them current).
+FROM golang:{% .GoImage %} AS build
+WORKDIR /src
+ENV CGO_ENABLED=0 GOFLAGS=-trimpath
+# Private modules: set GOPRIVATE and pass credentials as a BuildKit secret,
+#   docker build --build-arg GOPRIVATE=github.com/your-org/* --secret id=netrc,src=$HOME/.netrc .
+# The secret is mounted for one step only and never stored in a layer.
+ARG GOPRIVATE
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=secret,id=netrc,target=/root/.netrc,required=false \
+    go mod download
+COPY . .
+ARG VERSION=dev
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w -X main.version=${VERSION}" -o /out/server ./cmd/server
+
+FROM {% .RuntimeImage %}
+COPY --from=build /out/server /server
+USER nonroot:nonroot
+EXPOSE 8080
+ENTRYPOINT ["/server"]
