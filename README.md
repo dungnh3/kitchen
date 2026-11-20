@@ -24,3 +24,6 @@ make tidy
 ```
 
 Use an uncommitted `go.work` to develop across the core module and submodules.
+
+Messaging (`pubsub`, `lease`): see [docs/design/messaging.md](docs/design/messaging.md).
+Set `KITCHEN_TEST_PG_DSN` to run the Postgres outbox tests.

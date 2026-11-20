@@ -174,7 +174,8 @@ shutdown (message nacked). goleak-verified.
   visibility for in-flight messages, batches deletes on Ack, Nack =
   `ChangeMessageVisibility(0)`, `DeliveryAttempt` = `ApproximateReceiveCount`,
   backoff on receive errors, empty bodies are delivered (not skipped). Tests:
-  `httptest` fake of the SQS JSON protocol.
+  an in-memory fake of the `sqs.API` interface (the subset of `*sqs.Client`
+  used) with visibility and FIFO-group semantics.
 - **memory**: Publisher + per-subscription Source with ack/nack/redelivery and
   per-key ordering identical to Pub/Sub ordered delivery.
 
@@ -281,7 +282,13 @@ decision below can be revisited.
 
 ## 9. Open questions
 
-- CI: submodules require the unpublished core module; `go mod tidy -diff`
-  in CI fails until the core is tagged (affects every area's submodules).
+- CI: submodules require the unpublished core module
+  (`github.com/dungnh3/kitchen v0.0.0-00010101000000-000000000000`); locally a
+  git-ignored `go.work` resolves it with
+  `go work edit -replace github.com/dungnh3/kitchen@v0.0.0-00010101000000-000000000000=./`.
+  `go mod tidy -diff` in CI fails for submodules until the core is tagged and
+  the requirement bumped (affects every area's submodules).
+- Postgres outbox tests run only when `KITCHEN_TEST_PG_DSN` is set; CI should
+  provide a Postgres service.
 - Should the SSE outbox (`sse` area) be replaced by `pubsub/outbox`? To agree
   with the SSE session.

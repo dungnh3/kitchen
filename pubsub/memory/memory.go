@@ -131,7 +131,7 @@ type Subscription struct {
 var _ pubsub.Source = (*Subscription)(nil)
 
 type entry struct {
-	msg      pubsub.Message
+	msg       pubsub.Message
 	attempts  int
 	out       bool
 	notBefore time.Time

@@ -154,13 +154,14 @@ func (e *Elector) leadOnce(ctx context.Context, l Lease, validFrom time.Time, le
 	defer cancel(nil)
 
 	done := make(chan error, 1)
+	held := l // l is reassigned by renewals below
 	go func() {
 		defer func() {
 			if p := recover(); p != nil {
 				done <- fmt.Errorf("lease: leader panic: %v", p)
 			}
 		}()
-		done <- lead(lctx, l)
+		done <- lead(lctx, held)
 	}()
 
 	expiry := time.NewTimer(time.Until(validFrom.Add(e.ttl - e.safety())))
