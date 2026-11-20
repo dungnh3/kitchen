@@ -1,7 +1,7 @@
 # Migration: messaging
 
-From `github.com/vulcanlabsvn/kitchen/{pubsub,syncmsg,syncbrokers,coordinators,scheduler,queue}`
-to `github.com/dungnh3/kitchen/{pubsub,lease}`. Design:
+From the old library's `kitchen/{pubsub,syncmsg,syncbrokers,coordinators,scheduler,queue}`
+packages to `github.com/dungnh3/kitchen/{pubsub,lease}`. Design:
 [docs/design/messaging.md](../design/messaging.md).
 
 This is a clean break: there are no compatibility shims. Handlers change shape
