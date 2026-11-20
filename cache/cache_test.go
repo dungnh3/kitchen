@@ -1,0 +1,341 @@
+package cache_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/goleak"
+
+	"github.com/dungnh3/kitchen/cache"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+type user struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func newRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+	t.Cleanup(func() { _ = rdb.Close() })
+	return mr, rdb
+}
+
+func newCache(t *testing.T, cfg cache.Config[user]) *cache.Cache[user] {
+	t.Helper()
+	c, err := cache.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.Close)
+	return c
+}
+
+func TestNewValidation(t *testing.T) {
+	_, rdb := newRedis(t)
+	bad := []cache.Config[user]{
+		{},
+		{Redis: rdb, TTL: time.Minute},
+		{Redis: rdb, Prefix: "u:"},
+		{Local: &cache.LocalConfig{MaxSize: 0, TTL: time.Second}},
+		{Local: &cache.LocalConfig{MaxSize: 1, TTL: time.Second}, NegativeTTL: -1},
+		{Local: &cache.LocalConfig{MaxSize: 1, TTL: time.Second}, Jitter: 1},
+	}
+	for i, cfg := range bad {
+		if c, err := cache.New(cfg); err == nil {
+			c.Close()
+			t.Errorf("case %d: want error", i)
+		}
+	}
+}
+
+func TestSetGetDeleteRedis(t *testing.T) {
+	mr, rdb := newRedis(t)
+	ctx := context.Background()
+	c := newCache(t, cache.Config[user]{Redis: rdb, Prefix: "u:", TTL: time.Minute})
+
+	if _, err := c.Get(ctx, "1"); !errors.Is(err, cache.ErrNotFound) {
+		t.Fatalf("Get miss err = %v", err)
+	}
+	if err := c.Set(ctx, "1", user{"1", "Ann"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Get(ctx, "1")
+	if err != nil || got.Name != "Ann" {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	ttl := mr.TTL("u:1")
+	if ttl < 54*time.Second || ttl > 66*time.Second {
+		t.Fatalf("TTL with jitter = %v", ttl)
+	}
+	raw, _ := mr.Get("u:1")
+	if raw[0] != 'v' {
+		t.Fatalf("raw payload %q", raw)
+	}
+	if err := c.Delete(ctx, "1", "2"); err != nil {
+		t.Fatal(err)
+	}
+	if mr.Exists("u:1") {
+		t.Fatal("key not deleted")
+	}
+}
+
+func TestGetOrLoadSingleflight(t *testing.T) {
+	_, rdb := newRedis(t)
+	ctx := context.Background()
+	c := newCache(t, cache.Config[user]{
+		Redis: rdb, Prefix: "u:", TTL: time.Minute,
+		Local: &cache.LocalConfig{MaxSize: 100, TTL: time.Minute},
+	})
+
+	var calls atomic.Int32
+	release := make(chan struct{})
+	load := func(_ context.Context, id string) (user, error) {
+		calls.Add(1)
+		<-release
+		return user{id, "Ann"}, nil
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 50)
+	for range 50 {
+		wg.Go(func() {
+			u, err := c.GetOrLoad(ctx, "1", load)
+			if err == nil && u.Name != "Ann" {
+				err = fmt.Errorf("got %+v", u)
+			}
+			errs <- err
+		})
+	}
+	time.Sleep(50 * time.Millisecond) // let goroutines join the flight
+	close(release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("loader calls = %d, want 1", n)
+	}
+	// Now served from cache.
+	if _, err := c.GetOrLoad(ctx, "1", load); err != nil || calls.Load() != 1 {
+		t.Fatalf("second GetOrLoad: %v, calls %d", err, calls.Load())
+	}
+}
+
+func TestGetOrLoadCallerCancelDoesNotCancelLoad(t *testing.T) {
+	c := newCache(t, cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}})
+	release := make(chan struct{})
+	loadErr := make(chan error, 1)
+	load := func(ctx context.Context, id string) (user, error) {
+		<-release
+		loadErr <- ctx.Err()
+		return user{id, "Ann"}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.GetOrLoad(ctx, "1", load); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want Canceled", err)
+	}
+	close(release)
+	if err := <-loadErr; err != nil {
+		t.Fatalf("loader ctx err = %v", err)
+	}
+	// The load still filled the cache.
+	deadline := time.Now().Add(time.Second)
+	for {
+		if u, err := c.Get(context.Background(), "1"); err == nil && u.Name == "Ann" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cache not filled by detached load")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestNegativeCaching(t *testing.T) {
+	mr, rdb := newRedis(t)
+	ctx := context.Background()
+	c := newCache(t, cache.Config[user]{Redis: rdb, Prefix: "u:", TTL: time.Minute, NegativeTTL: 10 * time.Second, Jitter: -1})
+	var calls int
+	load := func(context.Context, string) (user, error) {
+		calls++
+		return user{}, fmt.Errorf("repo: %w", cache.ErrNotFound)
+	}
+	for range 3 {
+		if _, err := c.GetOrLoad(ctx, "x", load); !errors.Is(err, cache.ErrNotFound) {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+	if ttl := mr.TTL("u:x"); ttl != 10*time.Second {
+		t.Fatalf("negative TTL = %v", ttl)
+	}
+	if _, err := c.Get(ctx, "x"); !errors.Is(err, cache.ErrNotFound) {
+		t.Fatalf("Get negative = %v", err)
+	}
+}
+
+func TestLoaderErrorNotCached(t *testing.T) {
+	c := newCache(t, cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}, NegativeTTL: time.Minute})
+	boom := errors.New("db down")
+	var calls int
+	load := func(context.Context, string) (user, error) { calls++; return user{}, boom }
+	for range 2 {
+		if _, err := c.GetOrLoad(context.Background(), "x", load); !errors.Is(err, boom) {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
+
+func TestFailOpenWhenRedisDown(t *testing.T) {
+	mr, rdb := newRedis(t)
+	ctx := context.Background()
+	c := newCache(t, cache.Config[user]{Redis: rdb, Prefix: "u:", TTL: time.Minute})
+	mr.Close()
+	u, err := c.GetOrLoad(ctx, "1", func(_ context.Context, id string) (user, error) { return user{id, "Ann"}, nil })
+	if err != nil || u.Name != "Ann" {
+		t.Fatalf("GetOrLoad with Redis down = %+v, %v", u, err)
+	}
+	if _, err := c.Get(ctx, "1"); err == nil || errors.Is(err, cache.ErrNotFound) {
+		t.Fatalf("Get with Redis down should surface the error, got %v", err)
+	}
+	m, err := c.GetOrLoadMany(ctx, []string{"1", "2"}, func(context.Context, []string) (map[string]user, error) {
+		return map[string]user{"1": {"1", "Ann"}, "2": {"2", "Bob"}}, nil
+	})
+	if err != nil || len(m) != 2 {
+		t.Fatalf("GetOrLoadMany with Redis down = %v, %v", m, err)
+	}
+}
+
+func TestL2PromotesToL1(t *testing.T) {
+	mr, rdb := newRedis(t)
+	ctx := context.Background()
+	c := newCache(t, cache.Config[user]{
+		Redis: rdb, Prefix: "u:", TTL: time.Minute,
+		Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute},
+	})
+	writer := newCache(t, cache.Config[user]{Redis: rdb, Prefix: "u:", TTL: time.Minute})
+	if err := writer.Set(ctx, "1", user{"1", "Ann"}); err != nil {
+		t.Fatal(err)
+	}
+	if u, err := c.Get(ctx, "1"); err != nil || u.Name != "Ann" {
+		t.Fatalf("Get = %+v, %v", u, err)
+	}
+	mr.FlushAll()
+	if u, err := c.Get(ctx, "1"); err != nil || u.Name != "Ann" {
+		t.Fatalf("Get from L1 = %+v, %v", u, err)
+	}
+}
+
+func TestManyAndPrefix(t *testing.T) {
+	mr, rdb := newRedis(t)
+	ctx := context.Background()
+	c := newCache(t, cache.Config[user]{
+		Redis: rdb, Prefix: "u:", TTL: time.Minute, NegativeTTL: time.Minute,
+		Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute},
+	})
+	_ = c.Set(ctx, "a1", user{"a1", "A1"})
+
+	var asked []string
+	got, err := c.GetOrLoadMany(ctx, []string{"a1", "a2", "b1", "a2"}, func(_ context.Context, ids []string) (map[string]user, error) {
+		asked = ids
+		return map[string]user{"a2": {"a2", "A2"}}, nil // b1 omitted → not found
+	})
+	if err != nil || len(got) != 2 || got["a2"].Name != "A2" {
+		t.Fatalf("GetOrLoadMany = %v, %v", got, err)
+	}
+	if len(asked) != 2 {
+		t.Fatalf("loader asked for %v", asked)
+	}
+	raw, _ := mr.Get("u:b1")
+	if raw != "n" {
+		t.Fatalf("b1 negative payload = %q", raw)
+	}
+
+	m, err := c.GetMany(ctx, []string{"a1", "a2", "b1", "zz"})
+	if err != nil || len(m) != 2 {
+		t.Fatalf("GetMany = %v, %v", m, err)
+	}
+
+	_ = mr.Set("u:a*literal", "v{}") // must not be matched by prefix "a" glob escape test below
+	n, err := c.DeleteByPrefix(ctx, "a")
+	if err != nil || n != 3 {
+		t.Fatalf("DeleteByPrefix = %d, %v (keys %v)", n, err, mr.Keys())
+	}
+	if !mr.Exists("u:b1") {
+		t.Fatal("b1 must survive")
+	}
+	if _, err := c.Get(ctx, "a1"); !errors.Is(err, cache.ErrNotFound) {
+		t.Fatalf("a1 still in L1: %v", err)
+	}
+	_ = mr.Set("u:x*y", "n")
+	_ = mr.Set("u:xzy", "n")
+	if n, _ := c.DeleteByPrefix(ctx, "x*"); n != 1 || !mr.Exists("u:xzy") {
+		t.Fatalf("glob not escaped: n=%d keys=%v", n, mr.Keys())
+	}
+}
+
+type upperCodec struct{}
+
+func (upperCodec) Marshal(v string) ([]byte, error)    { return []byte(v), nil }
+func (upperCodec) Unmarshal(b []byte, v *string) error { *v = string(b); return nil }
+
+func TestCustomCodecAndBadPayload(t *testing.T) {
+	mr, rdb := newRedis(t)
+	ctx := context.Background()
+	c, err := cache.New(cache.Config[string]{Redis: rdb, Prefix: "s:", TTL: time.Minute, Codec: upperCodec{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.Set(ctx, "k", "hello")
+	if raw, _ := mr.Get("s:k"); raw != "vhello" {
+		t.Fatalf("raw = %q", raw)
+	}
+	_ = mr.Set("s:bad", "?garbage")
+	if _, err := c.Get(ctx, "bad"); err == nil || errors.Is(err, cache.ErrNotFound) {
+		t.Fatalf("bad payload err = %v", err)
+	}
+}
+
+func ExampleCache_GetOrLoad() {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = rdb.Close() }()
+
+	users, err := cache.New(cache.Config[user]{
+		Redis:  rdb, // nil → in-process only
+		Prefix: "user:v1:",
+		TTL:    10 * time.Minute,
+		Local:  &cache.LocalConfig{MaxSize: 100_000, TTL: 30 * time.Second},
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer users.Close()
+
+	u, err := users.GetOrLoad(context.Background(), "42", func(_ context.Context, id string) (user, error) {
+		return user{ID: id, Name: "Ann"}, nil // e.g. repo.GetUser(ctx, id)
+	})
+	fmt.Println(u.Name, err)
+	// Output: Ann <nil>
+}
