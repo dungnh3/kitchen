@@ -1,5 +1,5 @@
 # Every directory containing a go.mod is a module (core + adapter submodules).
-MODULES := $(shell find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort)
+MODULES := $(shell find . -name go.mod -not -path './.git/*' -not -path './.claude/*' -exec dirname {} \; | sort)
 
 .PHONY: tidy test lint vet modules
 

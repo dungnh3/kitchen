@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - id: find
-        run: echo "list=$(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+        run: echo "list=$(find . -name go.mod -not -path './.git/*' -not -path './.claude/*' -exec dirname {} \; | sort | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
 
   test:
     needs: modules
