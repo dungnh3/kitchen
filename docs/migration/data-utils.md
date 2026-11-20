@@ -14,6 +14,60 @@ Module paths (D1):
 | `github.com/dungnh3/kitchen/migrate` (+ `cmd/kmigrate`) | submodule |
 | `github.com/dungnh3/kitchen/blob/gcs` | submodule |
 
+## Old bugs fixed (behaviour changes)
+
+Every defect listed in `docs/review/06-data-utils.md` is fixed or removed with
+the API that had it. None is carried over.
+
+| Old package | Old bug | Now |
+|---|---|---|
+| migrations | `Down` reverted **all** migrations (same as `DownAll`) | `Down(ctx, n)` reverts exactly n |
+| migrations | `Down`/`DownAll`/`Steps` closed the caller's DB pool and `log.Panicf`'d on close errors | `Close` never touches the caller's pool; errors are returned |
+| migrations | `Up` never closed the migrator and pinned a pool connection forever | `Close` releases it |
+| migrations | `file://` only, files had to be on disk at `/migrations` | any `fs.FS` (`embed.FS`) |
+| migrations | used `lib/pq`, broken go.mod (missing/indirect deps) | pgx/v5 driver, tidy go.mod |
+| migrations | `ErrNoChange` surfaced as an error, dirty state unclear | no-change is nil; dirty → `*DirtyError` |
+| cache | `RemoveByPattern` used blocking `KEYS` and ignored the iterator error | `DeleteByPrefix`: SCAN + UNLINK, glob-escaped, errors returned |
+| cache | only `*redis.Client` (no Cluster/Sentinel) | `redis.UniversalClient` |
+| cache | no stampede protection, no local tier | singleflight `GetOrLoad`, optional L1 |
+| cache | `HGetAll` re-encoded JSON lossily (numbers → float64) | removed (use go-redis hashes directly) |
+| cache | `Increase` set no TTL | removed (use go-redis `Incr` + `Expire`) |
+| cache | go-redis marked `// indirect`, no tests | tidy, miniredis + synctest tests |
+| storage | Postgres DSN hardcoded `sslmode=disable` | `SSLMode` default `prefer`, configurable |
+| storage | DSN hardcoded `TimeZone=Asia/Ho_Chi_Minh` | no default; `RuntimeParams["timezone"]` |
+| storage | password not escaped (spaces/quotes broke the DSN) | built with `url.UserPassword` |
+| storage | no pool settings | MaxConns, lifetimes, idle time, health check, timeouts |
+| storage | package named `config` in dir `storage`; `GormLogLevel` duplicated | packages `pg`, `pggorm`, `redisx` |
+| storage | MySQL `Loc *time.Location` not loadable from config; `GoogleAuthFile` ignored | MySQL removed |
+| uploader | V1 `CreateFileUploadURL` ignored the per-file size limit | `PostPolicyOptions.MaxBytes` per call, default from config |
+| uploader | V1 constructor called `log.Fatal` | constructors return errors |
+| uploader | `DetectSourceCategory` compared prefixes backwards and depended on map order | `blob.Category` parses the MIME type |
+| uploader | object keys used `filepath.Join` (backslashes on Windows) | `path.Join` |
+| uploader | CDN URL built with `Sprintf`, no escaping | `blob.PublicURL` escapes each segment |
+| uploader | `UploadBytes` forced `ChunkSize=0`, disabling retries | `blob.Put` keeps the client's resumable default; `ChunkSize` is opt-in |
+| uploader | no `Close` for the client | `Close` closes the client created by `gcs.Open` |
+| uploader | `UploadStream` recovered panics and never closed/aborted the writer | `blob.Put` cancels and closes on error; no panic swallowing |
+| uploader | `pkg/errors`, no tests, no fake | stdlib errors, fake-gcs-server tests, `memblob` |
+| utils | `IsContains` used reflection + `DeepEqual` | `slices.Contains` |
+| utils | `Max`/`Min` panicked on empty input | removed; see table above |
+| utils | `UniqueArray` returned random order | `xslices.Uniq` keeps first-seen order |
+| utils | `Sum` accepted strings via `constraints.Ordered` | removed |
+| utils | `ChunkArray` actually meant "first N" | removed; slice expression |
+| utils | regexes recompiled on every call | removed with the VN helpers; `timex` uses no regex |
+| utils | `MustParseTime` ran all patterns without early return and hid errors | `timex.Parse` returns the first match or an error |
+| utils | `StartOfDay`/`StartOfMonth`/`EndOfMonth` forced UTC, dropping the location | `timex` keeps `t.Location()` |
+| utils | `EndOfDay` truncated to the second | last nanosecond of the day |
+| utils | `VietnamLocation` silently nil without tzdata | removed; `time.LoadLocation` returns the error |
+| utils | `ParseTemplate` used `html/template` for text (escaped output), sprig v2 `+incompatible` | removed |
+| parallel | dropped task errors, lost result order, deadlocked for n ≤ 0, ignored ctx, leaked goroutines | removed; `errgroup.SetLimit` |
+| crawl | no `context` | `Fetch(ctx, url)` |
+| crawl | no status or Content-Type check | `*StatusError`, `ErrNotHTML` |
+| crawl | unbounded body | `io.LimitReader` (2 MiB default) |
+| crawl | no User-Agent, no charset decoding | UA header; `x/net/html/charset` |
+| crawl | SSRF: LLM-supplied URLs could reach private/metadata addresses | dial-time guard after DNS and on redirects |
+| crawl | logo chosen by document order | fixed priority (og:image > twitter:image; apple-touch-icon > icon > /favicon.ico) |
+| crawl | skipped extensions returned an empty result with nil error | non-HTML → `ErrNotHTML` |
+
 ## storage → pg, pg/gorm, redisx
 
 | Old | New |
@@ -126,7 +180,7 @@ CDN URLs are escaped; `Close` closes the client created by `Open`; tests can use
 | `RemoveDuplicates(s)` | `xslices.Uniq(s)` |
 | `DiffMaps(a, b)` | `xmaps.DiffFunc(a, b, func(x, y any) bool { return reflect.DeepEqual(x, y) })`; `xmaps.Diff` for comparable values |
 | `IsContains(arr, v)` | `slices.Contains(arr, v)` |
-| `Max` / `Min` | `slices.Max` / `slices.Min` (still panic on empty) or builtin `max`/`min` |
+| `Max` / `Min` (panicked on an empty slice) | builtin `max`/`min` for fixed arguments; for slices check `len(s) > 0` before `slices.Max` / `slices.Min` (they also panic on empty) |
 | `Reverse` | `slices.Reverse` |
 | `Filter(s, pred)` | `slices.DeleteFunc(slices.Clone(s), not(pred))` or a loop |
 | `GetLastN(s, n)` | `s[max(0, len(s)-n):]` |

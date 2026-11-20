@@ -10,6 +10,7 @@
 package pg
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -124,16 +125,9 @@ func (cfg Config) connString() (string, error) {
 		u.User = url.UserPassword(cfg.User, cfg.Password) // escapes special characters
 	}
 	q := url.Values{}
-	q.Set("sslmode", cmpOr(cfg.SSLMode, "prefer"))
+	q.Set("sslmode", cmp.Or(cfg.SSLMode, "prefer"))
 	u.RawQuery = q.Encode()
 	return u.String(), nil
-}
-
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // ParseConfig builds a pgxpool.Config from cfg without instrumentation or

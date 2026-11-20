@@ -247,6 +247,30 @@ command reads the required version's go.mod even in workspace mode).
   unit tests on the address classifier.
 - `Example*` tests in every package.
 
+## Decisions taken by default (to review)
+
+DU1–DU14 above were chosen explicitly by the owner. The choices below were
+made during implementation under the owner's standing instruction to take the
+recommended / best system-and-security option without asking.
+
+| # | Decision | Alternatives | Pros | Cons |
+|---|---|---|---|---|
+| DD1 | `migrate.New` takes `*pgxpool.Pool` (wrapped with `stdlib.OpenDBFromPool`), not `*sql.DB` | accept `*sql.DB` | golang-migrate's pgx/v5 driver closes the `*sql.DB` it gets; wrapping guarantees the caller's pool survives | gorm-only callers must pass the pool (they have it via `pg.Open`) |
+| DD2 | No single-call "down all" in `migrate` | add `DownAll` | an accidental full drop needs an explicit count | dev resets need `Down(ctx, n)` |
+| DD3 | `cache` emits a metric counter but no spans | span per lookup | Redis spans already come from redisotel; no span noise on hot paths | L1 hits are not visible in traces |
+| DD4 | Cache Redis payload = 1-byte tag + codec bytes | plain JSON + separate negative marker key | one GET resolves value vs negative entry | not readable by old clients (new prefix needed) |
+| DD5 | `cache.Get` returns Redis errors (fail-closed); only `GetOrLoad`/`GetOrLoadMany` fail open | fail-open everywhere | caller of `Get` decides; no silent misses | callers must handle errors |
+| DD6 | Cache loader runs with `context.WithoutCancel(ctx)` | caller ctx | one cancelled caller cannot fail the shared flight | a hung loader is bounded only by its own timeouts |
+| DD7 | `webmeta` parses a truncated body instead of rejecting large pages | `ErrTooLarge` | metadata lives in `<head>`; big pages still work | none significant |
+| DD8 | `webmeta` blocks CGNAT, NAT64, 6to4, TEST-NETs and reserved ranges in addition to RFC 1918/loopback/link-local; forbids URL credentials; ignores proxies | only RFC 1918 + loopback | closes common SSRF bypasses | internal targets need `AllowPrivate` |
+| DD9 | `webmeta` with a custom `Transport` does not apply the guard | wrap the transport | no hidden dialer surprises | caller owns safety (documented) |
+| DD10 | `pg.Config.SSLMode` is an error when `URL` is also set | rewrite the URL | no ambiguous double source of truth | set `sslmode` inside URL |
+| DD11 | otelpgx with SQL text excluded from span attributes | include SQL | avoids leaking literals/PII into traces | less detail in traces |
+| DD12 | `pggorm` logs with parameterized queries by default | log full SQL with values | no PII in logs | `LogParameters: true` to debug |
+| DD13 | `blob/gcs` requires core `v0.1.0` (not a pseudo-version) | depend on an unpublished pseudo-version | matches D1 tagging | CI tidy for `blob/gcs` fails until core `v0.1.0` is tagged |
+| DD14 | `blob.ExtensionByType("image/jpeg")` = `.jpg` | `.jpeg` (old map) | conventional extension | object names differ from old keys |
+| DD15 | Integration tests use testcontainers `postgres:18-alpine`, skipped with `-short` or `KITCHEN_SKIP_DOCKER` | env-provided DSN | hermetic | needs Docker locally/CI |
+
 ## Out of scope
 
 MySQL, VN helpers, `parallel`, `ParseTemplate`, `uploader.File` DTO, V1
