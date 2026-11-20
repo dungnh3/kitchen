@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
@@ -91,78 +92,89 @@ func TestSetGetDeleteRedis(t *testing.T) {
 }
 
 func TestGetOrLoadSingleflight(t *testing.T) {
-	_, rdb := newRedis(t)
-	ctx := context.Background()
-	c := newCache(t, cache.Config[user]{
-		Redis: rdb, Prefix: "u:", TTL: time.Minute,
-		Local: &cache.LocalConfig{MaxSize: 100, TTL: time.Minute},
-	})
-
-	var calls atomic.Int32
-	release := make(chan struct{})
-	load := func(_ context.Context, id string) (user, error) {
-		calls.Add(1)
-		<-release
-		return user{id, "Ann"}, nil
-	}
-	var wg sync.WaitGroup
-	errs := make(chan error, 50)
-	for range 50 {
-		wg.Go(func() {
-			u, err := c.GetOrLoad(ctx, "1", load)
-			if err == nil && u.Name != "Ann" {
-				err = fmt.Errorf("got %+v", u)
-			}
-			errs <- err
-		})
-	}
-	time.Sleep(50 * time.Millisecond) // let goroutines join the flight
-	close(release)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
+	synctest.Test(t, func(t *testing.T) {
+		c, err := cache.New(cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 100, TTL: time.Minute}})
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	if n := calls.Load(); n != 1 {
-		t.Fatalf("loader calls = %d, want 1", n)
-	}
-	// Now served from cache.
-	if _, err := c.GetOrLoad(ctx, "1", load); err != nil || calls.Load() != 1 {
-		t.Fatalf("second GetOrLoad: %v, calls %d", err, calls.Load())
-	}
+		defer c.Close()
+		ctx := context.Background()
+
+		var calls atomic.Int32
+		release := make(chan struct{})
+		load := func(_ context.Context, id string) (user, error) {
+			calls.Add(1)
+			<-release
+			return user{id, "Ann"}, nil
+		}
+		var wg sync.WaitGroup
+		errs := make(chan error, 50)
+		for range 50 {
+			wg.Go(func() {
+				u, err := c.GetOrLoad(ctx, "1", load)
+				if err == nil && u.Name != "Ann" {
+					err = fmt.Errorf("got %+v", u)
+				}
+				errs <- err
+			})
+		}
+		synctest.Wait() // every caller is now blocked on the single flight
+		close(release)
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if n := calls.Load(); n != 1 {
+			t.Fatalf("loader calls = %d, want 1", n)
+		}
+		if _, err := c.GetOrLoad(ctx, "1", load); err != nil || calls.Load() != 1 {
+			t.Fatalf("second GetOrLoad: %v, calls %d", err, calls.Load())
+		}
+		// L1 TTL expiry, on the bubble's fake clock.
+		time.Sleep(2 * time.Minute)
+		if _, err := c.GetOrLoad(ctx, "1", load); err != nil || calls.Load() != 2 {
+			t.Fatalf("after L1 TTL: %v, calls %d, want 2", err, calls.Load())
+		}
+	})
 }
 
 func TestGetOrLoadCallerCancelDoesNotCancelLoad(t *testing.T) {
-	c := newCache(t, cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}})
-	release := make(chan struct{})
-	loadErr := make(chan error, 1)
-	load := func(ctx context.Context, id string) (user, error) {
-		<-release
-		loadErr <- ctx.Err()
-		return user{id, "Ann"}, nil
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := c.GetOrLoad(ctx, "1", load); !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want Canceled", err)
-	}
-	close(release)
-	if err := <-loadErr; err != nil {
-		t.Fatalf("loader ctx err = %v", err)
-	}
-	// The load still filled the cache.
-	deadline := time.Now().Add(time.Second)
-	for {
-		if u, err := c.Get(context.Background(), "1"); err == nil && u.Name == "Ann" {
-			break
+	synctest.Test(t, func(t *testing.T) {
+		c, err := cache.New(cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("cache not filled by detached load")
+		defer c.Close()
+		release := make(chan struct{})
+		var loadCtxErr error
+		load := func(ctx context.Context, id string) (user, error) {
+			<-release
+			loadCtxErr = ctx.Err()
+			return user{id, "Ann"}, nil
 		}
-		time.Sleep(time.Millisecond)
-	}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, err := c.GetOrLoad(ctx, "1", load)
+			done <- err
+		}()
+		synctest.Wait()
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want Canceled", err)
+		}
+		close(release)
+		synctest.Wait() // detached load finishes and fills the cache
+		if loadCtxErr != nil {
+			t.Fatalf("loader ctx err = %v", loadCtxErr)
+		}
+		if u, err := c.Get(context.Background(), "1"); err != nil || u.Name != "Ann" {
+			t.Fatalf("Get after detached load = %+v, %v", u, err)
+		}
+	})
 }
 
 func TestNegativeCaching(t *testing.T) {

@@ -1,6 +1,7 @@
 package webmeta
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"net/url"
@@ -119,12 +120,12 @@ loop:
 	}
 	m := &Metadata{
 		URL:          base.String(),
-		Title:        first(c.ogTitle, c.title, c.twTitle),
-		Description:  first(c.ogDesc, c.desc, c.twDesc),
+		Title:        cmp.Or(c.ogTitle, c.title, c.twTitle),
+		Description:  cmp.Or(c.ogDesc, c.desc, c.twDesc),
 		SiteName:     c.siteName,
-		Image:        resolve(first(c.ogImageSecure, c.ogImage, c.twImage)),
-		Icon:         resolve(first(c.appleIcon, c.icon)),
-		CanonicalURL: resolve(first(c.canonical, c.ogURL)),
+		Image:        resolve(cmp.Or(c.ogImageSecure, c.ogImage, c.twImage)),
+		Icon:         resolve(cmp.Or(c.appleIcon, c.icon)),
+		CanonicalURL: resolve(cmp.Or(c.canonical, c.ogURL)),
 	}
 	if m.Icon == "" && base.Host != "" {
 		m.Icon = resolve("/favicon.ico")
@@ -133,7 +134,7 @@ loop:
 }
 
 func (c *collected) meta(a map[string]string) {
-	key := strings.ToLower(first(a["property"], a["name"]))
+	key := strings.ToLower(cmp.Or(a["property"], a["name"]))
 	v := clean(a["content"])
 	if v == "" {
 		return
@@ -188,15 +189,6 @@ func (c *collected) link(a map[string]string) {
 			}
 		}
 	}
-}
-
-func first(vs ...string) string {
-	for _, v := range vs {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func clean(s string) string { return strings.Join(strings.Fields(s), " ") }
