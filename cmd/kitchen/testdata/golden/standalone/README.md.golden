@@ -1,0 +1,40 @@
+# mcp-notes
+
+Notes tools.
+
+An MCP server built with [mcpkit](https://pkg.go.dev/github.com/dungnh3/kitchen/mcpkit)
+on the official MCP Go SDK. It speaks Streamable HTTP (stateless) and stdio.
+
+## Run
+
+```bash
+go mod tidy
+make run          # HTTP on :8080, endpoint /mcp
+make run-stdio    # stdio, for desktop clients and the MCP Inspector
+make test
+```
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MCP_TRANSPORT` | `http` | `http` or `stdio` |
+| `MCP_ADDR` | `:8080` | HTTP listen address |
+| `MCP_RESOURCE_URL` | | Public URL of `/mcp`; setting it requires a bearer token on every request |
+| `MCP_AUTH_SERVERS` | | Comma-separated authorization server (issuer) URLs advertised in the protected-resource metadata |
+| `MCP_ALLOWED_ORIGINS` | | Comma-separated browser origins allowed to call the server (CORS) |
+| `MCP_TOOL_TIMEOUT` | `2m` | Deadline for each tool call |
+| `MCP_SHUTDOWN_TIMEOUT` | `30s` | Graceful shutdown drain time |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `UPSTREAM_TOKEN` | | Upstream API token in stdio mode |
+
+With auth enabled the bearer token is the upstream API's OAuth token and is
+passed through to tools (`mcpkit.TokenFrom(ctx)`). To verify tokens from your
+own identity provider instead, use `github.com/dungnh3/kitchen/mcpkit/jwtauth`.
+
+## Add a tool
+
+Define typed input and output structs and register a handler in
+`internal/tools`. The JSON schema is inferred from the struct tags, input is
+validated before your handler runs, and a returned error becomes a tool
+result the model can read.

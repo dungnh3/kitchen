@@ -1,0 +1,90 @@
+// Package config loads the server configuration from the environment.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+)
+
+// Transports.
+const (
+	TransportHTTP  = "http"
+	TransportStdio = "stdio"
+)
+
+// EnvUpstreamToken holds the upstream API token in stdio mode.
+const EnvUpstreamToken = "UPSTREAM_TOKEN"
+
+// Config is the server configuration.
+type Config struct {
+	Transport       string        // MCP_TRANSPORT: http (default) or stdio
+	Addr            string        // MCP_ADDR, default ":8080"
+	ResourceURL     string        // MCP_RESOURCE_URL: public URL of /mcp; enables auth
+	AuthServers     []string      // MCP_AUTH_SERVERS: comma-separated issuer URLs
+	AllowedOrigins  []string      // MCP_ALLOWED_ORIGINS: comma-separated browser origins
+	ToolTimeout     time.Duration // MCP_TOOL_TIMEOUT, default 2m
+	ShutdownTimeout time.Duration // MCP_SHUTDOWN_TIMEOUT, default 30s
+	LogLevel        slog.Level    // LOG_LEVEL: debug, info (default), warn, error
+}
+
+// Load reads the configuration from the environment and validates it.
+func Load() (Config, error) { return load(os.LookupEnv) }
+
+func load(lookup func(string) (string, bool)) (Config, error) {
+	get := func(key, def string) string {
+		if v, ok := lookup(key); ok && v != "" {
+			return v
+		}
+		return def
+	}
+	var errs []error
+	duration := func(key, def string) time.Duration {
+		d, err := time.ParseDuration(get(key, def))
+		if err != nil || d < 0 {
+			errs = append(errs, fmt.Errorf("%s: invalid duration %q", key, get(key, def)))
+		}
+		return d
+	}
+
+	c := Config{
+		Transport:       get("MCP_TRANSPORT", TransportHTTP),
+		Addr:            get("MCP_ADDR", ":8080"),
+		ResourceURL:     get("MCP_RESOURCE_URL", ""),
+		AuthServers:     list(get("MCP_AUTH_SERVERS", "")),
+		AllowedOrigins:  list(get("MCP_ALLOWED_ORIGINS", "")),
+		ToolTimeout:     duration("MCP_TOOL_TIMEOUT", "2m"),
+		ShutdownTimeout: duration("MCP_SHUTDOWN_TIMEOUT", "30s"),
+	}
+	if err := c.LogLevel.UnmarshalText([]byte(get("LOG_LEVEL", "info"))); err != nil {
+		errs = append(errs, fmt.Errorf("LOG_LEVEL: %w", err))
+	}
+	switch c.Transport {
+	case TransportHTTP, TransportStdio:
+	default:
+		errs = append(errs, fmt.Errorf("MCP_TRANSPORT: want %q or %q, got %q", TransportHTTP, TransportStdio, c.Transport))
+	}
+	if c.ResourceURL != "" {
+		if u, err := url.Parse(c.ResourceURL); err != nil || u.Scheme != "https" && u.Hostname() != "localhost" {
+			errs = append(errs, fmt.Errorf("MCP_RESOURCE_URL: must be an https URL (http only for localhost), got %q", c.ResourceURL))
+		}
+		if len(c.AuthServers) == 0 {
+			errs = append(errs, errors.New("MCP_AUTH_SERVERS: required when MCP_RESOURCE_URL is set"))
+		}
+	}
+	return c, errors.Join(errs...)
+}
+
+func list(s string) []string {
+	var out []string
+	for v := range strings.SplitSeq(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}

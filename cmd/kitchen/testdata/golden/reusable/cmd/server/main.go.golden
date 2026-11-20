@@ -1,0 +1,115 @@
+// Command server runs the tickets MCP server.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/dungnh3/kitchen/mcpkit"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
+
+	"example.com/team/mcp-tickets/internal/config"
+	"example.com/team/mcp-tickets/internal/tools"
+)
+
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	// Logs go to stderr: stdout carries the protocol in stdio mode.
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+
+	opts := []mcpkit.Option{
+		mcpkit.WithLogger(logger),
+		mcpkit.WithToolTimeout(cfg.ToolTimeout),
+		mcpkit.WithAllowedOrigins(cfg.AllowedOrigins...),
+	}
+	if cfg.ResourceURL != "" {
+		// Clients send the upstream API's OAuth token; tools forward it.
+		opts = append(opts, mcpkit.WithAuth(mcpkit.Auth{
+			Verifier:               mcpkit.PassThrough(),
+			AllowMissingExpiration: true,
+			Metadata: &oauthex.ProtectedResourceMetadata{
+				Resource:             cfg.ResourceURL,
+				AuthorizationServers: cfg.AuthServers,
+			},
+		}))
+	}
+	srv, err := mcpkit.New(&mcp.Implementation{Name: "tickets", Version: version}, opts...)
+	if err != nil {
+		return err
+	}
+	tools.Register(srv)
+
+	if cfg.Transport == config.TransportStdio {
+		// The upstream credential comes from the environment, if set.
+		var ts mcpkit.TokenSource
+		if _, ok := os.LookupEnv(config.EnvUpstreamToken); ok {
+			ts = mcpkit.EnvToken(config.EnvUpstreamToken)
+		}
+		return srv.RunStdio(ctx, ts)
+	}
+	return serveHTTP(ctx, cfg, srv, logger)
+}
+
+func serveHTTP(ctx context.Context, cfg config.Config, srv *mcpkit.Server, logger *slog.Logger) error {
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", srv.Handler())
+	if p := srv.MetadataPath(); p != "" {
+		mux.Handle("GET "+p, srv.MetadataHandler())
+	}
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	hs := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		// No WriteTimeout: it would cut streamed tool responses. Tool
+		// deadlines are set with MCP_TOOL_TIMEOUT.
+	}
+	errc := make(chan error, 1)
+	go func() {
+		logger.Info("listening", "addr", cfg.Addr)
+		errc <- hs.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownTimeout)
+	defer cancel()
+	if err := hs.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	if err := <-errc; !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
