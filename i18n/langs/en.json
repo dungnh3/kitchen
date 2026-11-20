@@ -1,0 +1,18 @@
+{
+  "CANCELED": "The request was canceled.",
+  "UNKNOWN": "An unknown error occurred.",
+  "INVALID_ARGUMENT": "The request contains invalid data.",
+  "DEADLINE_EXCEEDED": "The request took too long. Please try again.",
+  "NOT_FOUND": "The requested resource was not found.",
+  "ALREADY_EXISTS": "The resource already exists.",
+  "PERMISSION_DENIED": "You do not have permission to perform this action.",
+  "RESOURCE_EXHAUSTED": "Too many requests. Please try again later.",
+  "FAILED_PRECONDITION": "The request cannot be performed in the current state.",
+  "ABORTED": "The request was aborted because of a conflict. Please try again.",
+  "OUT_OF_RANGE": "A value in the request is out of range.",
+  "UNIMPLEMENTED": "This operation is not supported.",
+  "INTERNAL": "Something went wrong on our side. Please try again later.",
+  "UNAVAILABLE": "The service is temporarily unavailable. Please try again later.",
+  "DATA_LOSS": "Something went wrong on our side. Please try again later.",
+  "UNAUTHENTICATED": "Please sign in to continue."
+}

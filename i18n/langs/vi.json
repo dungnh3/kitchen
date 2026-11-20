@@ -1,0 +1,18 @@
+{
+  "CANCELED": "Yêu cầu đã bị huỷ.",
+  "UNKNOWN": "Đã xảy ra lỗi không xác định.",
+  "INVALID_ARGUMENT": "Yêu cầu chứa dữ liệu không hợp lệ.",
+  "DEADLINE_EXCEEDED": "Yêu cầu xử lý quá lâu. Vui lòng thử lại.",
+  "NOT_FOUND": "Không tìm thấy tài nguyên được yêu cầu.",
+  "ALREADY_EXISTS": "Tài nguyên đã tồn tại.",
+  "PERMISSION_DENIED": "Bạn không có quyền thực hiện thao tác này.",
+  "RESOURCE_EXHAUSTED": "Quá nhiều yêu cầu. Vui lòng thử lại sau.",
+  "FAILED_PRECONDITION": "Không thể thực hiện yêu cầu ở trạng thái hiện tại.",
+  "ABORTED": "Yêu cầu bị huỷ do xung đột. Vui lòng thử lại.",
+  "OUT_OF_RANGE": "Một giá trị trong yêu cầu nằm ngoài phạm vi cho phép.",
+  "UNIMPLEMENTED": "Thao tác này chưa được hỗ trợ.",
+  "INTERNAL": "Hệ thống gặp sự cố. Vui lòng thử lại sau.",
+  "UNAVAILABLE": "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau.",
+  "DATA_LOSS": "Hệ thống gặp sự cố. Vui lòng thử lại sau.",
+  "UNAUTHENTICATED": "Vui lòng đăng nhập để tiếp tục."
+}
