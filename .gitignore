@@ -1,0 +1,10 @@
+.idea/
+.vscode/
+.DS_Store
+/bin/
+coverage.out
+go.work
+go.work.sum
+.claude/worktrees/
+*.test
+*.out

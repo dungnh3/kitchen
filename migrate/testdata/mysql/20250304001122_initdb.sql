@@ -1,0 +1,5 @@
+-- +goose Up
+CREATE TABLE items (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(64) NOT NULL);
+
+-- +goose Down
+DROP TABLE items;

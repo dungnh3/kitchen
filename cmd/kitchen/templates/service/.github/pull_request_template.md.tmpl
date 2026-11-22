@@ -1,0 +1,19 @@
+## What and why
+
+<!-- What does this change do, and why is it needed? Link the issue. -->
+
+## How it was tested
+
+- [ ] Unit tests
+- [ ] Integration tests (`make test` starts the whole service{% if .Postgres %} with a Postgres container{% end %})
+- [ ] Manual test
+
+## Checklist
+
+- [ ] `make generate` was run after changing `proto/`{% if .Postgres %}, `migrations/` or SQL queries{% end %}
+- [ ] API changes are backward compatible (`make breaking`), or the break is intended and announced
+{%- if .Postgres %}
+- [ ] New migrations are backward compatible with the running version (expand, then contract)
+- [ ] New queries are covered by an index (no sequential scan on large tables)
+{%- end %}
+- [ ] Errors returned to clients are `errs` errors; no internal details leak

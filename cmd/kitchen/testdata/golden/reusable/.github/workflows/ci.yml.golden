@@ -1,0 +1,14 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    # Reusable workflow pinned to a full commit SHA.
+    uses: acme/devops-workflows/.github/workflows/go.yml@0123456789abcdef0123456789abcdef01234567
+    secrets: inherit

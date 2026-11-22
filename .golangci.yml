@@ -1,0 +1,335 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - depguard
+    - forbidigo
+    - errorlint
+    - gosec
+    - misspell
+    - noctx
+    - revive
+    - sloglint
+    - sqlclosecheck
+    - unconvert
+    - usestdlibvars
+  settings:
+    # D7 (docs/decisions.md): every concern has one canonical kitchen
+    # package; the library behind it is used only there (and in its adapter
+    # submodules). Tests may use the libraries directly when they must.
+    depguard:
+      rules:
+        # D5: every package logs through kitchen/log (*log.Logger,
+        # log.String, log.Default, ...), so a change of format, schema or
+        # backend is made once in kitchen/log.
+        kitchen-log:
+          files:
+            - "$all"
+            - "!**/log/**"
+            - "!$test"
+          deny:
+            - pkg: log/slog
+              desc: "D5: log through github.com/dungnh3/kitchen/log (*log.Logger, log.String, log.Default)"
+            - pkg: log$
+              desc: "D5: log through github.com/dungnh3/kitchen/log (log.StdLogger for APIs that need a *log.Logger)"
+            - pkg: go.uber.org/zap
+              desc: "D5: log through github.com/dungnh3/kitchen/log (Backend: zap)"
+            - pkg: github.com/rs/zerolog
+              desc: "D5: log through github.com/dungnh3/kitchen/log"
+            - pkg: github.com/sirupsen/logrus
+              desc: "D5: log through github.com/dungnh3/kitchen/log"
+        # Libraries no package uses: kitchen (or the stdlib) already covers
+        # the concern.
+        d7-everywhere:
+          files:
+            - "$all"
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: "D7 errs: stdlib errors (%w, errors.Join) and kitchen/errs"
+            - pkg: github.com/hashicorp/go-multierror
+              desc: "D7 errs: errors.Join"
+            - pkg: go.uber.org/multierr
+              desc: "D7 errs: errors.Join"
+            - pkg: github.com/go-errors/errors
+              desc: "D7 errs: stdlib errors and kitchen/errs"
+            - pkg: github.com/cockroachdb/errors
+              desc: "D7 errs: stdlib errors and kitchen/errs"
+            - pkg: github.com/cenkalti/backoff
+              desc: "D7 backoff: kitchen/timex.Backoff"
+            - pkg: github.com/jpillora/backoff
+              desc: "D7 backoff: kitchen/timex.Backoff"
+            - pkg: github.com/avast/retry-go
+              desc: "D7 backoff: kitchen/timex.Backoff (HTTP: httpx.WithRetry)"
+            - pkg: github.com/sethvargo/go-retry
+              desc: "D7 backoff: kitchen/timex.Backoff (HTTP: httpx.WithRetry)"
+            - pkg: github.com/go-resty/resty
+              desc: "D7 HTTP client: kitchen/httpx"
+            - pkg: github.com/hashicorp/go-retryablehttp
+              desc: "D7 HTTP client: kitchen/httpx (WithRetry)"
+            - pkg: github.com/imroc/req
+              desc: "D7 HTTP client: kitchen/httpx"
+            - pkg: github.com/golang-jwt/jwt
+              desc: "D7 auth: kitchen/auth (jwx v3 inside)"
+            - pkg: github.com/go-jose/go-jose
+              desc: "D7 auth: kitchen/auth (jwx v3 inside)"
+            - pkg: gopkg.in/square/go-jose
+              desc: "D7 auth: kitchen/auth (jwx v3 inside)"
+            - pkg: github.com/redis/rueidis
+              desc: "D7 Redis: kitchen/redisx (go-redis v9)"
+            - pkg: github.com/gomodule/redigo
+              desc: "D7 Redis: kitchen/redisx (go-redis v9)"
+            - pkg: github.com/go-redis/redis
+              desc: "D7 Redis: kitchen/redisx (go-redis v9)"
+            - pkg: github.com/go-redis/redis_rate
+              desc: "D7 rate limit: kitchen/ratelimit"
+            - pkg: github.com/ulule/limiter
+              desc: "D7 rate limit: kitchen/ratelimit"
+            - pkg: github.com/sethvargo/go-limiter
+              desc: "D7 rate limit: kitchen/ratelimit"
+            - pkg: github.com/bsm/redislock
+              desc: "D7 distributed lock: kitchen/lease"
+            - pkg: github.com/go-redsync/redsync
+              desc: "D7 distributed lock: kitchen/lease"
+            - pkg: github.com/dgraph-io/ristretto
+              desc: "D7 cache: kitchen/cache"
+            - pkg: github.com/patrickmn/go-cache
+              desc: "D7 cache: kitchen/cache"
+            - pkg: github.com/hashicorp/golang-lru
+              desc: "D7 cache: kitchen/cache"
+            - pkg: github.com/eko/gocache
+              desc: "D7 cache: kitchen/cache"
+            - pkg: github.com/ThreeDotsLabs/watermill
+              desc: "D7 messaging: kitchen/pubsub"
+            - pkg: gocloud.dev
+              desc: "D7 object storage / messaging: kitchen/objstore, kitchen/pubsub"
+            - pkg: github.com/golang-migrate/migrate
+              desc: "D7 migrations: kitchen/migrate (goose inside)"
+            - pkg: github.com/lib/pq
+              desc: "D7 SQL: kitchen/pg (pgx v5)"
+            - pkg: github.com/go-playground/validator
+              desc: "D7 validation: protovalidate through kitchen/server and kitchen/errs/validation"
+            - pkg: github.com/r3labs/sse
+              desc: "D7 SSE: kitchen/sse"
+            - pkg: github.com/tmaxmax/go-sse
+              desc: "D7 SSE: kitchen/sse"
+            - pkg: github.com/PuerkitoBio/goquery
+              desc: "D7 web metadata: kitchen/webmeta"
+            - pkg: github.com/thoas/go-funk
+              desc: "D7 collections: slices, maps, or github.com/samber/lo"
+            - pkg: github.com/elliotchance/pie
+              desc: "D7 collections: slices, maps, or github.com/samber/lo"
+        d7-httpx:
+          files: ["$all", "!**/httpx/**", "!$test"]
+          deny:
+            - pkg: resty.dev
+              desc: "D7 HTTP client: kitchen/httpx"
+        d7-auth:
+          files: ["$all", "!**/auth/**", "!$test"]
+          deny:
+            - pkg: github.com/lestrrat-go/jwx
+              desc: "D7 auth: kitchen/auth (Verifier, JWKS, Introspection)"
+            - pkg: github.com/lestrrat-go/httprc
+              desc: "D7 auth: kitchen/auth"
+        d7-otelx:
+          files: ["$all", "!**/otelx/**", "!$test"]
+          deny:
+            - pkg: go.opentelemetry.io/otel/sdk
+              desc: "D7 telemetry setup: kitchen/otelx/sdk (the OTel API is fine)"
+            - pkg: go.opentelemetry.io/otel/exporters
+              desc: "D7 telemetry exporters: kitchen/otelx and its submodules"
+            - pkg: go.opentelemetry.io/contrib/exporters
+              desc: "D7 telemetry exporters: kitchen/otelx and its submodules"
+            - pkg: go.opentelemetry.io/contrib/detectors
+              desc: "D7 telemetry resources: kitchen/otelx"
+            - pkg: go.opentelemetry.io/contrib/bridges
+              desc: "D7 telemetry bridges: kitchen/otelx/sdk"
+            - pkg: github.com/GoogleCloudPlatform/opentelemetry-operations-go
+              desc: "D7 telemetry exporters: kitchen/otelx/gcp"
+        d7-timex:
+          files: ["$all", "!**/timex/**", "!$test"]
+          deny:
+            - pkg: math/rand
+              desc: "D7 backoff/jitter: kitchen/timex.Backoff; crypto/rand for secrets"
+        d7-i18n:
+          files: ["$all", "!**/i18n/**", "!$test"]
+          deny:
+            - pkg: github.com/nicksnyder/go-i18n
+              desc: "D7 i18n: kitchen/i18n"
+        d7-ratelimit:
+          files: ["$all", "!**/ratelimit/**", "!$test"]
+          deny:
+            - pkg: golang.org/x/time/rate
+              desc: "D7 rate limit: kitchen/ratelimit (NewLocalStore)"
+        d7-cache:
+          files: ["$all", "!**/cache/**", "!$test"]
+          deny:
+            - pkg: github.com/maypok86/otter
+              desc: "D7 cache: kitchen/cache"
+        d7-context:
+          files: ["$all", "!**/context/**", "!$test"]
+          deny:
+            - pkg: github.com/realclientip/realclientip-go
+              desc: "D7 request metadata: kitchen/context (Info.ClientIP, TrustedProxies)"
+        d7-server:
+          files: ["$all", "!**/server/**", "!**/errs/**", "!$test"]
+          deny:
+            - pkg: github.com/grpc-ecosystem/grpc-gateway
+              desc: "D7 server: kitchen/server (gateway errors: kitchen/errs)"
+            - pkg: github.com/klauspost/compress/gzhttp
+              desc: "D7 server: kitchen/server WithCompression"
+        d7-validation:
+          files: ["$all", "!**/server/**", "!**/errs/validation/**", "!$test"]
+          deny:
+            - pkg: buf.build/go/protovalidate
+              desc: "D7 validation: kitchen/server (validates by default) and kitchen/errs/validation"
+        d7-migrate:
+          files: ["$all", "!**/migrate/**", "!$test"]
+          deny:
+            - pkg: github.com/pressly/goose
+              desc: "D7 migrations: kitchen/migrate"
+        d7-mysqlx:
+          files: ["$all", "!**/mysqlx/**", "!$test"]
+          deny:
+            - pkg: github.com/go-sql-driver/mysql
+              desc: "D7 SQL: kitchen/mysqlx"
+            - pkg: gorm.io/driver/mysql
+              desc: "D7 SQL: kitchen/mysqlx/gorm"
+        d7-pg:
+          files: ["$all", "!**/pg/**", "!$test"]
+          deny:
+            - pkg: gorm.io/driver/postgres
+              desc: "D7 SQL: kitchen/pg/gorm"
+        d7-mongox:
+          files: ["$all", "!**/mongox/**", "!$test"]
+          deny:
+            - pkg: go.mongodb.org/mongo-driver
+              desc: "D7 MongoDB: kitchen/mongox"
+        d7-objstore:
+          files: ["$all", "!**/objstore/**", "!$test"]
+          deny:
+            - pkg: cloud.google.com/go/storage
+              desc: "D7 object storage: kitchen/objstore/gcs"
+            - pkg: github.com/aws/aws-sdk-go-v2/service/s3
+              desc: "D7 object storage: kitchen/objstore/s3"
+        d7-pubsub:
+          files: ["$all", "!**/pubsub/**", "!$test"]
+          deny:
+            - pkg: cloud.google.com/go/pubsub
+              desc: "D7 messaging: kitchen/pubsub/gcp"
+            - pkg: github.com/aws/aws-sdk-go-v2/service/sqs
+              desc: "D7 messaging: kitchen/pubsub/sqs"
+            - pkg: github.com/twmb/franz-go
+              desc: "D7 messaging: kitchen/pubsub/kafka"
+            - pkg: github.com/segmentio/kafka-go
+              desc: "D7 messaging: kitchen/pubsub/kafka"
+            - pkg: github.com/IBM/sarama
+              desc: "D7 messaging: kitchen/pubsub/kafka"
+            - pkg: github.com/confluentinc/confluent-kafka-go
+              desc: "D7 messaging: kitchen/pubsub/kafka"
+        d7-webmeta:
+          files: ["$all", "!**/webmeta/**", "!$test"]
+          deny:
+            - pkg: golang.org/x/net/html
+              desc: "D7 web metadata: kitchen/webmeta"
+        d7-mcpkit:
+          files: ["$all", "!**/mcpkit/**", "!**/cmd/kitchen/**", "!$test"]
+          deny:
+            - pkg: github.com/modelcontextprotocol/go-sdk
+              desc: "D7 MCP servers: kitchen/mcpkit"
+    # Calls and types depguard cannot see (the package itself is fine to
+    # import). Messages start with "D7"/"D5" so the exclusions below can
+    # allow each one in its canonical package and in tests.
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^slog\.(Default|New|NewJSONHandler|NewTextHandler|SetDefault)$
+          msg: "D5: use kitchen/log: log.Default, log.New, log.Setup or log.SetDefault (main only)"
+        - pattern: ^redis\.(NewClient|NewUniversalClient|NewClusterClient|NewFailoverClient|NewFailoverClusterClient|NewRing|NewSentinelClient|ParseURL|ParseClusterURL)$
+          pkg: ^github\.com/redis/go-redis/v9$
+          msg: "D7 redisx: open Redis with kitchen/redisx.Open (TLS, OTel, timeouts); take a redis.UniversalClient"
+        - pattern: ^http\.(Client|DefaultClient|Get|Head|Post|PostForm)$
+          pkg: ^net/http$
+          msg: "D7 httpx: make HTTP calls with kitchen/httpx (retries, breaker, SSRF guard, OTel)"
+        - pattern: ^http\.(Server|ListenAndServe|ListenAndServeTLS|Serve|ServeTLS)$
+          pkg: ^net/http$
+          msg: "D7 server: serve HTTP with kitchen/server (or mount on it)"
+        - pattern: ^grpc\.NewServer$
+          pkg: ^google\.golang\.org/grpc$
+          msg: "D7 server: serve gRPC with kitchen/server"
+        - pattern: ^status\.(New|Newf|Error|Errorf|FromProto)$
+          pkg: ^google\.golang\.org/grpc/status$
+          msg: "D7 errs: build errors with kitchen/errs (sentinels, errs.New, errs.Wrap)"
+        - pattern: ^otel\.(SetTracerProvider|SetMeterProvider|SetTextMapPropagator|SetErrorHandler|SetLogger)$
+          pkg: ^go\.opentelemetry\.io/otel$
+          msg: "D7 otelx: install telemetry with kitchen/otelx/sdk"
+        - pattern: ^(otelhttp|otelgrpc)\.(NewHandler|NewMiddleware|NewTransport|NewServerHandler|NewClientHandler)$
+          msg: "D7 otelx: instrument with otelx.HTTPHandler, otelx.HTTPTransport, otelx.GRPCServerHandler, otelx.GRPCClientHandler"
+        - pattern: ^(pgxpool\.(New|NewWithConfig)|pgx\.(Connect|ConnectConfig))$
+          msg: "D7 pg: open PostgreSQL with kitchen/pg.Open (pool, OTel, health); take a *pgxpool.Pool"
+        - pattern: ^sql\.Open$
+          pkg: ^database/sql$
+          msg: "D7 pg/mysqlx: open SQL databases with kitchen/pg or kitchen/mysqlx"
+    sloglint:
+      # One style per call: all key-value pairs or all slog.Attr.
+      no-mixed-args: true
+      # Libraries take a *log.Logger (kitchen/log); never log through slog's
+      # global logger.
+      no-global: all
+      # When a context is in scope, use the *Context methods so trace and
+      # request attributes are attached.
+      context: scope
+      # Constant messages; variable data goes in attributes.
+      static-msg: true
+      # slog's built-in keys are written by the handler.
+      forbidden-keys:
+        - time
+        - level
+        - msg
+        - source
+  exclusions:
+    rules:
+      # Package kitchen/log is the one place that builds slog handlers.
+      - path: (^|/)log/
+        linters:
+          - forbidigo
+          - depguard
+      # Tests read bodies through helpers and call httptest servers that
+      # need no context: bodyclose and noctx only report noise there.
+      - path: _test\.go
+        linters: [bodyclose, noctx]
+      # Tests may build clients, servers and statuses directly (D7).
+      - path: _test\.go
+        text: because "D7
+        linters: [forbidigo]
+      # Each canonical package may call the library it wraps (D7).
+      - path: (^|/)redisx/
+        text: because "D7 redisx
+        linters: [forbidigo]
+      - path: (^|/)httpx/
+        text: because "D7 httpx
+        linters: [forbidigo]
+      - path: (^|/)server/
+        text: because "D7 server
+        linters: [forbidigo]
+      - path: (^|/)errs/
+        text: because "D7 errs
+        linters: [forbidigo]
+      - path: (^|/)otelx/
+        text: because "D7 otelx
+        linters: [forbidigo]
+      - path: (^|/)pg/
+        text: because "D7 pg
+        linters: [forbidigo]
+      - path: (^|/)mysqlx/
+        text: because "D7 pg/mysqlx
+        linters: [forbidigo]
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+issues:
+  # Report every finding, not the first few per linter or text.
+  max-issues-per-linter: 0
+  max-same-issues: 0

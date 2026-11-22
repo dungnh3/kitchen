@@ -1,0 +1,44 @@
+// Package tools defines the MCP tools of mcp-notes.
+package tools
+
+import (
+	"context"
+	"strings"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/mcpkit"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// Register adds every tool to srv. Tools are listed sorted by name.
+func Register(srv *mcpkit.Server) {
+	mcpkit.AddTool(srv, &mcp.Tool{
+		Name:        "greet",
+		Description: "Return a greeting for the given name.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, greet)
+}
+
+// GreetInput is the input of the greet tool. The JSON schema shown to the
+// model is inferred from the json and jsonschema tags.
+type GreetInput struct {
+	Name string `json:"name" jsonschema:"the name of the person to greet"`
+}
+
+// GreetOutput is returned as structured content.
+type GreetOutput struct {
+	Greeting string `json:"greeting"`
+}
+
+func greet(ctx context.Context, _ *mcp.CallToolRequest, in GreetInput) (*mcp.CallToolResult, GreetOutput, error) {
+	// mcpkit.TokenFrom(ctx) returns the caller's upstream token, if any.
+	_ = mcpkit.TokenFrom(ctx)
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		// An errs error becomes a tool result with isError set and its
+		// message, which the model can read and recover from. Any other
+		// error is logged and shown to the model as "internal error".
+		return nil, GreetOutput{}, errs.ErrInvalidArgument.With(errs.Message("name must not be empty"))
+	}
+	return nil, GreetOutput{Greeting: "Hello, " + name + "!"}, nil
+}

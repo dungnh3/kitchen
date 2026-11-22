@@ -1,0 +1,18 @@
+version: v2
+modules:
+  - path: proto
+deps:
+  - buf.build/bufbuild/protovalidate
+  - buf.build/googleapis/googleapis
+lint:
+  use:
+    - STANDARD
+  except:
+    # Resource-oriented APIs (https://google.aip.dev/131) return the resource
+    # itself from Get/Create and google.protobuf.Empty from Delete.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME
+  disallow_comment_ignores: true
+breaking:
+  use:
+    - FILE

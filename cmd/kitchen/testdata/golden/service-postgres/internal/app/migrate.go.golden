@@ -1,0 +1,79 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"text/tabwriter"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/migrate"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/acme/orders/internal/config"
+	"github.com/acme/orders/migrations"
+)
+
+// Migrate runs a migration command: "up" applies every pending migration,
+// "down" rolls back the last one and "status" prints the state of each
+// migration to out. A Postgres advisory lock serializes concurrent runs.
+// logger nil means log.Default().
+func Migrate(ctx context.Context, cfg config.Config, logger *log.Logger, command string, out io.Writer) error {
+	logger = log.OrDefault(logger)
+	switch command {
+	case "up", "down", "status":
+	default:
+		return fmt.Errorf("migrate: unknown command %q (want up, down or status)", command)
+	}
+	tel, err := sdk.Setup(ctx, sdk.Config{Disabled: true, NoGlobal: true})
+	if err != nil {
+		return err
+	}
+	pool, err := openDB(ctx, cfg, logger, tel)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if command == "up" {
+		return migrateUp(ctx, pool, logger)
+	}
+	m, err := newMigrator(pool, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = m.Close() }()
+	if command == "down" {
+		return m.Down(ctx, 1)
+	}
+	statuses, err := m.Status(ctx)
+	if err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "VERSION\tSTATE\tFILE")
+	for _, s := range statuses {
+		_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\n", s.Source.Version, s.State, s.Source.Path)
+	}
+	return tw.Flush()
+}
+
+func migrateUp(ctx context.Context, pool *pgxpool.Pool, logger *log.Logger) error {
+	m, err := newMigrator(pool, logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = m.Close() }()
+	if err := m.Up(ctx); err != nil {
+		return fmt.Errorf("migrate up: %w", err)
+	}
+	return nil
+}
+
+func newMigrator(pool *pgxpool.Pool, logger *log.Logger) (*migrate.Migrator, error) {
+	m, err := migrate.NewPostgres(pool, migrate.Config{Source: migrations.FS, Logger: logger})
+	if err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	return m, nil
+}

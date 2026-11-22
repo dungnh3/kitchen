@@ -1,0 +1,15 @@
+## What and why
+
+<!-- What does this change do, and why is it needed? Link the issue. -->
+
+## How it was tested
+
+- [ ] Unit tests
+- [ ] Integration tests (`make test` starts the whole service)
+- [ ] Manual test
+
+## Checklist
+
+- [ ] `make generate` was run after changing `proto/`
+- [ ] API changes are backward compatible (`make breaking`), or the break is intended and announced
+- [ ] Errors returned to clients are `errs` errors; no internal details leak

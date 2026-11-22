@@ -1,0 +1,66 @@
+// Command server runs the orders service.
+//
+// Usage:
+//
+//	server                   serve gRPC and REST until SIGINT or SIGTERM
+//	server migrate up        apply pending database migrations
+//	server migrate down      roll back the last migration
+//	server migrate status    print the state of each migration
+//
+// The configuration comes from environment variables; see internal/config.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/dungnh3/kitchen/log"
+
+	"github.com/acme/orders/internal/app"
+	"github.com/acme/orders/internal/config"
+)
+
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	// Install kitchen's process logger first: every package (server, pg,
+	// auth, otelx, ...) logs through log.Default(). LOG_LEVEL, LOG_FORMAT,
+	// LOG_SCHEMA and LOG_OUTPUT configure it; the default output is stdout.
+	// Request logs carry request_id and user_id (set by kitchen/context).
+	logOpts, logErr := log.OptionsFromEnv()
+	logger, err := log.Setup(logOpts)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if logErr != nil {
+		logger.WarnContext(ctx, "invalid logging environment", log.Err(logErr))
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	switch {
+	case len(args) == 0:
+		return app.Run(ctx, cfg, logger, version)
+	case len(args) == 2 && args[0] == "migrate":
+		return app.Migrate(ctx, cfg, logger, args[1], os.Stdout)
+	default:
+		return errors.New("usage: server [migrate up|down|status]")
+	}
+}

@@ -1,0 +1,127 @@
+// Command server runs the {% .Name %} MCP server.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/mcpkit"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+	"github.com/dungnh3/kitchen/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
+
+	"{% .Module %}/internal/config"
+	"{% .Module %}/internal/tools"
+)
+
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Install kitchen's process logger first: every package (mcpkit, server,
+	// otelx, the MCP SDK) logs through log.Default(). LOG_LEVEL, LOG_FORMAT,
+	// LOG_SCHEMA and LOG_OUTPUT configure it. The default output is stderr
+	// because stdout carries the protocol in stdio mode.
+	logOpts, logErr := log.OptionsFromEnv()
+	if logOpts.Output == nil {
+		logOpts.Output = os.Stderr
+	}
+	logger, err := log.Setup(logOpts)
+	if err != nil {
+		return err
+	}
+	if logErr != nil {
+		logger.Warn("invalid logging environment", log.Err(logErr))
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Traces and metrics are exported over OTLP when an endpoint is set
+	// (OTEL_EXPORTER_OTLP_ENDPOINT and the other OTEL_* variables).
+	tel, err := sdk.Setup(ctx, sdk.Config{
+		Disabled:       os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "",
+		Logger:         logger,
+		ServiceName:    "{% .Name %}",
+		ServiceVersion: version,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = tel.Shutdown(sctx)
+	}()
+
+	opts := []mcpkit.Option{
+		mcpkit.WithLogger(logger),
+		mcpkit.WithTracerProvider(tel.TracerProvider()),
+		mcpkit.WithMeterProvider(tel.MeterProvider()),
+		mcpkit.WithToolTimeout(cfg.ToolTimeout),
+		mcpkit.WithAllowedOrigins(cfg.AllowedOrigins...),
+	}
+	if cfg.ResourceURL != "" {
+		// Clients send the upstream API's OAuth token; tools forward it.
+		// For tokens from your own IdP use mcpkit.Verifier with kitchen's
+		// auth package instead of PassThrough.
+		opts = append(opts, mcpkit.WithAuth(mcpkit.Auth{
+			Verifier:               mcpkit.PassThrough(),
+			AllowMissingExpiration: true,
+			Metadata: &oauthex.ProtectedResourceMetadata{
+				Resource:             cfg.ResourceURL,
+				AuthorizationServers: cfg.AuthServers,
+			},
+		}))
+	}
+	srv, err := mcpkit.New(&mcp.Implementation{Name: "{% .Name %}", Version: version}, opts...)
+	if err != nil {
+		return err
+	}
+	tools.Register(srv)
+
+	if cfg.Transport == config.TransportStdio {
+		// The upstream credential comes from the environment, if set.
+		var ts mcpkit.TokenSource
+		if _, ok := os.LookupEnv(config.EnvUpstreamToken); ok {
+			ts = mcpkit.EnvToken(config.EnvUpstreamToken)
+		}
+		return srv.RunStdio(ctx, ts)
+	}
+
+	// kitchen's server: /mcp plus /livez and /readyz, graceful drain,
+	// access logs and HTTP telemetry; no WriteTimeout, so streamed tool
+	// responses are not cut (tool deadlines come from MCP_TOOL_TIMEOUT).
+	hs, err := server.New(
+		server.WithServices(srv.Service("/mcp")),
+		server.WithHTTPAddr(cfg.Addr),
+		server.WithGRPCAddr(""), // HTTP only
+		server.WithShutdownTimeout(cfg.ShutdownTimeout),
+		server.WithLogger(logger),
+		server.WithTracerProvider(tel.TracerProvider()),
+		server.WithMeterProvider(tel.MeterProvider()),
+		server.WithVersion(version),
+	)
+	if err != nil {
+		return err
+	}
+	return hs.Run(ctx)
+}

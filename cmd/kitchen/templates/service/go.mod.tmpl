@@ -1,0 +1,38 @@
+module {% .Module %}
+
+go {% .GoDirective %}
+
+tool (
+	github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway
+	github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc
+	google.golang.org/protobuf/cmd/protoc-gen-go
+)
+
+require (
+	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go {% .Versions.ProtovalidateGen %}
+	github.com/caarlos0/env/v11 {% .Versions.Env %}
+	github.com/dungnh3/kitchen {% .KitchenVersion %}
+	github.com/dungnh3/kitchen/auth {% .KitchenVersion %}
+{%- if .Postgres %}
+	github.com/dungnh3/kitchen/migrate {% .KitchenVersion %}
+{%- end %}
+	github.com/dungnh3/kitchen/otelx/prometheus {% .KitchenVersion %}
+	github.com/dungnh3/kitchen/otelx/sdk {% .KitchenVersion %}
+	github.com/google/uuid {% .Versions.UUID %}
+	github.com/grpc-ecosystem/grpc-gateway/v2 {% .Versions.Gateway %}
+{%- if .Postgres %}
+	github.com/jackc/pgx/v5 {% .Versions.Pgx %}
+{%- end %}
+	github.com/prometheus/client_golang {% .Versions.Prometheus %}
+{%- if .Postgres %}
+	github.com/testcontainers/testcontainers-go {% .Versions.Testcontainers %}
+	github.com/testcontainers/testcontainers-go/modules/postgres {% .Versions.Testcontainers %}
+{%- end %}
+	go.uber.org/goleak {% .Versions.Goleak %}
+	golang.org/x/text {% .Versions.XText %}
+	google.golang.org/genproto/googleapis/api {% .Versions.GenprotoAPI %}
+	google.golang.org/grpc {% .Versions.GRPC %}
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc {% .Versions.ProtocGenGoGRPC %}
+	google.golang.org/protobuf {% .Versions.Protobuf %}
+)

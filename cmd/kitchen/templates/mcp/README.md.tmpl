@@ -1,0 +1,48 @@
+# {% .Name %}
+
+{% .Description %}
+
+An MCP server built with [mcpkit](https://pkg.go.dev/github.com/dungnh3/kitchen/mcpkit)
+on the official MCP Go SDK. It speaks Streamable HTTP (stateless) and stdio.
+Over HTTP it runs on kitchen's [server](https://pkg.go.dev/github.com/dungnh3/kitchen/server):
+`/mcp`, liveness `/livez`, readiness `/readyz`, graceful drain and access logs.
+
+## Run
+
+```bash
+go mod tidy
+make run          # HTTP on :8080, endpoint /mcp
+make run-stdio    # stdio, for desktop clients and the MCP Inspector
+make test
+```
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MCP_TRANSPORT` | `http` | `http` or `stdio` |
+| `MCP_ADDR` | `:8080` | HTTP listen address |
+| `MCP_RESOURCE_URL` | | Public URL of `/mcp`; setting it requires a bearer token on every request |
+| `MCP_AUTH_SERVERS` | | Comma-separated authorization server (issuer) URLs advertised in the protected-resource metadata |
+| `MCP_ALLOWED_ORIGINS` | | Comma-separated browser origins allowed to call the server (CORS) |
+| `MCP_TOOL_TIMEOUT` | `2m` | Deadline for each tool call |
+| `MCP_SHUTDOWN_TIMEOUT` | `30s` | Graceful shutdown drain time |
+| `LOG_LEVEL`, `LOG_FORMAT`, `LOG_SCHEMA` | `info`, `json`, detected | Logging through kitchen's `log` package (`LOG_SCHEMA`: `otel`, `gcp`, `aws`) |
+| `LOG_OUTPUT` | `stderr` | `stderr` or `stdout`; keep `stderr` in stdio mode (stdout carries the protocol) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | | Enables OTLP traces and metrics (kitchen's `otelx/sdk`); other `OTEL_*` variables apply |
+| `UPSTREAM_TOKEN` | | Upstream API token in stdio mode |
+
+With auth enabled the bearer token is the upstream API's OAuth token and is
+passed through to tools (`mcpkit.TokenFrom(ctx)`). To verify tokens from your
+own identity provider instead, build a verifier with
+`github.com/dungnh3/kitchen/auth` (`auth.NewJWKS`, `auth.NewIntrospection`) and
+pass `mcpkit.Verifier(v, resourceURL)` as `Auth.Verifier`.
+
+## Add a tool
+
+Define typed input and output structs and register a handler in
+`internal/tools`. The JSON schema is inferred from the struct tags, input is
+validated before your handler runs, and a returned error becomes a tool
+result. Only `errs` messages reach the model (for example
+`errs.New(codes.InvalidArgument, "BAD_DATE", errs.Message("date must be YYYY-MM-DD"))`);
+any other error is logged and the model sees "internal error".

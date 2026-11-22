@@ -1,0 +1,112 @@
+// Package config loads the service configuration from environment variables.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"time"
+
+	"github.com/caarlos0/env/v11"
+)
+
+// EnvProduction is the APP_ENV value of production deployments. Unsafe
+// settings such as AUTH_DISABLED are refused there.
+const EnvProduction = "production"
+
+// Config is the service configuration. Logging is configured separately by
+// LOG_LEVEL, LOG_FORMAT and LOG_SCHEMA, and telemetry by the standard OTEL_*
+// variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SDK_DISABLED, ...).
+type Config struct {
+	// Env names the deployment: development, staging, production, ...
+	Env string `env:"APP_ENV" envDefault:"development"`
+
+	GRPCAddr string `env:"GRPC_ADDR" envDefault:":10000"`
+	HTTPAddr string `env:"HTTP_ADDR" envDefault:":8080"`
+	// AdminAddr enables the admin port (/livez, /readyz with details,
+	// /version, /metrics, /debug/pprof/). Never expose it publicly.
+	AdminAddr string `env:"ADMIN_ADDR"`
+	// GRPCReflection registers gRPC server reflection (for grpcurl).
+	GRPCReflection bool `env:"GRPC_REFLECTION"`
+
+	// ShutdownDelay keeps serving after the server is marked not ready, so
+	// load balancers stop routing to it first. It is part of ShutdownTimeout.
+	ShutdownDelay   time.Duration `env:"SHUTDOWN_DELAY" envDefault:"5s"`
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s"`
+
+	// TrustedProxies lists the CIDRs of every proxy hop in front of the
+	// service (load balancer, ingress); it decides the client IP used by
+	// rate limits. Empty trusts no X-Forwarded-For header.
+	TrustedProxies []string `env:"TRUSTED_PROXIES"`
+	// ErrorDomain is the ErrorInfo.domain of API errors (AIP-193).
+	ErrorDomain string    `env:"ERROR_DOMAIN" envDefault:"edge-gw"`
+	Auth        Auth      `envPrefix:"AUTH_"`
+	RateLimit   RateLimit `envPrefix:"RATE_LIMIT_"`
+}
+
+// Auth configures bearer-token authentication. Every method needs a valid
+// JWT signed by Issuer for Audience, except the health service.
+type Auth struct {
+	// Disabled turns authentication off. It is refused in production.
+	Disabled bool   `env:"DISABLED"`
+	Issuer   string `env:"ISSUER"`
+	// JWKSURL is the issuer's key set, for example
+	// https://issuer.example.com/.well-known/jwks.json.
+	JWKSURL  string `env:"JWKS_URL"`
+	Audience string `env:"AUDIENCE"`
+	// TokenTypes, when set, lists the accepted JWT "typ" values, for example
+	// at+jwt for RFC 9068 access tokens.
+	TokenTypes []string `env:"TOKEN_TYPES"`
+}
+
+// RateLimit configures the per-caller rate limits.
+type RateLimit struct {
+	Disabled bool `env:"DISABLED"`
+	// DryRun counts and logs but never rejects.
+	DryRun bool `env:"DRY_RUN"`
+	// Exempt lists identities that are never limited: user:<id>,
+	// ip:<address> or ip:<CIDR>.
+	Exempt []string `env:"EXEMPT"`
+}
+
+// Load reads and validates the configuration from the environment.
+func Load() (Config, error) { return load(env.Options{}) }
+
+func load(opts env.Options) (Config, error) {
+	c, err := env.ParseAsWithOptions[Config](opts)
+	if err != nil {
+		return c, err
+	}
+	return c, c.validate()
+}
+
+func (c Config) validate() error {
+	var errs []error
+	if c.ShutdownDelay < 0 || c.ShutdownTimeout <= 0 || c.ShutdownDelay >= c.ShutdownTimeout {
+		errs = append(errs, errors.New("SHUTDOWN_DELAY and SHUTDOWN_TIMEOUT: want 0 <= delay < timeout"))
+	}
+	return errors.Join(errs...)
+}
+
+// ValidateServer checks the settings needed to serve requests. It is not
+// part of Load so that commands such as "migrate" run without them.
+func (c Config) ValidateServer() error {
+	a := c.Auth
+	if a.Disabled {
+		if c.Env == EnvProduction {
+			return errors.New("AUTH_DISABLED is not allowed when APP_ENV=production")
+		}
+		return nil
+	}
+	var errs []error
+	if a.Issuer == "" {
+		errs = append(errs, errors.New("AUTH_ISSUER is required (or set AUTH_DISABLED=true outside production)"))
+	}
+	if a.Audience == "" {
+		errs = append(errs, errors.New("AUTH_AUDIENCE is required: it stops tokens issued for other services from being accepted"))
+	}
+	if u, err := url.Parse(a.JWKSURL); err != nil || u.Host == "" || u.Scheme != "https" && u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" {
+		errs = append(errs, fmt.Errorf("AUTH_JWKS_URL: want an https URL (http only for localhost), got %q", a.JWKSURL))
+	}
+	return errors.Join(errs...)
+}

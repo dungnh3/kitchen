@@ -1,0 +1,127 @@
+// Package service implements the gRPC API. The server serves it over gRPC
+// and, through the grpc-gateway mapping in the proto file, over REST.
+//
+// Request validation (protovalidate rules in the proto file), errors,
+// authentication, rate limits, logging and tracing are handled by the server
+// before a method runs; methods only implement the business logic and return
+// errs errors.
+package service
+
+import (
+	"context"
+	"encoding/base64"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/server"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "{% .Module %}/gen/{% .ProtoPackage %}/v1"
+	"{% .Module %}/internal/store"
+)
+
+// defaultPageSize is used when a ListItems request has no page_size.
+const defaultPageSize = 50
+
+// ItemService implements pb.ItemServiceServer.
+type ItemService struct {
+	pb.UnimplementedItemServiceServer
+
+	store store.Store
+}
+
+var (
+	_ server.Service          = (*ItemService)(nil)
+	_ server.GatewayRegistrar = (*ItemService)(nil)
+)
+
+// New returns an ItemService that keeps items in s.
+func New(s store.Store) *ItemService {
+	return &ItemService{store: s}
+}
+
+// RegisterGRPC implements server.Service.
+func (s *ItemService) RegisterGRPC(r grpc.ServiceRegistrar) {
+	pb.RegisterItemServiceServer(r, s)
+}
+
+// RegisterGateway implements server.GatewayRegistrar.
+func (s *ItemService) RegisterGateway(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
+	return pb.RegisterItemServiceHandler(ctx, mux, conn)
+}
+
+// GetItem implements pb.ItemServiceServer.
+func (s *ItemService) GetItem(ctx context.Context, req *pb.GetItemRequest) (*pb.Item, error) {
+	it, err := s.store.GetItem(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return toProto(it), nil
+}
+
+// ListItems implements pb.ItemServiceServer.
+func (s *ItemService) ListItems(ctx context.Context, req *pb.ListItemsRequest) (*pb.ListItemsResponse, error) {
+	size := req.GetPageSize()
+	if size == 0 {
+		size = defaultPageSize
+	}
+	after, err := decodePageToken(req.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	// Ask for one more item to know whether there is a next page.
+	items, err := s.store.ListItems(ctx, after, size+1)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.ListItemsResponse{}
+	if len(items) > int(size) {
+		items = items[:size]
+		resp.NextPageToken = encodePageToken(items[len(items)-1].ID)
+	}
+	resp.Items = make([]*pb.Item, len(items))
+	for i, it := range items {
+		resp.Items[i] = toProto(it)
+	}
+	return resp, nil
+}
+
+// CreateItem implements pb.ItemServiceServer.
+func (s *ItemService) CreateItem(ctx context.Context, req *pb.CreateItemRequest) (*pb.Item, error) {
+	it, err := s.store.CreateItem(ctx, req.GetItem().GetTitle())
+	if err != nil {
+		return nil, err
+	}
+	return toProto(it), nil
+}
+
+// DeleteItem implements pb.ItemServiceServer.
+func (s *ItemService) DeleteItem(ctx context.Context, req *pb.DeleteItemRequest) (*emptypb.Empty, error) {
+	if err := s.store.DeleteItem(ctx, req.GetId()); err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func toProto(it store.Item) *pb.Item {
+	return &pb.Item{Id: it.ID, Title: it.Title, CreateTime: timestamppb.New(it.CreateTime)}
+}
+
+// Page tokens are opaque to clients (https://google.aip.dev/158): the id of
+// the last item of the previous page, base64url-encoded.
+func encodePageToken(lastID string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(lastID))
+}
+
+func decodePageToken(token string) (string, error) {
+	if token == "" {
+		return "", nil
+	}
+	b, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(b) == 0 {
+		return "", errs.BadRequest(errs.FieldViolation{Field: "page_token", Description: "invalid page token"})
+	}
+	return string(b), nil
+}

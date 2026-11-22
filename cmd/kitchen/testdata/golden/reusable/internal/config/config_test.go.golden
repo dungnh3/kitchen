@@ -1,0 +1,49 @@
+package config
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestLoad(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+		check   func(t *testing.T, c Config)
+	}{
+		{name: "defaults", check: func(t *testing.T, c Config) {
+			if c.Transport != TransportHTTP || c.Addr != ":8080" || c.ToolTimeout != 2*time.Minute {
+				t.Errorf("unexpected defaults: %+v", c)
+			}
+		}},
+		{name: "auth", env: map[string]string{
+			"MCP_RESOURCE_URL": "https://mcp.example.com/mcp",
+			"MCP_AUTH_SERVERS": "https://a.example.com, https://b.example.com",
+		}, check: func(t *testing.T, c Config) {
+			if len(c.AuthServers) != 2 || c.AuthServers[1] != "https://b.example.com" {
+				t.Errorf("AuthServers = %v", c.AuthServers)
+			}
+		}},
+		{name: "bad transport", env: map[string]string{"MCP_TRANSPORT": "sse"}, wantErr: "MCP_TRANSPORT"},
+		{name: "bad duration", env: map[string]string{"MCP_TOOL_TIMEOUT": "soon"}, wantErr: "MCP_TOOL_TIMEOUT"},
+		{name: "http resource", env: map[string]string{"MCP_RESOURCE_URL": "http://x/mcp", "MCP_AUTH_SERVERS": "https://a"}, wantErr: "https"},
+		{name: "resource without issuer", env: map[string]string{"MCP_RESOURCE_URL": "https://x/mcp"}, wantErr: "MCP_AUTH_SERVERS"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := load(func(k string) (string, bool) { v, ok := tt.env[k]; return v, ok })
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.check(t, c)
+		})
+	}
+}

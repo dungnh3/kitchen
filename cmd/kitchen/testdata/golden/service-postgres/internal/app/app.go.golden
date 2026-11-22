@@ -1,0 +1,210 @@
+// Package app wires the service together: telemetry, database, errors,
+// authentication, rate limits and the gRPC + REST server.
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/dungnh3/kitchen/auth"
+	xcontext "github.com/dungnh3/kitchen/context"
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/i18n"
+	"github.com/dungnh3/kitchen/log"
+	kprom "github.com/dungnh3/kitchen/otelx/prometheus"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/ratelimit"
+	"github.com/dungnh3/kitchen/server"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/text/language"
+
+	"github.com/acme/orders/internal/config"
+	"github.com/acme/orders/internal/service"
+	"github.com/acme/orders/internal/store/pgstore"
+)
+
+// Name is the service name reported in telemetry.
+const Name = "orders"
+
+// publicMethods skip authentication: the gRPC health service, used by load
+// balancers and Kubernetes probes. The HTTP probes /livez and /readyz are
+// always public.
+var publicMethods = []string{"/grpc.health.v1.Health/"}
+
+// Run serves the API until ctx is cancelled, then shuts down gracefully.
+// logger nil means log.Default(). extra options are appended last (tests
+// pass listeners).
+func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version string, extra ...server.Option) (err error) {
+	if err := cfg.ValidateServer(); err != nil {
+		return err
+	}
+	logger = log.OrDefault(logger)
+
+	// Traces (and metrics, logs) go over OTLP when an endpoint is set with
+	// OTEL_EXPORTER_OTLP_ENDPOINT and the other OTEL_* variables. Metrics are
+	// also served in Prometheus format on the admin port.
+	otlp := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" || os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != ""
+	telCfg := sdk.Config{
+		Disabled:       !otlp && cfg.AdminAddr == "",
+		Logger:         logger,
+		ServiceName:    Name,
+		ServiceVersion: version,
+		Environment:    cfg.Env,
+		// Clients on the internet must not decide what is sampled.
+		IgnoreRemoteSampled: true,
+	}
+	if !otlp {
+		telCfg.Traces.Exporter = sdk.ExporterNone
+	}
+	registry := prometheus.NewRegistry()
+	if cfg.AdminAddr != "" {
+		r, err := kprom.NewReader(kprom.Options{Registerer: registry})
+		if err != nil {
+			return fmt.Errorf("prometheus: %w", err)
+		}
+		telCfg.MetricReaders = append(telCfg.MetricReaders, r)
+	}
+	tel, err := sdk.Setup(ctx, telCfg)
+	if err != nil {
+		return fmt.Errorf("telemetry: %w", err)
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		err = errors.Join(err, tel.Shutdown(sctx))
+	}()
+
+	pool, err := openDB(ctx, cfg, logger, tel)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if cfg.Database.MigrateOnStart {
+		if err := migrateUp(ctx, pool, logger); err != nil {
+			return err
+		}
+	}
+	st := pgstore.New(pool)
+
+	bundle, err := i18n.New(language.English, i18n.WithDefaults())
+	if err != nil {
+		return fmt.Errorf("i18n: %w", err)
+	}
+	errh := errs.NewHandler(errs.Config{Logger: logger, Localizer: bundle, Domain: cfg.ErrorDomain})
+
+	limiter, err := ratelimit.New(ratelimit.Config{
+		Default:       &ratelimit.Policy{Limits: ratelimit.DefaultLimits()},
+		Skip:          publicMethods,
+		Exempt:        cfg.RateLimit.Exempt,
+		DryRun:        cfg.RateLimit.DryRun,
+		Disabled:      cfg.RateLimit.Disabled,
+		Errors:        errh,
+		Logger:        logger,
+		MeterProvider: tel.MeterProvider(),
+	})
+	if err != nil {
+		return fmt.Errorf("rate limit: %w", err)
+	}
+
+	opts := []server.Option{
+		server.WithLogger(logger),
+		server.WithVersion(version),
+		server.WithErrors(errh),
+		server.WithGRPCAddr(cfg.GRPCAddr),
+		server.WithHTTPAddr(cfg.HTTPAddr),
+		server.WithTracerProvider(tel.TracerProvider()),
+		server.WithMeterProvider(tel.MeterProvider()),
+		server.WithPropagator(tel.Propagator()),
+		server.WithRateLimit(limiter),
+		server.WithShutdownDelay(cfg.ShutdownDelay),
+		server.WithShutdownTimeout(cfg.ShutdownTimeout),
+		server.WithServices(service.New(st)),
+	}
+	opts = append(opts, server.WithReadiness(server.Check{Name: "postgres", Func: pool.Ping}))
+	if len(cfg.TrustedProxies) > 0 {
+		tp, err := xcontext.NewTrustedProxies(cfg.TrustedProxies...)
+		if err != nil {
+			return fmt.Errorf("TRUSTED_PROXIES: %w", err)
+		}
+		opts = append(opts, server.WithTrustedProxies(tp))
+	}
+	if cfg.AdminAddr != "" {
+		opts = append(opts, server.WithAdmin(cfg.AdminAddr,
+			server.WithPprof(),
+			server.WithAdminHandler("GET /metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{})),
+		))
+	}
+	if cfg.GRPCReflection {
+		opts = append(opts, server.WithReflection())
+	}
+
+	if cfg.Auth.Disabled {
+		logger.WarnContext(ctx, "authentication is disabled (AUTH_DISABLED=true): every caller is anonymous")
+	} else {
+		authn, closeAuth, err := newAuthenticator(ctx, cfg.Auth, errh, logger, tel)
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, closeAuth(context.WithoutCancel(ctx))) }()
+		opts = append(opts, server.WithAuth(authn), server.WithUserIDFrom(auth.SubjectFromContext))
+	}
+
+	srv, err := server.New(append(opts, extra...)...)
+	if err != nil {
+		return err
+	}
+	return srv.Run(ctx)
+}
+
+// newAuthenticator verifies JWTs with the issuer's JWKS. It fails if the key
+// set cannot be fetched, so a misconfigured service never starts.
+func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, logger *log.Logger, tel *sdk.Telemetry) (*auth.Authenticator, func(context.Context) error, error) {
+	jwks, err := auth.NewJWKS(ctx, auth.JWKSConfig{
+		Issuer:   cfg.Issuer,
+		Audience: cfg.Audience,
+		URL:      cfg.JWKSURL,
+		Types:    cfg.TokenTypes,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("auth: %w", err)
+	}
+	authn, err := auth.New(auth.Config{
+		Verifiers:     []auth.Verifier{jwks},
+		Audience:      cfg.Audience,
+		Public:        publicMethods,
+		WriteError:    errh.WriteHTTP,
+		Logger:        logger,
+		MeterProvider: tel.MeterProvider(),
+	})
+	if err != nil {
+		_ = jwks.Close(ctx)
+		return nil, nil, fmt.Errorf("auth: %w", err)
+	}
+	return authn, jwks.Close, nil
+}
+
+func openDB(ctx context.Context, cfg config.Config, logger *log.Logger, tel *sdk.Telemetry) (*pgxpool.Pool, error) {
+	pool, err := pg.Open(ctx, pg.Config{
+		URL:              cfg.Database.URL,
+		MaxConns:         cfg.Database.MaxConns,
+		StatementTimeout: cfg.Database.StatementTimeout,
+		ApplicationName:  Name,
+		// pg sets no time zone; sessions use UTC so now() and casts of
+		// timestamptz to text do not depend on the server's setting.
+		RuntimeParams: map[string]string{"timezone": "UTC"},
+	},
+		pg.WithLogger(logger),
+		pg.WithTracerProvider(tel.TracerProvider()),
+		pg.WithMeterProvider(tel.MeterProvider()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: %w", err)
+	}
+	return pool, nil
+}
