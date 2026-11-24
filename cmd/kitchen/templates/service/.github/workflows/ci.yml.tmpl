@@ -26,6 +26,8 @@ jobs:
       - uses: actions/setup-go@{% .Actions.SetupGo %}
         with:
           go-version-file: go.mod
+      - name: files managed by kitchen are not edited
+        run: go run github.com/dungnh3/kitchen/cmd/kitchen@{% .CLIVersion %} check
       - name: generated code is up to date
         run: |
           make generate

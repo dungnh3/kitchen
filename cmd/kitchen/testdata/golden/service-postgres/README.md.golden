@@ -36,6 +36,7 @@ curl -s localhost:8080/v1/items
 | `internal/service/` | The API implementation |
 | `internal/store/` | The `Store` interface and its implementations (`memstore`, `pgstore`) |
 | `docs/ENV.md` | Environment variables |
+| `.kitchen.yaml` | How kitchen generated the project; `make check` compares the managed files with it |
 | `internal/store/pgstore/queries.sql` | SQL queries; `make generate` turns them into `sqlcdb` (committed) |
 | `migrations/` | goose migrations, embedded in the binary |
 
@@ -88,6 +89,14 @@ To publish events reliably, write them in the same transaction as the data
 with the transactional outbox `github.com/dungnh3/kitchen/pubsub/outbox/pgx`
 (add its `Schema()` to a migration) and relay them to Pub/Sub, Kafka or SQS
 with the `pubsub` adapters.
+
+## Managed files
+
+`.golangci.yml`, `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`
+and `buf.gen.yaml` are managed by kitchen: CI and `make check` fail when one
+of them is edited by hand, and `make check ARGS=-write` updates them to the
+current template. To own one of them, remove it from `managed` in
+`.kitchen.yaml`.
 
 ## Deploy
 

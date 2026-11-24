@@ -1,4 +1,8 @@
 # syntax=docker/dockerfile:1
+# Managed by kitchen: "kitchen check" fails when this file differs from
+# the version kitchen wrote, and "kitchen check -write" updates it to the
+# current template. To own the file instead, remove it from "managed" in
+# .kitchen.yaml.
 # Pin both images by digest (Renovate/Dependabot keep them current).
 FROM golang:1.27-alpine3.24 AS build
 WORKDIR /src

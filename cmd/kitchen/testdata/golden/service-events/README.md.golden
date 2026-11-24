@@ -40,6 +40,7 @@ curl -s localhost:8080/v1/items
 | `internal/consumer/` | The event handlers of the worker |
 | `internal/job/` | Periodic jobs, each on one worker replica at a time (lease on Redis) |
 | `docs/ENV.md` | Environment variables |
+| `.kitchen.yaml` | How kitchen generated the project; `make check` compares the managed files with it |
 | `internal/store/pgstore/queries.sql` | SQL queries; `make generate` turns them into `sqlcdb` (committed) |
 | `migrations/` | goose migrations, embedded in the binary |
 
@@ -105,6 +106,14 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
   stop when its context is cancelled.
 - **Probes.** Set `ADMIN_ADDR` and point the worker's probes at `/livez` and
   `/readyz` on it.
+
+## Managed files
+
+`.golangci.yml`, `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`
+and `buf.gen.yaml` are managed by kitchen: CI and `make check` fail when one
+of them is edited by hand, and `make check ARGS=-write` updates them to the
+current template. To own one of them, remove it from `managed` in
+`.kitchen.yaml`.
 
 ## Deploy
 

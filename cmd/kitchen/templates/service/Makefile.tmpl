@@ -8,6 +8,7 @@ BUF           := go run github.com/bufbuild/buf/cmd/buf@{% .Versions.Buf %}
 SQLC          := go run github.com/sqlc-dev/sqlc/cmd/sqlc@{% .Versions.Sqlc %}
 {%- end %}
 GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{% .GolangciLintVersion %}
+KITCHEN       := go run github.com/dungnh3/kitchen/cmd/kitchen@{% .CLIVersion %}
 {%- if .Postgres %}
 
 DB_URL ?= postgres://app:app@localhost:5432/app?sslmode=disable
@@ -27,7 +28,7 @@ LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=
 	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=http://localhost:9324/000000000000/$(SQS_QUEUE)
 {%- end %}
 
-.PHONY: generate build test lint breaking run tidy docker{% if .Worker %} run-worker{% end %}{% if .Compose %} up down{% end %}{% if .Postgres %} migrate-up migrate-down migrate-status{% end %}
+.PHONY: generate build test lint check breaking run tidy docker{% if .Worker %} run-worker{% end %}{% if .Compose %} up down{% end %}{% if .Postgres %} migrate-up migrate-down migrate-status{% end %}
 
 # Regenerate gen/ from proto/{% if .Postgres %} and internal/store/pgstore/sqlcdb from the SQL{% end %}.
 # The generated code is committed; CI fails if it is stale.
@@ -49,6 +50,11 @@ lint:
 {%- if .Postgres %}
 	$(SQLC) vet
 {%- end %}
+
+# Fail when a file managed by kitchen was edited (see .kitchen.yaml). Add
+# ARGS=-write to update the managed files to the current template.
+check:
+	$(KITCHEN) check $(ARGS)
 
 # Compare the API with main for breaking changes.
 breaking:

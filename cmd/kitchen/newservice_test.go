@@ -170,6 +170,11 @@ func TestGeneratedServiceBuilds(t *testing.T) {
 					t.Fatalf("not generated: %v", err)
 				}
 			}
+			// Code generation and tidying leave the managed files alone.
+			var checkOut bytes.Buffer
+			if err := runCheck(t.Context(), checkParams{Dir: dir, Offline: true}, &checkOut); err != nil || strings.Contains(checkOut.String(), "warning") {
+				t.Fatalf("kitchen check: %v\n%s", err, checkOut.String())
+			}
 			goCmd("build", "./...")
 			goCmd("vet", "./...")
 			goCmd("test", "-race", "-count=1", "./...")
@@ -235,6 +240,7 @@ func TestServiceValidate(t *testing.T) {
 
 func TestRunServiceCLI(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "out")
+	dryDir := filepath.Join(t.TempDir(), "dry")
 	newArgs := []string{"new", "service", "-module", "github.com/acme/orders", "-dir", dir, "-no-generate", "-yes"}
 	tests := []struct {
 		name     string
@@ -248,6 +254,7 @@ func TestRunServiceCLI(t *testing.T) {
 		{"outbox without db", []string{"new", "service", "-module", "github.com/acme/x", "-db", "none", "-with", "pubsub,outbox", "-yes"}, 1, "-with outbox needs"},
 		{"bad flag", []string{"new", "service", "-nope"}, 2, ""},
 		{"help flag", []string{"new", "service", "-h"}, 0, "-no-generate"},
+		{"dry run", []string{"new", "service", "-module", "github.com/acme/dry", "-dir", dryDir, "-dry-run", "-yes"}, 0, "Dockerfile  (managed)"},
 	}
 	for _, tt := range tests { // sequential: "refuse" depends on "create"
 		var out bytes.Buffer
@@ -261,6 +268,9 @@ func TestRunServiceCLI(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "proto", "orders", "v1", "item_service.proto")); err != nil {
 		t.Errorf("proto not generated: %v", err)
+	}
+	if _, err := os.Stat(dryDir); !os.IsNotExist(err) {
+		t.Errorf("-dry-run created %s (err %v)", dryDir, err)
 	}
 }
 

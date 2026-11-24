@@ -1,3 +1,7 @@
+# Managed by kitchen: "kitchen check" fails when this file differs from
+# the version kitchen wrote, and "kitchen check -write" updates it to the
+# current template. To own the file instead, remove it from "managed" in
+# .kitchen.yaml.
 # Code generation: make generate. The plugins are "tool" dependencies in
 # go.mod, so their versions match the runtime libraries.
 version: v2

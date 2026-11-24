@@ -4,6 +4,7 @@
 //
 //	kitchen new service [flags]  create a gRPC + REST service
 //	kitchen new mcp [flags]      create an MCP server
+//	kitchen check [flags]        check the managed files of a generated service
 //	kitchen version
 //
 // Run "kitchen new service -h" or "kitchen new mcp -h" for the flags. With
@@ -34,6 +35,7 @@ const usage = `kitchen scaffolds projects that use github.com/dungnh3/kitchen.
 Usage:
   kitchen new service [flags]  create a gRPC + REST service (run with -h for flags)
   kitchen new mcp [flags]      create an MCP server (run with -h for flags)
+  kitchen check [flags]        check the managed files of a generated service
   kitchen version              print the version
 `
 
@@ -57,6 +59,8 @@ func run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 		default:
 			err = fmt.Errorf("unknown template %q", args[1])
 		}
+	case "check":
+		err = checkCommand(ctx, args[1:], stdout, stderr)
 	case "version":
 		_, _ = fmt.Fprintln(stdout, version())
 	case "help", "-h", "--help":

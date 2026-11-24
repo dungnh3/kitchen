@@ -48,6 +48,7 @@ curl -s localhost:8080/v1/items
 | `internal/job/` | Periodic jobs, each on one worker replica at a time (lease on Redis) |
 {%- end %}
 | `docs/ENV.md` | Environment variables |
+| `.kitchen.yaml` | How kitchen generated the project; `make check` compares the managed files with it |
 {%- if .Postgres %}
 | `internal/store/pgstore/queries.sql` | SQL queries; `make generate` turns them into `sqlcdb` (committed) |
 | `migrations/` | goose migrations, embedded in the binary |
@@ -146,6 +147,14 @@ with the transactional outbox `github.com/dungnh3/kitchen/pubsub/outbox/pgx`
 (add its `Schema()` to a migration) and relay them to Pub/Sub, Kafka or SQS
 with the `pubsub` adapters.
 {%- end %}{% end %}
+
+## Managed files
+
+`.golangci.yml`, `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`
+and `buf.gen.yaml` are managed by kitchen: CI and `make check` fail when one
+of them is edited by hand, and `make check ARGS=-write` updates them to the
+current template. To own one of them, remove it from `managed` in
+`.kitchen.yaml`.
 
 ## Deploy
 

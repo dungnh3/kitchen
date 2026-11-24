@@ -104,6 +104,7 @@ type serviceParams struct {
 	projectParams
 	DB         string
 	NoGenerate bool
+	DryRun     bool
 	// With lists the optional features, sorted and without duplicates
 	// after applyDefaults.
 	With []string
@@ -162,12 +163,14 @@ func (p serviceParams) ProtoPackage() string { return strings.ReplaceAll(p.Name,
 
 type serviceTemplateData struct {
 	serviceParams
-	Versions            any
-	GoDirective         string
-	GoImage             string
-	RuntimeImage        string
-	PostgresImage       string
-	Images              any
+	Versions      any
+	GoDirective   string
+	GoImage       string
+	RuntimeImage  string
+	PostgresImage string
+	Images        any
+	// CLIVersion is the kitchen version that CI and "make check" run.
+	CLIVersion          string
 	GolangciLintVersion string
 	Actions             actionPins
 }
@@ -189,6 +192,17 @@ func newService(ctx context.Context, args []string, stdin *os.File, stdout, stde
 	files, err := renderService(p)
 	if err != nil {
 		return err
+	}
+	if p.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would create %s (%d files):\n", p.Dir, len(files))
+		for _, rel := range files.Paths() {
+			mark := ""
+			if slices.Contains(serviceManaged, rel) {
+				mark = "  (managed)"
+			}
+			_, _ = fmt.Fprintf(stdout, "  %s%s\n", rel, mark)
+		}
+		return nil
 	}
 	if err := scaffold.Write(p.Dir, files); err != nil {
 		return err
@@ -237,6 +251,7 @@ func parseServiceFlags(args []string, stderr io.Writer) (serviceParams, error) {
 	p.addFlags(fs, "github.com/acme/orders", "service name, used for the proto package and telemetry")
 	fs.StringVar(&p.DB, "db", dbPostgres, `database: "postgres" (pgx + sqlc + goose migrations) or "none"`)
 	fs.BoolVar(&p.NoGenerate, "no-generate", false, "do not run go mod tidy and buf generate after writing the project")
+	fs.BoolVar(&p.DryRun, "dry-run", false, "list the files that would be generated; write nothing")
 	fs.Func("with", "comma-separated optional features: "+featureNames(), func(v string) error {
 		for f := range strings.SplitSeq(v, ",") {
 			if f = strings.TrimSpace(f); f != "" {
@@ -337,6 +352,7 @@ func renderService(p serviceParams) (scaffold.Files, error) {
 		RuntimeImage:        runtimeImage,
 		PostgresImage:       localImages.Postgres,
 		Images:              localImages,
+		CLIVersion:          pinnedCLIVersion(),
 		GolangciLintVersion: golangciLintVersion,
 		Actions:             actions,
 	})
@@ -357,7 +373,20 @@ func renderService(p serviceParams) (scaffold.Files, error) {
 		}
 		out[rel] = b
 	}
+	if err := addManaged(out, p); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// pinnedCLIVersion is the kitchen version that generated projects run for
+// "kitchen check": this CLI's when it is a release, else the default
+// library version.
+func pinnedCLIVersion() string {
+	if v := cliVersion(); semverRE.MatchString(v) {
+		return v
+	}
+	return defaultKitchenVersion
 }
 
 func matchesAny(rel string, patterns []string) bool {

@@ -18,7 +18,11 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+func TestMain(m *testing.M) {
+	// Golden files must not depend on how the test binary was built.
+	cliVersion = func() string { return "v0.1.0" }
+	goleak.VerifyTestMain(m)
+}
 
 const testWorkflow = "acme/devops-workflows/.github/workflows/go.yml@0123456789abcdef0123456789abcdef01234567"
 

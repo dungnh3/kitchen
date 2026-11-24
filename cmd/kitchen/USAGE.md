@@ -1,7 +1,8 @@
 # cmd/kitchen
 
 `kitchen` is the code generator for projects built on kitchen. It has two
-templates:
+templates, and a `check` command that keeps generated services in line
+with their template:
 
 - `kitchen new service`: a gRPC + REST (grpc-gateway) service, with
   PostgreSQL or without a database, and optional Redis, events (Pub/Sub,
@@ -109,6 +110,7 @@ Run `kitchen new service -h` or `kitchen new mcp -h` for the same list.
 | `-db` | `postgres` | `none` for a service without a database. It uses an in-memory store and drops `migrations/`, `sqlc.yaml`, `internal/app/migrate.go` and `internal/store/pgstore/` |
 | `-no-generate` | `false` | Skip `go mod tidy` and `buf generate`, for example offline or in a sandbox. The CLI prints the steps to run by hand |
 | `-with` | | Comma-separated optional features, see below |
+| `-dry-run` | `false` | List the files that would be generated, marking the managed ones; write nothing |
 | `-pubsub` | `gcp` | Message broker with `-with pubsub`: `gcp` (Google Cloud Pub/Sub), `kafka` or `sqs`. Refused without `-with pubsub` |
 
 Each `-with` feature wires one kitchen package, with its configuration,
@@ -178,6 +180,7 @@ The exact trees are in [testdata/golden](testdata/golden):
 | `internal/store/` | `Store` interface, `memstore`, and `pgstore` with `queries.sql` and sqlc output (`sqlcdb`, committed) |
 | `migrations/` | goose SQL, embedded in the binary; `00002_create_outbox.sql` with `outbox` |
 | `compose.yaml` | Local Postgres, Redis and broker (emulator) for `make up` |
+| `.kitchen.yaml` | How the project was generated and the hash of each managed file; read by `kitchen check` |
 | `docs/ENV.md` | Every environment variable and what production needs |
 | `buf.yaml`, `buf.lock`, `buf.gen.yaml`, `sqlc.yaml` | Code generation; protoc plugins are `tool` deps in `go.mod` |
 | `Dockerfile`, `Makefile`, `.golangci.yml`, `.github/` | Build, tasks, lint rules, CI and a PR template |
@@ -196,6 +199,40 @@ and [testdata/golden/reusable](testdata/golden/reusable).
 | `internal/config/` | Environment config (stdlib), validated: https resource URL, issuers required with auth |
 | `internal/tools/` | A typed example tool (`greet`) and its test with the `mcpkittest` in-memory client |
 | `Dockerfile`, `Makefile`, `.golangci.yml`, `.github/workflows/ci.yml` | Build, tasks, lint rules, CI |
+
+## Managed files and `kitchen check`
+
+kitchen owns a few files of a generated service: `.golangci.yml` (the D5/D7
+rules), `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml` (SHA pins)
+and `buf.gen.yaml`. They start with a "Managed by kitchen" header, and
+`.kitchen.yaml` records the answers used to generate the project and the
+sha256 of each managed file. Every other file belongs to the project.
+
+```bash
+kitchen check            # in the project; or: make check
+kitchen check -write     # update the unedited managed files to the current template
+```
+
+| Finding | Result |
+|---|---|
+| A managed file was edited or deleted | Error, exit 1. Restore it, or remove it from `managed` in `.kitchen.yaml` to own it |
+| The current template writes a managed file differently | Warning; `-write` updates it and the hash |
+| A managed file is new in the template and absent from the project | Warning; `-write` creates it |
+| A newer kitchen is released | Warning with the command to run (skipped with `-offline` or when the module proxy is unreachable) |
+
+`-write` never touches an edited file. The standalone CI workflow and
+`make check` run `kitchen check` at the version that generated the project,
+so CI fails on hand edits but not on a new kitchen release. With
+`-ci=reusable`, add the step to your shared workflow.
+
+| Flag | Default | When to change it |
+|---|---|---|
+| `-dir` | `.` | To check another directory |
+| `-write` | `false` | To update the managed files to the current template |
+| `-offline` | `false` | To skip the lookup of the latest kitchen version |
+
+Seeded files (code, README, Makefile, `compose.yaml`, `docs/ENV.md`) are
+not compared; there is no upgrade of seeded files yet.
 
 ## Integration with kitchen
 
@@ -403,6 +440,10 @@ go test -short ./...     # skip the builds of generated projects (no network)
 go test ./... -update    # rewrite testdata/golden after a template change
 ```
 
+The check tests generate a service and edit, delete, own and age its
+managed files; the build tests also run `kitchen check` on every generated
+service after code generation.
+
 The build tests generate every golden variant, build, vet, test and lint
 them. They need the network and, for the service, Docker. A matrix test
 renders every valid combination of `-db`, `-with` and `-pubsub` and checks
@@ -428,7 +469,8 @@ the file set. Review a golden diff the way you would review real code.
 - Keep `ADMIN_ADDR` private, and point the probes at `/livez` and `/readyz`.
 - For an MCP server over HTTP, set `MCP_RESOURCE_URL` and
   `MCP_AUTH_SERVERS`, and list browser origins in `MCP_ALLOWED_ORIGINS`.
-- Keep `.golangci.yml` and the SHA pins in CI.
+- Keep `.golangci.yml` and the SHA pins in CI; `kitchen check` fails when
+  a managed file is edited.
 - `make docker` builds a distroless nonroot image. For private modules pass
   `--build-arg GOPRIVATE=...` and `--secret id=netrc,src=$HOME/.netrc`.
 

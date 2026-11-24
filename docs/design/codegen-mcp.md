@@ -243,7 +243,7 @@ kitchen new service ... [-with redis,lease,pubsub,outbox] [-pubsub gcp|kafka|sqs
 | F2 | One binary with commands `serve` (default), `worker`, `migrate`; the worker exists with `pubsub` or `lease` | one `cmd/*` per process; consumers inside the server process | One image and one wiring; the worker scales and deploys apart from the API |
 | F3 | Periodic jobs run in the worker under `lease.Elector` (one replica per job), interval only | a new `cron` package; Kubernetes CronJob only | No new concern or dependency |
 | F4 | Local dependencies in `compose.yaml` (`make up`/`down`, creates topics, subscriptions, queues) and every variable in `docs/ENV.md`; no Kubernetes or Helm files | kustomize; Helm | Manifests live with the platform; the env contract is what a deploy needs |
-| F5 | Upgrades of generated projects: a manifest plus a drift check first, a three-way `kitchen upgrade` later | upgrade now; none | Cheap and safe while templates still change |
+| F5 | Upgrades of generated projects: a manifest plus a drift check first (§3c), a three-way `kitchen upgrade` later | upgrade now; none | Cheap and safe while templates still change |
 | F6 | Add-on generators planned: `kitchen add domain`, `add consumer`, `add job`; no `add rpc` or `add migration` (buf and goose do that) | – | – |
 | F7 | Internal APIs: a per-method policy, deny by default | a second gRPC port | One mechanism, fail-closed |
 | F8 | MySQL template later; MongoDB documented only | both; Postgres only | – |
@@ -259,6 +259,25 @@ from configuration; Kafka sends poison messages to a dead-letter topic
 after `PUBSUB_MAX_DELIVERY_ATTEMPTS`; the worker serves its probes on
 `ADMIN_ADDR`. The integration test uses miniredis and the in-memory broker.
 `cache` and `sse` features wait for the reviews of those packages.
+
+## 3c. Managed files and `kitchen check` (owner, popups 2026-11-24)
+
+| # | Decision (owner) | Alternatives | Why |
+|---|---|---|---|
+| M1 | Managed files are the infrastructure files only: `.golangci.yml`, `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`, `buf.gen.yaml` | also Makefile and compose (with an include file); only `.golangci.yml` | They hold the D5/D7 rules and the supply-chain pins and are rarely edited |
+| M2 | `kitchen check -write` updates managed files that were not edited, and their hashes | report only | A fix is one command and never overwrites a hand edit |
+| M3 | CI fails on hand edits and only warns about a newer template or release | fail on both; no CI step | A kitchen release does not break every service's CI |
+
+Mechanics: `.kitchen.yaml` (YAML, `go.yaml.in/yaml/v3`, unknown fields
+rejected) records the CLI version, the template, the answers and
+`sha256:` hashes of the managed files. `kitchen check` re-renders the
+template from the answers and compares; a managed file absent from both
+the manifest and the project is new in the template. The newer-release
+warning uses `go list -m <cli>@latest` outside any module and is silent on
+failure. The managed header goes after a Dockerfile `# syntax=` directive.
+Generated CI and `make check` pin the CLI at the version that generated the
+project (`v0.1.0` for development builds). `kitchen new service -dry-run`
+lists the files, marking the managed ones.
 
 ## 4. Sequencing
 
