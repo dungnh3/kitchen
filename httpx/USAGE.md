@@ -220,7 +220,10 @@ c, err := httpx.New(httpx.WithBaseURL(api.URL), httpx.WithCircuitBreaker(httpx.B
 
 While open, calls return `errs.ErrDependencyUnavailable` wrapping
 `httpx.ErrCircuitOpen`, without sending anything. Set `FailureRatio` and
-`MinRequests` for a ratio breaker, and `IsFailure` to change what counts.
+`MinRequests` for a ratio breaker, and `IsFailure` to change which responses
+count. Transport errors (connection refused, timeouts, resets) always count;
+a call cancelled by its caller and a destination refused by the SSRF guard
+do not.
 
 ### SSRF guard for user-supplied URLs
 

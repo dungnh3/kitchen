@@ -109,8 +109,10 @@ type Publisher struct {
 	telOpts []pubsub.TelemetryOption
 	tel     *pubsub.Telemetry
 
-	mu     sync.Mutex
-	paused map[string]map[string]struct{} // queue URL -> paused FIFO keys
+	mu       sync.Mutex
+	paused   map[string]map[string]struct{} // queue URL -> paused FIFO keys
+	closed   bool
+	inflight sync.WaitGroup // Publish calls past the closed check
 }
 
 var (
@@ -218,6 +220,10 @@ func (p *Publisher) Publish(ctx context.Context, topic string, msgs ...*pubsub.M
 		if topic == "" {
 			return nil, errs.Wrap(errors.New("sqs: empty queue URL"), errs.ErrInvalidArgument)
 		}
+		if !p.begin() {
+			return nil, fmt.Errorf("sqs: publish to %s: %w", topic, pubsub.ErrClosed)
+		}
+		defer p.inflight.Done()
 		fifo := isFIFO(topic)
 		ids := make([]string, len(msgs))
 		failed := map[int]error{}
@@ -322,6 +328,34 @@ func (p *Publisher) ResumeKey(topic, key string) {
 	}
 }
 
-// Close is a no-op: requests are not buffered, and Publish keeps sending
-// after Close.
-func (p *Publisher) Close(context.Context) error { return nil }
+// begin registers a Publish call, or reports false after Close.
+func (p *Publisher) begin() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return false
+	}
+	p.inflight.Add(1)
+	return true
+}
+
+// Close makes later Publish calls fail with [pubsub.ErrClosed] and waits
+// for the Publish calls already sending, or until ctx is done. Nothing is
+// buffered, so there is nothing else to flush. It does not close the API
+// client. Safe to call more than once.
+func (p *Publisher) Close(ctx context.Context) error {
+	p.mu.Lock()
+	p.closed = true
+	p.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		p.inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}

@@ -112,7 +112,7 @@ func ExampleWithCircuitBreaker() {
 	defer api.Close()
 
 	c, err := httpx.New(httpx.WithBaseURL(api.URL), httpx.WithCircuitBreaker(httpx.BreakerConfig{
-		FailureThreshold: 2,                // 5xx responses count
+		FailureThreshold: 2,                // 5xx and transport errors count
 		ResetTimeout:     30 * time.Second, // window, and how long it stays open
 		OnStateChange: func(from, to string) {
 			fmt.Println("breaker:", from, "->", to)

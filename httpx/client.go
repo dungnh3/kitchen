@@ -233,8 +233,14 @@ func New(opts ...Option) (*Client, error) {
 	for _, mw := range o.middlewares {
 		base = mw(base)
 	}
+	var transport http.RoundTripper = upstreamTransport{base}
+	var breaker resty.CircuitBreaker
+	if o.breaker != nil {
+		breaker = o.breaker.build()
+		transport = breakerTransport{next: transport, cb: breaker}
+	}
 	rc := resty.New()
-	rc.SetTransport(otelx.HTTPTransport(upstreamTransport{base}, o.otel...))
+	rc.SetTransport(otelx.HTTPTransport(transport, o.otel...))
 	rc.SetCookieJar(nil) // a shared client must not replay one caller's cookies
 	rc.SetLogger(restyLogger{o.logger})
 	rc.SetTimeout(o.timeout)
@@ -260,8 +266,8 @@ func New(opts ...Option) (*Client, error) {
 	if o.retry != nil {
 		o.retry.apply(rc)
 	}
-	if o.breaker != nil {
-		rc.SetCircuitBreaker(o.breaker.build())
+	if breaker != nil {
+		rc.SetCircuitBreaker(breaker)
 	}
 	if o.originGuard {
 		c.reqHooks = append(c.reqHooks, OriginGuard)
