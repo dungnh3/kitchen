@@ -190,8 +190,9 @@ func WithPropagator(p propagation.TextMapPropagator) Option {
 
 // WithUnaryInterceptors appends unary interceptors (authentication,
 // authorization, rate limiting). They run after recovery, request info,
-// logging and error conversion, and before WithUserIDFrom and validation, so
-// the errors they return are converted by the errs.Handler.
+// drain, logging, error conversion, WithAuth and WithRateLimit, and before
+// WithUserIDFrom and validation, so the errors they return are converted by
+// the errs.Handler.
 func WithUnaryInterceptors(i ...grpc.UnaryServerInterceptor) Option {
 	return func(c *config) { c.unary = append(c.unary, i...) }
 }
@@ -275,8 +276,9 @@ func WithTrustedProxies(p *xcontext.TrustedProxies) Option {
 
 // WithTrustedIdentityPeers sets the peers (internal services, an auth
 // proxy) whose identity metadata (xcontext.IdentityHeaders) is accepted.
-// From any other peer those keys are removed before any interceptor runs,
-// and a Warn is logged (at most once a minute) so a missing service-to-
+// From any other peer those keys are removed right after panic recovery,
+// before authentication, user interceptors, middlewares and handlers see
+// them, and a Warn is logged (at most once a minute) so a missing service-to-
 // service peer does not go unnoticed.
 func WithTrustedIdentityPeers(p *xcontext.TrustedProxies) Option {
 	return func(c *config) { c.trustedIdentityPeers = p }
@@ -315,7 +317,8 @@ func WithI18n(b *i18n.Bundle) Option { return func(c *config) { c.i18n = b } }
 // example auth.SubjectFromContext. It runs after the user interceptors and
 // HTTP middlewares (where authentication happens) and stores the id with
 // xcontext.WithUserID, so handlers, logs (user_id) and outgoing
-// calls (xcontext.AppendToOutgoing) see it.
+// calls (xcontext.AppendToOutgoing) see it. On HTTPRegistrar routes it runs
+// before the WithAuth check, which stores the user id itself.
 func WithUserIDFrom(f func(context.Context) (string, bool)) Option {
 	return func(c *config) { c.userID = f }
 }

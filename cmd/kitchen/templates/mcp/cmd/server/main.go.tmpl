@@ -55,8 +55,9 @@ func run() error {
 		return err
 	}
 
-	// Traces and metrics are exported over OTLP when an endpoint is set
-	// (OTEL_EXPORTER_OTLP_ENDPOINT and the other OTEL_* variables).
+	// Traces are exported over OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is set;
+	// metrics also need OTEL_METRICS_EXPORTER=otlp. The other OTEL_*
+	// variables apply.
 	tel, err := sdk.Setup(ctx, sdk.Config{
 		Disabled:       os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "",
 		Logger:         logger,

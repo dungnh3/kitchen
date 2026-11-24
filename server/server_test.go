@@ -108,7 +108,7 @@ func TestIdentityStripped(t *testing.T) {
 	c := &capture{}
 	r := start(t, WithServices(healthGateway{}), WithUnaryInterceptors(c.interceptor))
 
-	// gRPC: client-sent user-id is removed before any interceptor.
+	// gRPC: client-sent user-id is removed before the user interceptors.
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "user-id", "victim", "x-user-id", "v2", "x-kitchen-client-ip", "1.2.3.4")
 	if _, err := healthpb.NewHealthClient(r.conn).Check(ctx, &healthpb.HealthCheckRequest{}); err != nil {
 		t.Fatal(err)
@@ -459,8 +459,7 @@ func TestStreamingSSE(t *testing.T) {
 	if line != "data: {\"status\":\"SERVING\"}\n" {
 		t.Fatalf("first event %q", line)
 	}
-	// Watch ignores Draining, so shutdown force-closes it at the deadline;
-	// Run must still return.
+	// The Watch stream ends when draining starts; Run must return.
 	if err := r.stop(); err != nil {
 		t.Fatal(err)
 	}

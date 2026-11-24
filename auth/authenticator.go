@@ -52,9 +52,9 @@ type Config struct {
 	// MaxTokenBytes rejects longer tokens before any decoding. Default 8192.
 	MaxTokenBytes int
 	// StreamOutlivesToken keeps a stream running after its token expires.
-	// By default the stream's context is cancelled at the principal's
-	// ExpiresAt and the stream ends with TOKEN_EXPIRED, so a client must
-	// reconnect with a fresh token.
+	// By default, when the principal has an ExpiresAt, the stream's context
+	// is cancelled at that time and the stream ends with TOKEN_EXPIRED, so a
+	// client must reconnect with a fresh token.
 	StreamOutlivesToken bool
 	// Authorizer runs after authentication. Optional.
 	Authorizer Authorizer
@@ -215,7 +215,8 @@ func (a *Authenticator) Authenticate(ctx context.Context, token string) (*Princi
 }
 
 // route picks the verifier. The unverified iss is only a routing key: the
-// chosen verifier checks the signature and the iss again.
+// chosen verifier must verify the token itself (Static and JWKS check the
+// signature and the iss).
 func (a *Authenticator) route(token string) (Verifier, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {

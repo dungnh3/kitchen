@@ -15,7 +15,7 @@ import (
 const EnvProduction = "production"
 
 // Config is the service configuration. Logging is configured separately by
-// LOG_LEVEL, LOG_FORMAT and LOG_SCHEMA, and telemetry by the standard OTEL_*
+// LOG_LEVEL, LOG_FORMAT, LOG_SCHEMA and LOG_OUTPUT, and telemetry by the standard OTEL_*
 // variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SDK_DISABLED, ...).
 type Config struct {
 	// Env names the deployment: development, staging, production, ...
@@ -51,7 +51,8 @@ type Database struct {
 	// URL is a postgres:// URL. TLS is required unless the URL sets another
 	// sslmode, for example sslmode=disable for a local database.
 	URL string `env:"URL,required"`
-	// MaxConns bounds the pool; 0 means max(4, number of CPUs).
+	// MaxConns bounds the pool; 0 means the URL's pool_max_conns, else
+	// max(4, number of CPUs).
 	MaxConns int32 `env:"MAX_CONNS"`
 	// StatementTimeout cancels queries that run longer; 0 keeps the server
 	// default.

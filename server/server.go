@@ -360,7 +360,8 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 // healthSyncInterval is how often grpc.health.v1 follows the readiness
-// checks. The checks themselves are cached (checkTTL), so this adds no load.
+// checks. The check results are cached for checkTTL and shared with the
+// probes, so this adds at most one run of the checks per checkTTL.
 const healthSyncInterval = time.Second
 
 // syncGRPCHealth keeps the grpc.health.v1 status of the server ("") equal to
@@ -465,7 +466,8 @@ func ignoreStopped(err error) error {
 }
 
 // Close releases a Server that will never run: the in-process gateway
-// connection that New opened. Run then returns ErrClosed. Close is
+// connection that New opened, and the listeners given with WithGRPCListener,
+// WithHTTPListener and WithAdminListener. Run then returns ErrClosed. Close is
 // idempotent, and does nothing once Run has been called (Run releases
 // everything when its ctx is cancelled).
 func (s *Server) Close() error {

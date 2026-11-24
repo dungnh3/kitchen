@@ -289,7 +289,7 @@ func TestManyAndPrefix(t *testing.T) {
 		t.Fatalf("GetMany = %v, %v", m, err)
 	}
 
-	_ = mr.Set("u:a*literal", "v{}") // must not be matched by prefix "a" glob escape test below
+	_ = mr.Set("u:a*literal", "v{}") // starts with "a": deleted too; the glob escape is tested below
 	n, err := c.DeleteByPrefix(ctx, "a")
 	if err != nil || n != 3 {
 		t.Fatalf("DeleteByPrefix = %d, %v (keys %v)", n, err, mr.Keys())

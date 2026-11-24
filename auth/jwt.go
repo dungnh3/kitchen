@@ -137,8 +137,8 @@ func principalFromToken(tok jwt.Token) *Principal {
 	return p
 }
 
-// scopesFrom reads "scope" (space separated, RFC 8693) or "scp" (string or
-// array).
+// scopesFrom reads the first of "scope" (RFC 8693) and "scp" that is a
+// space-separated string or an array of strings.
 func scopesFrom(claims map[string]any) []string {
 	for _, name := range []string{"scope", "scp"} {
 		switch v := claims[name].(type) {
@@ -161,8 +161,9 @@ func scopesFrom(claims map[string]any) []string {
 
 // Key is one static verification key.
 type Key struct {
-	// ID is matched against the token's "kid" header. It may be empty when
-	// there is exactly one key.
+	// ID is matched against the token's "kid" header. An empty ID matches
+	// tokens without a kid. With exactly one key, a token without a kid uses
+	// that key whatever its ID.
 	ID string
 	// Alg is the only algorithm accepted with this key, for example
 	// jwa.HS256() or jwa.RS256().

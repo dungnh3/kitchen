@@ -29,9 +29,11 @@ type JWKSConfig struct {
 	// Algs is the algorithm allow-list. Default: RS256, ES256, EdDSA.
 	// Symmetric (HS*) algorithms are rejected: a JWKS holds public keys.
 	Algs []jwa.SignatureAlgorithm
-	// Client fetches the JWKS (kitchen/httpx: tracing, metrics, retries,
-	// redirect and SSRF policy). Default: httpx.New(httpx.WithBaseURL(URL),
-	// httpx.WithTimeout(10*time.Second)). The body is capped at 1 MiB.
+	// Client fetches the JWKS with kitchen/httpx, so its hooks, tracing,
+	// redirect policy and any retry or SSRF guard it was built with apply.
+	// Default: httpx.New(httpx.WithBaseURL(URL),
+	// httpx.WithTimeout(10*time.Second)), which has no retry and no SSRF
+	// guard. The body is capped at 1 MiB.
 	Client *httpx.Client
 	// MinRefresh and MaxRefresh bound the background refresh interval: the
 	// response's Cache-Control max-age, clamped to [MinRefresh, MaxRefresh];
@@ -168,7 +170,8 @@ func (j *JWKS) Verify(ctx context.Context, token string) (*Principal, error) {
 }
 
 // Close stops background refreshing and waits for it (bounded by ctx).
-// Verify fails with ErrAuthUnavailable afterwards. Close is idempotent.
+// Afterwards Verify fails with ErrAuthUnavailable for every token that
+// reaches the key lookup. Close is idempotent.
 func (j *JWKS) Close(ctx context.Context) error {
 	// Under mu, so no refresh starts (wg.Add) once Close waits.
 	j.mu.Lock()
@@ -216,8 +219,8 @@ func (j *JWKS) key(ctx context.Context, kid string, alg jwa.SignatureAlgorithm) 
 }
 
 // startRefresh returns the running refresh, or starts one. A refresh for an
-// unknown kid (miss) starts at most once per MissRefresh; nil means it was
-// rate-limited.
+// unknown kid (miss) starts at most once per MissRefresh. nil means it was
+// rate-limited or the verifier is closed.
 func (j *JWKS) startRefresh(miss bool) *refreshCall {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -356,8 +359,9 @@ func (j *JWKS) nextRefresh(cacheControl string) time.Duration {
 }
 
 // index keeps the keys that may verify a signature: public (a published
-// private key is reduced to its public part), not symmetric, not use=enc,
-// and RSA keys of at least 2048 bits.
+// private key is reduced to its public part), not symmetric, use (when set)
+// is sig, key_ops (when set) include verify, and RSA keys of at least 2048
+// bits.
 func (j *JWKS) index(set jwk.Set) *keyIndex {
 	idx := &keyIndex{byKID: make(map[string][]jwk.Key)}
 	for i := range set.Len() {

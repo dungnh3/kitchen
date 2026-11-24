@@ -1,9 +1,11 @@
 // Package auth authenticates gRPC and HTTP requests with bearer tokens and
-// fails closed: every token is verified (signature, exp, nbf, iss, aud and an
-// algorithm allow-list) by the Verifier registered for its issuer, and
-// anything that cannot be verified is rejected with codes.Unauthenticated.
-// There is no "trust upstream" mode and no pass-through for unconfigured
-// issuers.
+// fails closed: a JWT is verified by the Verifier registered for its iss (the
+// built-in JWT verifiers check signature, exp, nbf, iss, aud and an algorithm
+// allow-list), any other token by Config.Opaque, and the Authenticator
+// checks Config.Audience. A token that cannot be verified is rejected with
+// codes.Unauthenticated, or codes.Unavailable (AUTH_UNAVAILABLE) when the
+// token authority cannot answer. There is no "trust upstream" mode and no
+// pass-through for unconfigured issuers.
 //
 // Built-in verifiers:
 //
@@ -27,8 +29,10 @@ import (
 )
 
 // Client-visible errors: the errs catalog sentinels (localized by package
-// i18n, domain filled by the errs.Handler) plus AUTH_UNAVAILABLE. Why a
-// token was rejected is logged at Debug level, never returned.
+// i18n, domain filled by the errs.Handler) plus AUTH_UNAVAILABLE. The
+// interceptors, Middleware and AuthenticateHTTP log why a token was rejected
+// (Debug; Warn for AUTH_UNAVAILABLE) and return only the bare sentinel.
+// Errors from Authenticate and Verifier.Verify may still wrap the cause.
 var (
 	ErrTokenMissing      = errs.ErrTokenMissing      // 401, no credentials
 	ErrTokenInvalid      = errs.ErrTokenInvalid      // 401
@@ -102,8 +106,9 @@ func SubjectFromContext(ctx context.Context) (string, bool) {
 
 // Authorizer decides whether an authenticated principal may call method
 // (a gRPC full method or an HTTP route pattern). Return ErrForbidden or
-// ErrInsufficientScope (or a copy made with With) to deny; any other error
-// is also a denial, reported as FORBIDDEN.
+// ErrInsufficientScope (or a copy made with With) to deny. ErrAuthUnavailable
+// is reported as AUTH_UNAVAILABLE (503); any other error is also a denial,
+// reported as FORBIDDEN.
 type Authorizer interface {
 	Authorize(ctx context.Context, method string, p *Principal) error
 }

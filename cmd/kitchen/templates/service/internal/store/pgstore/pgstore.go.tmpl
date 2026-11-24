@@ -76,8 +76,8 @@ func (s *Store) ListItems(ctx context.Context, after string, limit int32) ([]sto
 
 {%- if .Outbox %}
 // CreateItem implements store.Store. The item and its ItemCreated event are
-// written in one transaction, so the event is published if and only if the
-// item is stored.
+// written in one transaction, so the event is enqueued if and only if the
+// item is stored; the worker's relay then publishes it.
 func (s *Store) CreateItem(ctx context.Context, title string) (store.Item, error) {
 	var it store.Item
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {

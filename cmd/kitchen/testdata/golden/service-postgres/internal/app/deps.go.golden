@@ -50,9 +50,10 @@ func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, versio
 		}
 	}()
 
-	// Traces (and metrics, logs) go over OTLP when an endpoint is set with
-	// OTEL_EXPORTER_OTLP_ENDPOINT and the other OTEL_* variables. Metrics are
-	// also served in Prometheus format on the admin port.
+	// Traces go over OTLP when OTEL_EXPORTER_OTLP_ENDPOINT or
+	// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set; metrics go over OTLP only
+	// with OTEL_METRICS_EXPORTER=otlp. Metrics are also served in Prometheus
+	// format on the admin port.
 	otlp := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" || os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != ""
 	telCfg := sdk.Config{
 		Disabled:       !otlp && cfg.AdminAddr == "",

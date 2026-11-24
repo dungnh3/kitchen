@@ -39,9 +39,10 @@ func ResponseHeaders() []string {
 
 // Key returns the ByCaller bucket key of a request: "user:<id>",
 // "anon:<id>", "device:<hash>" or "ip:<client IP>" (IPv6 collapsed to its
-// Config.IPv6Prefix, /64 by default). The client IP is the one package server resolved with its trusted
-// proxies (xcontext.Info.ClientIP); without it, remote (the transport peer
-// address) is the client. ok is false when nothing identifies the caller.
+// Config.IPv6Prefix, /64 by default). The client IP is the one package
+// server resolved with its trusted proxies (xcontext.Info.ClientIP); without
+// it, remote (the transport peer address) is the client. ok is false when
+// nothing identifies the caller.
 func (l *Limiter) Key(ctx context.Context, remote string) (string, bool) {
 	return l.identify(ctx, remote).key(ByCaller)
 }

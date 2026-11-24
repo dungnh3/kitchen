@@ -18,7 +18,8 @@ type ItemCreated struct {
 }
 
 // NewItemCreated returns the message of an ItemCreated event. Its key is the
-// item ID, so the events of one item are handled in order.
+// item ID, so brokers that order by key (Pub/Sub with message ordering,
+// Kafka, SQS FIFO queues) deliver the events of one item in order.
 func NewItemCreated(it store.Item) (*pubsub.Message, error) {
 	m, err := pubsub.NewJSON(ItemCreated{ID: it.ID, Title: it.Title, CreateTime: it.CreateTime})
 	if err != nil {

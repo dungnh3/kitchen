@@ -15,7 +15,7 @@ import (
 const EnvProduction = "production"
 
 // Config is the service configuration. Logging is configured separately by
-// LOG_LEVEL, LOG_FORMAT and LOG_SCHEMA, and telemetry by the standard OTEL_*
+// LOG_LEVEL, LOG_FORMAT, LOG_SCHEMA and LOG_OUTPUT, and telemetry by the standard OTEL_*
 // variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SDK_DISABLED, ...).
 type Config struct {
 	// Env names the deployment: development, staging, production, ...

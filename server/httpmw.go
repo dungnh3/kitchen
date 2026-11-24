@@ -67,8 +67,8 @@ func (s *Server) sanitize(next http.Handler) http.Handler {
 	})
 }
 
-// recoverHTTP turns a handler panic into a 500 when nothing was written yet,
-// and logs it. When the response had already started, it panics with
+// recoverHTTP logs a handler panic and, when nothing was written yet,
+// writes the error response (500 unless WithRecovery returns another error). When the response had already started, it panics with
 // http.ErrAbortHandler so that net/http aborts the response (HTTP/1: the
 // connection closes without the final chunk; HTTP/2: RST_STREAM) and the
 // client cannot take a truncated body for a complete one.

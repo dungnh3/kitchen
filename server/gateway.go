@@ -40,8 +40,9 @@ func (s *Server) newGatewayMux() *runtime.ServeMux {
 		forward[textproto.CanonicalMIMEHeaderKey(h)] = strings.ToLower(h)
 	}
 	// Identity headers are not forwarded as sent: gatewayMetadata passes the
-	// user id the HTTP side established (auth, WithUserIDFrom or a trusted
-	// peer), so there is exactly one value.
+	// user id the HTTP side established (WithUserIDFrom or a trusted peer),
+	// so there is exactly one value. WithAuth authenticates gateway calls in
+	// the gRPC interceptors instead.
 	for _, h := range xcontext.IdentityHeaders() {
 		delete(forward, textproto.CanonicalMIMEHeaderKey(h))
 	}
@@ -80,8 +81,8 @@ func (s *Server) newGatewayMux() *runtime.ServeMux {
 	return runtime.NewServeMux(append(opts, s.cfg.gatewayOpts...)...)
 }
 
-// gatewayMetadata passes the resolved client IP and the trace context to the
-// in-process gRPC call.
+// gatewayMetadata passes the resolved client IP, the request id, the user
+// id and the trace context to the in-process gRPC call.
 func (s *Server) gatewayMetadata(ctx context.Context, _ *http.Request) metadata.MD {
 	md := metadata.MD{}
 	if info, ok := xcontext.FromContext(ctx); ok {

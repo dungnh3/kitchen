@@ -57,8 +57,7 @@ func TestRelayHeldKeyNewEntryWaitsForPending(t *testing.T) {
 
 func msg(data string) sse.Message { return sse.Message{Type: "run.step", Data: []byte(data)} }
 
-// One key failing with more pending entries than one pass reads
-// (maxPendingPages × Batch) must not stop the relay: other keys and shards
+// One key failing with a large pending list must not stop the relay: other keys and shards
 // keep flowing, and the loop does not spin on the pending list.
 //
 // miniredis ignores COUNT when it re-reads a pending list, so this needs a
@@ -72,7 +71,7 @@ func TestRelayLargePendingListDoesNotStarveOthers(t *testing.T) {
 		return nil
 	}}
 	c := cfg("c1")
-	c.Batch = 1 // one pass reads at most 100 pending entries
+	c.Batch = 1 // a pending pass reads one entry per XREADGROUP call
 	r := start(t, rdb, c, pub)
 	publish(t, p, "bad", 150)
 	eventually(t, "bad entries pending", func() bool { return pendingCount(t, rdb, r) >= 100 })

@@ -1,7 +1,8 @@
 // Package redis is a shared GCRA backend for kitchen/ratelimit, so every
 // instance of a service uses the same buckets. It runs an embedded GCRA Lua
-// script with EVALSHA (falling back to EVAL on NOSCRIPT) and works with any
-// go-redis UniversalClient: standalone, Sentinel or Cluster.
+// script with EVALSHA (falling back to EVAL on NOSCRIPT) and works with the
+// go-redis standalone, Sentinel (failover), Cluster and Ring clients; New
+// rejects other UniversalClient implementations.
 //
 // Plug it in with ratelimit.RemoteStore:
 //

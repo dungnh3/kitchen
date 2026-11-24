@@ -29,7 +29,7 @@ var (
 )
 
 var (
-	// ErrStreamEnded means append was called after End. FailedPrecondition.
+	// ErrStreamEnded means Append was called after End. FailedPrecondition.
 	ErrStreamEnded = errs.New(codes.FailedPrecondition, "SSE_STREAM_ENDED", errs.Message("stream has ended"))
 	// ErrOutboxDiverged means split mode wrote the stream but not the outbox. The
 	// returned entry ID is valid; the projection misses this event.
@@ -222,8 +222,8 @@ func minID(retention time.Duration) string {
 	return strconv.FormatInt(time.Now().Add(-retention).UnixMilli(), 10)
 }
 
-// End appends the end-of-stream sentinel (once; repeated calls are no-ops)
-// and sets DoneTTL. Readers finish cleanly when they reach it, and later
+// End appends the end-of-stream sentinel (once; repeated calls only reset
+// DoneTTL) and sets DoneTTL. Readers finish cleanly when they reach it, and later
 // Appends fail with ErrStreamEnded. It returns the sentinel's entry ID.
 func (p *Producer) End(ctx context.Context, streamID string) (string, error) {
 	if err := validStreamID(streamID); err != nil {

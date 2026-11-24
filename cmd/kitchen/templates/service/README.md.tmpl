@@ -118,8 +118,8 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
 - **Events.** {% if .Outbox %}`pgstore.CreateItem` writes the item and its `ItemCreated`
   event in one transaction (transactional outbox,
   `github.com/dungnh3/kitchen/pubsub/outbox/pgx`); the worker relays the
-  outbox to the broker, so an event is published if and only if its item is
-  stored.{% else %}`events.Store` publishes an `ItemCreated` event after each item is
+  outbox to the broker, so an event is enqueued if and only if its item is
+  stored, and the relay publishes it at least once.{% else %}`events.Store` publishes an `ItemCreated` event after each item is
   stored. A failed publish is logged and the event is lost; for guaranteed
   delivery, write events through the transactional outbox
   (`github.com/dungnh3/kitchen/pubsub/outbox/pgx`) in the transaction of

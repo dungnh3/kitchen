@@ -29,14 +29,15 @@ make test
 | `MCP_SHUTDOWN_TIMEOUT` | `30s` | Graceful shutdown drain time |
 | `LOG_LEVEL`, `LOG_FORMAT`, `LOG_SCHEMA` | `info`, `json`, detected | Logging through kitchen's `log` package (`LOG_SCHEMA`: `otel`, `gcp`, `aws`) |
 | `LOG_OUTPUT` | `stderr` | `stderr` or `stdout`; keep `stderr` in stdio mode (stdout carries the protocol) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | | Enables OTLP traces and metrics (kitchen's `otelx/sdk`); other `OTEL_*` variables apply |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | | Enables OTLP traces (kitchen's `otelx/sdk`); metrics also need `OTEL_METRICS_EXPORTER=otlp`; other `OTEL_*` variables apply |
 | `UPSTREAM_TOKEN` | | Upstream API token in stdio mode |
 
 With auth enabled the bearer token is the upstream API's OAuth token and is
 passed through to tools (`mcpkit.TokenFrom(ctx)`). To verify tokens from your
 own identity provider instead, build a verifier with
-`github.com/dungnh3/kitchen/auth` (`auth.NewJWKS`, `auth.NewIntrospection`) and
-pass `mcpkit.Verifier(v, resourceURL)` as `Auth.Verifier`.
+`github.com/dungnh3/kitchen/auth` (`auth.NewJWKS`, `auth.NewIntrospection`),
+wrap it with `tv, err := mcpkit.Verifier(v, resourceURL)` and pass `tv` as
+`Auth.Verifier`.
 
 ## Add a tool
 

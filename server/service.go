@@ -35,7 +35,8 @@ type HTTPRegistrar interface {
 	RegisterHTTP(mux *http.ServeMux)
 }
 
-// Closer is called during shutdown after in-flight requests have drained.
+// Closer is called during shutdown after in-flight requests have drained,
+// or after the drain ran out of its budget and the rest were cut off.
 type Closer interface {
 	Close(ctx context.Context) error
 }

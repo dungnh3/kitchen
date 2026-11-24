@@ -20,8 +20,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// isKnownRejection reports whether err is one of the client-safe token
-// errors (never a panic, a 500 or a leaked cause).
+// isKnownRejection reports whether err matches one of the client-safe token
+// sentinels (TOKEN_INVALID, TOKEN_EXPIRED, TOKEN_MISSING, AUTH_UNAVAILABLE).
 func isKnownRejection(err error) bool {
 	return errors.Is(err, auth.ErrTokenInvalid) || errors.Is(err, auth.ErrTokenExpired) ||
 		errors.Is(err, auth.ErrTokenMissing) || errors.Is(err, auth.ErrAuthUnavailable)
@@ -160,9 +160,9 @@ func FuzzRFC7662Response(f *testing.F) {
 	})
 }
 
-// Verify racing Close: every call either succeeds or fails with
-// AUTH_UNAVAILABLE, none blocks, and no goroutine outlives Close (goleak in
-// TestMain).
+// Verify racing Close: every call succeeds or fails with AUTH_UNAVAILABLE
+// or TOKEN_INVALID (unknown kid), none blocks, and no goroutine outlives
+// Close (goleak in TestMain).
 func TestJWKSVerifyRacesClose(t *testing.T) {
 	k1, k2 := rsaKey(t, 2048), rsaKey(t, 2048)
 	m := newMemJWKS(publicJWK(t, k1, "k1"))

@@ -133,6 +133,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// Run returns after a graceful drain once ctx is cancelled.
+	// Run returns once ctx is cancelled and shutdown has finished.
 	return srv.Run(ctx)
 }

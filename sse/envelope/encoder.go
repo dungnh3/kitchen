@@ -50,7 +50,8 @@ func (e *Encoder) End(dst []sse.Event, reason sse.EndReason) []sse.Event {
 
 // TokenText returns the payload of an envelope as text: a JSON string payload
 // is unquoted, any other JSON payload is returned verbatim. ok is false when
-// data is not an envelope.
+// data is not a JSON object with a non-empty event_id. It does not run
+// Validate.
 func TokenText(data []byte) (string, bool) {
 	var probe struct {
 		EventID string          `json:"event_id"`
@@ -90,8 +91,8 @@ const (
 
 // Rule is an allowlist per envelope field; an empty list skips that check.
 // A Rule with every list empty fails closed: it rejects every envelope
-// (reason "no_rule"), so a Resolve that found no claims never lets events
-// cross users or tenants. Set AllowAll to pass envelopes without checks.
+// (reason "no_rule"), so a Resolve that found no claims lets no envelope
+// through. Non-envelope messages still follow Raw. Set AllowAll to pass envelopes without checks.
 type Rule struct {
 	AppIDs, TenantIDs, UserIDs, SessionIDs []string
 	// AllowAll passes every envelope when all lists are empty. It has no
@@ -117,8 +118,9 @@ type ValidatorConfig struct {
 }
 
 // ContextValidator returns a transform that skips messages whose envelope
-// does not match the connection's Rule, so events can never cross users,
-// tenants, apps or sessions even if a writer targets the wrong stream.
+// does not match the connection's Rule, so envelopes do not cross the users,
+// tenants, apps or sessions the Rule restricts, even if a writer targets the
+// wrong stream. Non-envelope messages are handled by Rule.Raw.
 func ContextValidator(cfg ValidatorConfig) sse.TransformFactory {
 	logger := log.OrDefault(cfg.Logger)
 	mp := cfg.MeterProvider

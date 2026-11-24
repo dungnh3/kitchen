@@ -11,14 +11,16 @@
 // loaded wins over the load. In L1 the load's result is dropped; in Redis a
 // load only writes back if the key still holds what the load saw when it
 // missed (a lease, as in Memcache), so a load that read the source before an
-// invalidation cannot write the old value back on any pod. L1 entries on
-// other pods are invalidated only by their TTL, so keep [LocalConfig.TTL]
-// short for data that changes: it bounds how stale another pod can be.
+// invalidation cannot write the old value back to Redis. A load that could
+// not reach Redis fills only its own pod's L1. L1 entries on other pods are
+// invalidated only by their TTL, so keep [LocalConfig.TTL] short for data
+// that changes: it bounds how stale another pod can be.
 //
 // Redis failures are fail-open on the read-through paths: loads log them
 // (at most once per 10s), count them and fall back to the loader. Every Redis
-// command is bounded by [Config.RedisTimeout], and after repeated failures the
-// read-through paths skip Redis for a few seconds instead of waiting on it.
+// command except those of [Cache.DeleteByPrefix] is bounded by
+// [Config.RedisTimeout], and after repeated failures the read-through paths
+// skip Redis for a few seconds instead of waiting on it.
 //
 // Values handed out from L1 are shared between callers. For pointer, slice
 // or map values set [Config.Clone], or never mutate what the cache returns.
@@ -59,7 +61,8 @@ import (
 // "user not found") signals a missing key, cached for [Config.NegativeTTL].
 var ErrNotFound = errs.ErrNotFound
 
-// ErrClosed is returned by the loading methods after [Cache.Close].
+// ErrClosed is returned by [Cache.GetOrLoad] after [Cache.Close] when it
+// has to load a key.
 var ErrClosed = errors.New("cache: closed")
 
 // DefaultLoadTimeout bounds a loader call when Config.LoadTimeout is zero.
@@ -122,8 +125,9 @@ type LocalConfig struct {
 	TTL time.Duration
 	// RefreshAfter, when set (< TTL), reloads an entry in the background
 	// (from L2, else the loader) on the first GetOrLoad after it is this old,
-	// while callers keep getting the current value: hot keys never expire
-	// under load. Zero disables it.
+	// while callers keep getting the current value. A key read often enough
+	// is reloaded before it expires, as long as the reload succeeds. Zero
+	// disables it.
 	RefreshAfter time.Duration
 }
 
@@ -311,10 +315,12 @@ func (c *Cache[V]) newL1(lc *LocalConfig) error {
 	return nil
 }
 
-// Close cancels the loads still running (their loaders see ctx cancelled),
-// waits for them and for background refreshes until ctx is done, and stops
-// the L1 background goroutines. It does not close the Redis client. After
-// Close the loading methods return ErrClosed. Close is idempotent.
+// Close cancels the GetOrLoad loads still running (their loaders see ctx
+// cancelled), waits for them and for background refreshes until ctx is
+// done, and stops the L1 background goroutines. It does not close the Redis
+// client. After Close, GetOrLoad returns ErrClosed when it has to load a
+// key; GetOrLoadMany loads run on the caller's ctx and are not stopped.
+// Close is idempotent.
 func (c *Cache[V]) Close(ctx context.Context) error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
@@ -581,7 +587,8 @@ func (c *Cache[V]) Set(ctx context.Context, key string, v V, opts ...SetOption) 
 }
 
 // Delete removes keys from L1 (this pod only) and Redis. A load of one of
-// the keys running meanwhile, on any pod, does not write its result back.
+// the keys running meanwhile does not keep its result in this pod's L1, nor
+// write it to Redis. Other pods keep their L1 entries until Local.TTL.
 func (c *Cache[V]) Delete(ctx context.Context, keys ...string) error {
 	if len(keys) == 0 {
 		return nil
@@ -731,16 +738,17 @@ func (c *Cache[V]) load(ctx context.Context, key string, load func(ctx context.C
 
 type flightResult[V any] struct {
 	e entry[V]
-	// cacheable is false when a write to the key (Set or Delete, on any
-	// pod) ran during the load: e may be older than that write.
+	// cacheable is false when a write to the key ran during the load (a
+	// local Set or Delete, or a change in Redis seen by the lease check): e
+	// may be older than that write.
 	cacheable bool
 }
 
 // flight loads key once per process: L2 first, then load. It runs detached
 // from the caller (bounded by LoadTimeout and cancelled by Close); the
 // caller waits until its own ctx is done. A value loaded from the source is
-// written to Redis (if the key is unchanged) and to L1 (if no local write
-// ran meanwhile), so it is kept even when every caller gave up.
+// written to Redis (if the key is unchanged) and to L1 (if, in addition, no
+// local write ran meanwhile), so it is kept even when every caller gave up.
 func (c *Cache[V]) flight(ctx context.Context, key string, load func(ctx context.Context, key string) (V, error)) (flightResult[V], error) {
 	ch := c.sf.DoChan(key, func() (any, error) { return c.runFlight(ctx, key, load) })
 	select {
@@ -1203,8 +1211,9 @@ func (c *Cache[V]) recordLoad(ctx context.Context, start time.Time, err error) {
 // --- helpers: breaker, throttle, tracker, otter logger ---
 
 // breaker skips Redis on the read-through paths after breakerThreshold
-// consecutive failures, for breakerCooldown. The first call after the
-// cooldown probes Redis again; one more failure reopens it.
+// consecutive failures, for breakerCooldown. After the cooldown calls reach
+// Redis again; the failure count is not reset, so one more failure reopens
+// it.
 type breaker struct {
 	failures  atomic.Int32
 	openUntil atomic.Int64

@@ -26,9 +26,9 @@ import (
 // Name is the service name reported in telemetry.
 const Name = "orders"
 
-// publicMethods skip authentication: the gRPC health service, used by load
-// balancers and Kubernetes probes. The HTTP probes /livez and /readyz are
-// always public.
+// publicMethods skip authentication and rate limits: the gRPC health
+// service, used by load balancers and Kubernetes probes. The HTTP probes
+// /livez and /readyz are always public.
 var publicMethods = []string{"/grpc.health.v1.Health/"}
 
 // Run serves the API until ctx is cancelled, then shuts down gracefully.

@@ -16,7 +16,8 @@ import (
 var ErrInvalidEvent = errs.New(codes.InvalidArgument, "SSE_INVALID_EVENT", errs.Message("sse: invalid event field"))
 
 // Event is one Server-Sent Event as defined by the WHATWG HTML standard.
-// Zero-value fields are omitted from the wire.
+// Zero-value fields are omitted from the wire, except that an event with an
+// ID or Type always gets a "data:" line, even when Data is empty.
 type Event struct {
 	// ID is sent as "id: <ID>". Browsers echo the last one in the
 	// Last-Event-ID header when they reconnect.

@@ -183,7 +183,7 @@ func TestTruncateValidUTF8(t *testing.T) {
 	}
 }
 
-// WithGRPCAddr("") gives an HTTP-only server (group 4: MCP over
+// WithGRPCAddr("") gives an HTTP-only server (for example MCP over
 // HTTPRegistrar): no gRPC port, the HTTP port with probes and routes works.
 func TestHTTPOnly(t *testing.T) {
 	if _, err := New(WithLogger(quietLogger()), WithGRPCAddr(""), WithHTTPAddr("")); err == nil {

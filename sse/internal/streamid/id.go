@@ -95,7 +95,8 @@ func Bucket(streamID string, buckets int) int {
 // HashTag returns the hash-tag fragment for a bucket, e.g. "{b17}".
 func HashTag(bucket int) string { return "{b" + strconv.Itoa(bucket) + "}" }
 
-// Field returns the string value of a stream entry field, or "".
+// Field returns the string value of a stream entry field. It returns "",
+// false when the field is missing or not a string.
 func Field(m redis.XMessage, name string) (string, bool) {
 	v, ok := m.Values[name]
 	if !ok {

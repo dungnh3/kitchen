@@ -67,9 +67,9 @@ func (s *Server) chain() ([]grpc.UnaryServerInterceptor, []grpc.StreamServerInte
 // --- recovery ---
 
 // recovered logs a panic and returns the error for the client, not yet
-// converted. The stack trace is left to the logger: kitchen/log adds one to
-// every ERROR record, at the panic site since the log call runs in the
-// deferred recover.
+// converted. The stack trace is left to the logger: by default kitchen/log
+// adds one to ERROR records, at the panic site since the log call runs in
+// the deferred recover.
 func (s *Server) recovered(ctx context.Context, operation string, p any) error {
 	s.log.LogAttrs(ctx, log.LevelError, "panic recovered",
 		log.String("operation", operation),

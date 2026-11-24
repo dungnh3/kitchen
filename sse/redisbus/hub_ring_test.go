@@ -149,7 +149,7 @@ func waitFor(t testing.TB, what string, cond func() bool) {
 	}
 }
 
-// RingBytes bounds the ring by payload size; a slow subscriber still gets
+// RingBytes bounds the ring by entry size; a slow subscriber still gets
 // every entry (from Redis) in order.
 func TestHubRingBytesBound(t *testing.T) {
 	_, rdb := newRedis(t)

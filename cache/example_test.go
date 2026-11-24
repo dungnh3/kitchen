@@ -155,7 +155,7 @@ func ExampleConfig_clone() {
 
 func ExampleLocalConfig() {
 	// L1 only: no Redis. RefreshAfter reloads hot keys in the background,
-	// so readers never wait for a reload once a key is cached.
+	// so readers of a cached key do not wait for the reload.
 	c, err := cache.New(cache.Config[int]{
 		Name:        "answers", // required without Prefix (L1 only)
 		Local:       &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute, RefreshAfter: 45 * time.Second},

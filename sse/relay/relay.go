@@ -300,7 +300,7 @@ func (l *loop) run(ctx context.Context) {
 			}
 		}
 		// Re-read the PEL when a hold expires, and at least every MinIdle/2
-		// while keys are held, so other replicas never see our held entries
+		// while keys are held, so other replicas do not see our held entries
 		// as idle and take them over.
 		next := l.nextPass()
 		if l.dirty || (!next.IsZero() && !now.Before(next)) {

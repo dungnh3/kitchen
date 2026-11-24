@@ -113,8 +113,8 @@ func checkGolden(t *testing.T, dir string, files scaffold.Files) {
 }
 
 // TestGeneratedProjectBuilds generates a project and runs go build, vet and
-// test on it, using a go.work that replaces mcpkit with the local module (it
-// is not tagged yet). Skipped with -short or when modules cannot be downloaded.
+// test on it, using a go.work that replaces mcpkit and the kitchen modules
+// with the local checkout (they are not tagged yet). Skipped with -short or when modules cannot be downloaded.
 func TestGeneratedProjectBuilds(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow: builds a generated project")
@@ -145,7 +145,8 @@ func TestGeneratedProjectBuilds(t *testing.T) {
 			if err := scaffold.Write(dir, render(t, p)); err != nil {
 				t.Fatal(err)
 			}
-			// mcpkit's go.sum covers every module the generated project needs.
+			// The go.sum files of mcpkit and otelx/sdk together cover the
+			// modules the generated project needs.
 			if err := os.WriteFile(filepath.Join(dir, "go.sum"), sum, 0o600); err != nil { //nolint:gosec // test temp dir
 				t.Fatal(err)
 			}

@@ -35,12 +35,14 @@ const (
 	fieldStream = "stream"
 )
 
-// ErrInvalidStreamID rejects empty stream IDs or IDs with braces (which would
-// change the hash slot) or control characters. InvalidArgument (400).
+// ErrInvalidStreamID rejects stream IDs that are empty, longer than 512
+// bytes, or contain braces (which would change the hash slot), CR, LF or
+// NUL. InvalidArgument (400).
 var ErrInvalidStreamID = errs.New(codes.InvalidArgument, "SSE_INVALID_STREAM_ID", errs.Message("redisbus: invalid stream id"))
 
-// Keyspace maps stream IDs to Redis keys. The zero value uses DefaultPrefix
-// and DefaultBuckets. Changing Buckets changes every key: treat it as a
+// Keyspace maps stream IDs to Redis keys. NewProducer and NewHub replace a
+// zero Prefix or Buckets with DefaultPrefix and DefaultBuckets; Bucket, Key
+// and OutboxKey use the fields as set, so call them on Producer.Keyspace(). Changing Buckets changes every key: treat it as a
 // breaking change for in-flight streams.
 type Keyspace struct {
 	// Prefix is prepended to every key. Default "sse:".

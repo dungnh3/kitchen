@@ -28,8 +28,8 @@ type Config struct {
 	AllowedOrigins  []string      // MCP_ALLOWED_ORIGINS: comma-separated browser origins
 	ToolTimeout     time.Duration // MCP_TOOL_TIMEOUT, default 2m
 	ShutdownTimeout time.Duration // MCP_SHUTDOWN_TIMEOUT, default 30s
-	// Logging (LOG_LEVEL, LOG_FORMAT, LOG_SCHEMA) is read by kitchen's log
-	// package; telemetry (OTEL_*) by kitchen's otelx/sdk.
+	// Logging (LOG_LEVEL, LOG_FORMAT, LOG_SCHEMA, LOG_OUTPUT) is read by
+	// kitchen's log package; telemetry (OTEL_*) by kitchen's otelx/sdk.
 }
 
 // Load reads the configuration from the environment and validates it.

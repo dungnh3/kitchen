@@ -176,8 +176,9 @@ type Policy struct {
 }
 
 // Decision is the outcome of one check. For a policy with several limits it
-// is the denying limit with the longest RetryAfter, or else the limit with
-// the fewest remaining requests.
+// is the decision of the limit that denied the request (checking stops at
+// the first denial), or else of the limit with the fewest remaining
+// requests; Degraded and Unavailable cover every limit checked.
 type Decision struct {
 	Allowed    bool
 	Limit      int           // Rule.Rate of the deciding bucket
@@ -205,7 +206,8 @@ type Event struct {
 	Decision
 }
 
-// Config configures a Limiter. Only Default or Policies is required.
+// Config configures a Limiter. Set Default, Policies or both: without
+// either, New succeeds but nothing is limited.
 type Config struct {
 	// Store holds the buckets; nil means an in-memory store (per instance).
 	Store Store
@@ -464,8 +466,9 @@ func New(cfg Config) (*Limiter, error) {
 	return l, nil
 }
 
-// resolve validates p and names its limits. A policy with only Rule keeps
-// the bucket scope of the policy; with several limits each gets
+// resolve validates p and names its limits. A policy with one declared limit
+// keeps the bucket scope of the policy; with several, each gets
+// "<scope>#<label>". The caller_ip limit added for ByCaller always gets
 // "<scope>#<label>".
 func resolve(p Policy, scope, name string) (*policy, error) {
 	var all []Limit
@@ -575,7 +578,7 @@ type part struct {
 
 // Check checks one request for policy name against every limit that applies
 // to the caller in ctx (identity from Config.Subject/Anonymous/Device and the
-// client IP in xcontext.Info). Use it for limits inside business logic, for
+// client IP in xcontext.Info, else the gRPC peer address). Use it for limits inside business logic, for
 // example Check(ctx, "send-otp") with Policies["send-otp"]. The Decision is
 // always usable; a non-nil error reports a store failure that was handled
 // according to OnStoreError.

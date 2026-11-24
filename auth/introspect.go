@@ -18,8 +18,9 @@ import (
 )
 
 // IntrospectFunc asks an authority about a token. It returns the principal
-// for an active token, an error wrapping ErrTokenInvalid for an inactive or
-// unknown token, and any other error when the authority could not answer.
+// for an active token, an error wrapping ErrTokenInvalid (or nil, nil) for an
+// inactive or unknown token, an error wrapping ErrTokenExpired for an
+// expired one, and any other error when the authority could not answer.
 type IntrospectFunc func(ctx context.Context, token string) (*Principal, error)
 
 // IntrospectionConfig configures NewIntrospection.
@@ -68,7 +69,8 @@ type Introspection struct {
 }
 
 // introResult is one cached answer. Until is when it stops being valid,
-// measured with IntrospectionConfig.Now (min of TTL and the token expiry).
+// measured with IntrospectionConfig.Now: now+TTL capped at the token expiry
+// for an active answer, now+NegativeTTL otherwise.
 type introResult struct {
 	K       string     `json:"k"`           // hash of the token it answers for
 	P       *Principal `json:"p,omitempty"` // nil: inactive or expired
@@ -177,7 +179,9 @@ func (in *Introspection) Verify(ctx context.Context, token string) (*Principal, 
 			return nil, err
 		case errors.Is(err, cache.ErrNotFound):
 			// cache.ErrNotFound is errs.ErrNotFound: any NotFound-coded error.
-			// Never written by this package (no negative caching): tampered.
+			// load never returns it, so the cache never stores a not-found
+			// marker for this package (inactive answers are introResult
+			// values): one found in Redis was planted.
 			in.cfg.Logger.WarnContext(ctx, "auth: unexpected negative introspection cache entry, ignoring it")
 			_ = in.cache.Delete(ctx, key)
 			continue
@@ -215,7 +219,8 @@ func (in *Introspection) Verify(ctx context.Context, token string) (*Principal, 
 // load asks the authority. Inactive and expired answers are cached for
 // NegativeTTL; failures are returned and not cached.
 func (in *Introspection) load(ctx context.Context, token, key string) (introResult, error) {
-	// ctx is detached from the first caller by package cache; bound it.
+	// Through the cache, ctx is detached from the caller that started the
+	// load; bound it.
 	cctx, cancel := context.WithTimeout(ctx, in.cfg.Timeout)
 	defer cancel()
 	p, err := in.cfg.Introspect(cctx, token)

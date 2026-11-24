@@ -12,8 +12,8 @@
 //	any other type   → data-<type> {id, data}   (e.g. "data-run.started")
 //	end of stream    → finish (if not sent), then "data: [DONE]"
 //
-// Each event keeps the stream position as its SSE id, so the gateway can still
-// resume. Non-envelope payloads are passed as data parts (JSON) or text.
+// The last event written for each message carries the stream position as its
+// SSE id, so the gateway can still resume. Non-envelope payloads are passed as data parts (JSON) or text.
 //
 // Services map their own event types (reasoning, tool calls, sources, steps)
 // to AI SDK parts with Options.Map instead of the data-<type> fallback:

@@ -52,7 +52,7 @@ type HubConfig struct {
 	// Subscribers further behind read from Redis. Default 512. The ring
 	// grows with traffic, so an idle stream holds no entries.
 	RingSize int `json:"ring_size" yaml:"ring_size"`
-	// RingBytes caps the payload bytes a stream's ring holds; the oldest
+	// RingBytes caps the bytes (data, type and ID) a stream's ring holds; the oldest
 	// entries leave the ring first (subscribers that still need them read
 	// them from Redis). Default 1 MiB.
 	RingBytes int `json:"ring_bytes" yaml:"ring_bytes"`
@@ -124,7 +124,7 @@ type stream struct {
 	ring   []entry // circular; grows up to maxN entries
 	start  int
 	n      int
-	bytes  int         // payload bytes of the entries in the ring
+	bytes  int         // entrySize total of the entries in the ring
 	base   streamid.ID // the ring covers (base, last]
 	last   streamid.ID
 	ended  bool
@@ -272,7 +272,9 @@ func (h *Hub) Subscribe(ctx context.Context, streamID, cursor string) iter.Seq2[
 	}
 }
 
-// follow implements the cursor-pull loop described in the package design.
+// follow yields the entries after cur: from the ring when cur is inside it,
+// otherwise from Redis with XRANGE. When it runs out it waits for the reader
+// to push more, until the end sentinel, ctx or the hub ends it.
 func (h *Hub) follow(ctx context.Context, st *stream, cur streamid.ID, resume bool, yield func(sse.Message, error) bool) {
 	st.mu.Lock()
 	ahead := cur.Compare(st.last) > 0
@@ -310,7 +312,7 @@ func (h *Hub) follow(ctx context.Context, st *stream, cur streamid.ID, resume bo
 
 		if !inRing {
 			var err error
-			// Past the first message the page must start at cur itself, so a
+			// With a non-zero cursor the page must start at cur itself, so a
 			// trim during catch-up is detected instead of skipped.
 			batch, err = h.catchup(ctx, st, cur, !cur.IsZero(), batch)
 			if err != nil {
@@ -500,7 +502,7 @@ func (st *stream) grow() {
 }
 
 // push appends entries read by the reader and wakes subscribers. The ring
-// keeps at most maxN entries and maxBytes payload bytes; an entry larger
+// keeps at most maxN entries and maxBytes bytes (see entrySize); an entry larger
 // than maxBytes on its own is not kept (subscribers read it from Redis).
 func (st *stream) push(es []entry) {
 	st.mu.Lock()

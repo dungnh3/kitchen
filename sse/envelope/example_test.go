@@ -11,8 +11,8 @@ import (
 )
 
 // ContextValidator skips envelopes that do not belong to the caller, so
-// events never cross users or tenants even if a writer targets the wrong
-// stream.
+// events do not cross the users or tenants the Rule names, even if a writer
+// targets the wrong stream.
 func ExampleContextValidator() {
 	validator := envelope.ContextValidator(envelope.ValidatorConfig{
 		Logger: log.Discard(), // pass the service logger; one Warn per rejection

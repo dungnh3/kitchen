@@ -217,9 +217,9 @@ func TestAllowCustomKeyAndConfigErrors(t *testing.T) {
 	}
 }
 
-// A ByCaller limit cannot be bypassed by rotating the
-// unverified device id (the client IP is counted too); users are not
-// affected by that IP bucket.
+// Rotating the unverified device id does not escape a ByCaller limit when
+// the client IP is known: that IP is counted too. Users are not affected by
+// the IP bucket.
 func TestByCallerDeviceRotation(t *testing.T) {
 	l := mustNew(t, ratelimit.Config{Policies: map[string]ratelimit.Policy{
 		"POST /otp": {Rule: ratelimit.Rule{Rate: 5, Per: time.Minute}},

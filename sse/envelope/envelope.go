@@ -1,6 +1,6 @@
 // Package envelope is the JSON envelope that agent-platform writers put in
 // sse.Message.Data: routing and audit metadata around an event payload. It
-// also provides the browser Encoder that keeps today's wire format and a
+// also provides the browser Encoder for the envelope wire format and a
 // Transform that checks envelopes against the caller's identity.
 package envelope
 
