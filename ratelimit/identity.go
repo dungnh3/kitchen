@@ -82,7 +82,7 @@ func (l *Limiter) identify(ctx context.Context, remote string) identity {
 		}
 	}
 	if a, ok := clientIP(ctx, remote); ok {
-		id.addr, id.ip = a, bucketIP(a)
+		id.addr, id.ip = a, bucketIP(a, l.v6bits)
 	}
 	return id
 }
@@ -165,7 +165,7 @@ type identityRef struct {
 
 // parseRef parses "user:<id>", "anon:<id>", "device:<raw id>" or
 // "ip:<address or CIDR>". CIDRs are only allowed when cidr is true.
-func parseRef(s string, cidr bool) (identityRef, error) {
+func parseRef(s string, cidr bool, v6bits int) (identityRef, error) {
 	kind, v, ok := strings.Cut(strings.TrimSpace(s), ":")
 	if !ok || v == "" {
 		return identityRef{}, fmt.Errorf("%q: want \"<user|anon|device|ip>:<value>\"", s)
@@ -191,9 +191,37 @@ func parseRef(s string, cidr bool) (identityRef, error) {
 			return identityRef{}, fmt.Errorf("%q: %w", s, err)
 		}
 		a = a.Unmap()
-		// key matches the bucket (an IPv6 /64, for Overrides); prefix is the
+		// key matches the bucket (an IPv6 prefix, for Overrides); prefix is the
 		// exact address (for Exempt).
-		return identityRef{key: "ip:" + bucketIP(a), prefix: netip.PrefixFrom(a, a.BitLen())}, nil
+		return identityRef{key: "ip:" + bucketIP(a, v6bits), prefix: netip.PrefixFrom(a, a.BitLen())}, nil
 	}
 	return identityRef{}, fmt.Errorf("%q: unknown kind %q", s, kind)
+}
+
+// escapeKey percent-encodes the bytes of s that would change the meaning of
+// a bucket key: '{' and '}' (a Redis Cluster hash tag: an HTTP route such as
+// "GET /files/{id}" would otherwise put every bucket of the route in one
+// slot, and a client-chosen id could pick the slot), '%' (so the encoding
+// is reversible) and, in a scope, ':' (the separator, so a policy name
+// cannot reach into another policy's keys). Strings without them are
+// returned as is.
+func escapeKey(s string, scope bool) string {
+	special := "{}%"
+	if scope {
+		special = "{}%:"
+	}
+	if !strings.ContainsAny(s, special) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := range len(s) {
+		c := s[i]
+		if strings.IndexByte(special, c) >= 0 {
+			fmt.Fprintf(&b, "%%%02X", c)
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }

@@ -18,7 +18,6 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -65,43 +64,52 @@ func honorsContextTimeout(rdb goredis.UniversalClient) bool {
 // GCRA consumes one request from bucket key: rate requests per per, bursts
 // up to burst (0 means rate). It implements ratelimit.Remote.
 func (s *Store) GCRA(ctx context.Context, key string, rate, burst int, per time.Duration) (allowed bool, remaining int, retryAfter, resetAfter time.Duration, err error) {
-	if burst == 0 {
-		burst = rate
+	interval, tolerance, err := gcraParams(rate, burst, per)
+	if err != nil {
+		return false, 0, 0, 0, err
 	}
-	if rate <= 0 || per <= 0 || burst < 0 {
-		return false, 0, 0, 0, fmt.Errorf("ratelimit/redis: invalid rule rate=%d burst=%d per=%s", rate, burst, per)
-	}
-	res, err := gcra.Run(ctx, s.rdb, []string{key},
-		burst, rate, strconv.FormatFloat(per.Seconds(), 'f', -1, 64), 1).Slice()
+	res, err := gcra.Run(ctx, s.rdb, []string{key}, interval, tolerance).Slice()
 	if err != nil {
 		return false, 0, 0, 0, err
 	}
 	return parse(res)
 }
 
-func parse(res []any) (allowed bool, remaining int, retryAfter, resetAfter time.Duration, err error) {
-	bad := fmt.Errorf("ratelimit/redis: unexpected reply %v", res)
-	if len(res) != 4 {
-		return false, 0, 0, 0, bad
+// maxTolerance keeps the bucket state an exact integer in a Lua number.
+const maxTolerance = 1 << 52
+
+// gcraParams returns the emission interval and burst tolerance in
+// microseconds, the interval rounded up. It must stay identical to the one
+// in package ratelimit (LocalStore); the differential test checks it.
+func gcraParams(rate, burst int, per time.Duration) (interval, tolerance int64, err error) {
+	if burst == 0 {
+		burst = rate
 	}
-	a, ok1 := res[0].(int64)
-	rem, ok2 := res[1].(int64)
-	retry, err1 := seconds(res[2])
-	reset, err2 := seconds(res[3])
-	if !ok1 || !ok2 || err1 != nil || err2 != nil {
-		return false, 0, 0, 0, bad
+	if rate <= 0 || per <= 0 || burst < 0 || int64(per/time.Microsecond) < int64(rate) {
+		return 0, 0, fmt.Errorf("ratelimit/redis: invalid rule rate=%d burst=%d per=%s", rate, burst, per)
 	}
-	return a == 1, int(rem), retry, reset, nil
+	us := int64(per / time.Microsecond)
+	if per%time.Microsecond != 0 {
+		us++
+	}
+	interval = (us + int64(rate) - 1) / int64(rate)
+	if interval > maxTolerance/int64(burst) {
+		return 0, 0, fmt.Errorf("ratelimit/redis: burst %d x %dus is too long", burst, interval)
+	}
+	return interval, interval * int64(burst), nil
 }
 
-func seconds(v any) (time.Duration, error) {
-	s, ok := v.(string)
-	if !ok {
-		return 0, fmt.Errorf("not a string: %T", v)
+func parse(res []any) (allowed bool, remaining int, retryAfter, resetAfter time.Duration, err error) {
+	if len(res) != 4 {
+		return false, 0, 0, 0, fmt.Errorf("ratelimit/redis: unexpected reply %v", res)
 	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, err
+	var v [4]int64
+	for i, x := range res {
+		n, ok := x.(int64)
+		if !ok {
+			return false, 0, 0, 0, fmt.Errorf("ratelimit/redis: unexpected reply %v", res)
+		}
+		v[i] = n
 	}
-	return time.Duration(f * float64(time.Second)), nil
+	return v[0] == 1, int(v[1]), time.Duration(v[2]) * time.Microsecond, time.Duration(v[3]) * time.Microsecond, nil
 }

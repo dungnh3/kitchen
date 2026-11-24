@@ -387,3 +387,33 @@ func TestRemoteStore(t *testing.T) {
 		t.Fatalf("denied: %+v %v", d, err)
 	}
 }
+
+// A rule over one request per microsecond, or with a burst tolerance beyond
+// 2^52us, is rejected by New and by LocalStore.Allow, never allowed.
+func TestRuleTooFastRejected(t *testing.T) {
+	r := ratelimit.Rule{Rate: 2_000_000_000, Per: time.Second}
+	if _, err := ratelimit.New(ratelimit.Config{Default: &ratelimit.Policy{Rule: r}}); err == nil {
+		t.Fatal("New: want error for a rule over 1 request/us")
+	}
+	if _, err := ratelimit.NewLocalStore(10).Allow(context.Background(), "k", r); err == nil {
+		t.Fatal("LocalStore.Allow: want error, not a silent allow")
+	}
+	if _, err := ratelimit.New(ratelimit.Config{Default: &ratelimit.Policy{Rule: ratelimit.Rule{Rate: 1, Per: 200 * 365 * 24 * time.Hour, Burst: 1}}}); err == nil {
+		t.Fatal("New: want error for a tolerance beyond 2^52us")
+	}
+}
+
+// A different rule on the same key (for example an override added for a
+// bucket already in use) keeps the bucket state, as the Redis store does.
+func TestLocalStoreRuleChangeKeepsState(t *testing.T) {
+	s := ratelimit.NewLocalStore(100)
+	ctx := context.Background()
+	a := ratelimit.Rule{Rate: 1, Per: time.Hour}
+	b := ratelimit.Rule{Rate: 1, Per: 2 * time.Hour}
+	if d, _ := s.Allow(ctx, "k", a); !d.Allowed {
+		t.Fatal("first request denied")
+	}
+	if d, _ := s.Allow(ctx, "k", b); d.Allowed {
+		t.Fatal("rule change reset the bucket")
+	}
+}

@@ -9,6 +9,12 @@ Read `doc.go` and `docs/design/errors-auth.md` first.
   inputs. When you change either store, test both.
 - The GCRA store is custom code on purpose. The reason is in the design doc.
   Do not replace it with a library without asking the owner.
+- Both stores work in integer microseconds: `gcraParams` (core) and
+  `gcraParams` (ratelimit/redis) must stay identical, and the Lua script must
+  never format a time with `tostring` (Lua 5.1 keeps 14 digits). The
+  differential test in `ratelimit/redis` requires equal `Decision`s.
+- Bucket keys are `<Prefix>:<escaped scope>:<escaped key>`; keep `{`/`}`
+  escaped so no key forms a Redis Cluster hash tag.
 
 ## Identity
 

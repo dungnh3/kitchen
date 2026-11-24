@@ -177,6 +177,22 @@ Behavior changes:
 - The GCRA Lua script is embedded; there is no `redis_rate` dependency. Bucket
   keys change (`rl:<policy>:<sub|ip>:<value>`), so existing Redis state is not reused.
 - Denials carry reason `RATE_LIMITED` (the service's domain) plus `RetryInfo`.
+- Bucket keys percent-encode `{`, `}` and `%` (and `:` in policy names):
+  policies whose route has a path variable (`GET /files/{id}`) or a `:` get
+  new keys, so their buckets start full once after the upgrade. Redis bucket
+  values are now integer microseconds; values written by earlier builds read
+  as empty buckets once (keys expire within one window).
+- `RateLimit-Policy` scales sub-second or fractional windows: `Rule{Rate: 1,
+  Per: 100ms}` is now `q=10;w=1` (was `q=1;w=1`). The format stays the one
+  of draft revisions 09–11 (`r`, `t`), not revision 12 (`a`, `w`).
+- `RATE_LIMITER_UNAVAILABLE` (503, `OnStoreError: Deny`) now carries a
+  `RetryInfo` detail and, over HTTP, `Retry-After`.
+- `New` rejects rules over one request per microsecond per bucket (the old
+  in-memory store silently allowed everything for rules over 1/ns).
+- `X-RateLimit-Remaining` from the Redis store was one too low on about half
+  of the allowed requests; it is now exact.
+- Store failures are logged once when the breaker opens (and per failed
+  probe), not per request.
 - `Config.TrustedProxies` is gone: the client IP comes from `xcontext.Info` (resolved by `server.WithTrustedProxies`). `Key(ctx, remote, xff)` is `Key(ctx, remote)`. `Config.Subject` defaults to `xcontext.UserID`. Install it with `server.WithRateLimit(l)`.
 
 ## Legacy bugs fixed (behavior changes)

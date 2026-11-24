@@ -76,7 +76,7 @@ identity (`By`). A request must pass every limit that applies to it.
 | `ByUser` | verified users only | per-account quotas (100/day) |
 | `ByAnon` | verified anonymous subjects only | guest tokens |
 | `ByDevice` | requests with only an unverified device id | pair it with `ByIP` |
-| `ByIP` | unauthenticated requests, by client IP (IPv6 /64) | loose, NAT-friendly cap |
+| `ByIP` | unauthenticated requests, by client IP (IPv6 by `IPv6Prefix`, /64 by default) | loose, NAT-friendly cap |
 | `ByAnyIP` | every request by client IP | abuse cap that also covers users |
 | `ByGlobal` | all callers in one bucket | protect a fragile dependency |
 
@@ -94,6 +94,7 @@ identity (`By`). A request must pass every limit that applies to it.
 | `OnDecision` | none | custom alerts or audit logs |
 | `StoreTimeout`, `BreakerCooldown` | 100ms, 1s | your Redis is slower or farther away |
 | `LocalMaxKeys`, `Prefix` | 100 000, `"rl"` | very many callers per instance; a shared Redis |
+| `IPv6Prefix` | 64 | clients rotate addresses across their delegated /56 or /48 to get fresh IP buckets (32 to 128) |
 | `Errors`, `Logger`, `MeterProvider` | `errs.WriteHTTP`, `log.Default()`, global | only for `Middleware` without `server`, and in tests |
 
 A policy with several limits, plus `Exempt`, `Overrides` and `Skip`
@@ -139,8 +140,9 @@ l, err := ratelimit.New(ratelimit.Config{
   the error is `ratelimit.ErrUnavailable` (`RATE_LIMITER_UNAVAILABLE`, 503).
 - **redisx.** The Redis store takes a client from `redisx.Open`. See
   [Backends and adapters](#backends-and-adapters).
-- **log and otelx.** Store failures are logged through `Config.Logger`
-  (`log.Default()` when nil). Metrics use the global `MeterProvider` that
+- **log and otelx.** Store outages are logged through `Config.Logger`
+  (`log.Default()` when nil): one warning when the breaker opens and per
+  failed probe, one info line when the store recovers, never per request. Metrics use the global `MeterProvider` that
   `otelx/sdk` installs.
 
 ### Limits inside business logic
@@ -268,7 +270,9 @@ Policies: map[string]ratelimit.Policy{
 You need this whenever more than one instance serves the same API: every
 instance then uses the same buckets. The store runs one atomic GCRA Lua
 script (EVALSHA, falling back to EVAL). It works with standalone, Sentinel
-and Cluster clients. Its decisions match the in-memory store's
+and Cluster clients. Times are integer microseconds from Redis `TIME`, so
+every instance uses one clock and the decisions are exactly the in-memory
+store's (a differential test drives both with the same random requests)
 (`Example_limiter` in `ratelimit/redis/example_limiter_test.go`):
 
 ```go
@@ -298,6 +302,16 @@ Limits:
   limiter's 100ms timeout. Clients from `redisx.Open` have it.
 - **Shared Redis.** Set a distinct `Config.Prefix` per service when several
   services share one Redis. Every bucket key starts with it.
+- **Redis Cluster.** A bucket is one key, so each script call touches one
+  slot. `{`, `}`, `%` (and `:` in policy names) are percent-encoded in keys,
+  so a route such as `GET /files/{id}` or a client-chosen id never forms a
+  hash tag that would put many buckets in one slot. `Prefix` is used as is.
+- **Breaker scope.** The breaker is one per Limiter, not per Cluster node:
+  when one node fails, every bucket falls back to `OnStoreError` until a
+  probe succeeds.
+- **Rule limits.** A rule may not exceed one request per microsecond per
+  bucket, and burst × interval must stay under 2^52 µs (about 142 years);
+  `New` rejects such rules.
 - **Ownership.** You own `rdb` and close it on shutdown.
 
 ## Testing
@@ -332,12 +346,24 @@ Metrics (meter `github.com/dungnh3/kitchen/ratelimit`):
 | `kitchen.ratelimit.decisions` | `policy`, `limit`, `result` | one per limited request. `result` is `allowed`, `limited`, `dry_run`, `degraded` or `unavailable` |
 | `kitchen.ratelimit.store.errors` | none | failed calls to the remote store |
 
-- **Headers.** `RateLimit-Policy` and `RateLimit` (IETF draft, RFC 9651
-  lists) list every limit that applied. `X-RateLimit-Limit`, `-Remaining`
-  and `-Reset` describe the deciding one. `Retry-After` is set on denials.
+- **Headers.** `RateLimit-Policy` and `RateLimit` (IETF draft
+  `draft-ietf-httpapi-ratelimit-headers` revisions 09 to 11:
+  `"<id>";q=;w=` and `"<id>";r=;t=`, RFC 9651 lists; revision 12 renamed
+  `r`/`t` to `a`/`w` and is not followed yet) list every limit that applied.
+  `w` is whole seconds: a rule with a sub-second or fractional `Per` is
+  scaled, so 1 per 100ms is `q=10;w=1`. `X-RateLimit-Limit`, `-Remaining`
+  and `-Reset` describe the deciding one (`-Reset` is seconds until the
+  bucket is full again, not a timestamp). `Retry-After` is set on 429 and on
+  the 503 of `OnStoreError: Deny`.
 - **Errors.** Reasons are `RATE_LIMITED` (429) and
   `RATE_LIMITER_UNAVAILABLE` (503), both with `policy` metadata.
-- **Logs.** A store failure logs a warning with `http.route` or the method.
+- **Logs.** The breaker logs a warning when the store starts failing and
+  an info line when it recovers.
+- **Multiple limits.** Limits are checked from the most specific bucket to
+  the most shared one and stop at the first denial. A request that a shared
+  limit (IP, global) denies has already used a token of the specific ones
+  (user, device); it is not refunded, which keeps denials to one store call
+  each under a flood (Envoy behaves the same by default).
 - **Events.** `OnDecision` receives the same policy, limit and result as the
   metric, plus the `Decision`.
 

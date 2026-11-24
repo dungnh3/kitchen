@@ -3,12 +3,10 @@ package ratelimit
 import (
 	"container/list"
 	"context"
+	"fmt"
 	"hash/maphash"
-	"math"
 	"sync"
 	"time"
-
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -16,8 +14,10 @@ const (
 	evictScan   = 8
 )
 
-// LocalStore is an in-memory Store for one instance: token buckets from
-// golang.org/x/time/rate, bounded by an LRU so memory stays capped.
+// LocalStore is an in-memory Store for one instance: GCRA buckets in integer
+// microseconds, the same arithmetic as the ratelimit/redis Lua script, so
+// both stores return the same decisions for the same requests and clock.
+// An LRU bounds memory.
 //
 // When a shard is full it evicts, among the evictScan least recently used
 // buckets, one that has refilled completely: such a bucket is identical to a
@@ -40,9 +40,8 @@ type localShard struct {
 }
 
 type localEntry struct {
-	key  string
-	rule Rule
-	lim  *rate.Limiter
+	key string
+	tat int64 // theoretical arrival time, unix microseconds
 }
 
 // NewLocalStore returns a LocalStore holding at most about maxKeys buckets
@@ -57,72 +56,74 @@ func NewLocalStore(maxKeys int) *LocalStore {
 	return s
 }
 
-// Allow implements Store. It never returns an error.
+// gcraParams returns the GCRA emission interval and burst tolerance of r in
+// microseconds. The interval is rounded up, so a rule is never looser than
+// configured. ratelimit/redis computes the same values.
+func gcraParams(r Rule) (interval, tolerance int64) {
+	per, rate := int64(r.Per/time.Microsecond), int64(r.Rate)
+	if r.Per%time.Microsecond != 0 {
+		per++ // ceil to whole microseconds
+	}
+	interval = (per + rate - 1) / rate
+	return interval, interval * int64(r.Burst)
+}
+
+// gcra is one GCRA step at now (microseconds) on a bucket whose theoretical
+// arrival time is *tat. It updates *tat only when the request is allowed.
+func gcra(tat *int64, now int64, r Rule) Decision {
+	interval, tolerance := gcraParams(r)
+	t := max(*tat, now)
+	newTAT := t + interval
+	allowAt := newTAT - tolerance
+	d := Decision{Limit: r.Rate}
+	if now < allowAt {
+		d.RetryAfter = time.Duration(allowAt-now) * time.Microsecond
+		d.ResetAfter = time.Duration(t-now) * time.Microsecond
+		return d
+	}
+	*tat = newTAT
+	d.Allowed = true
+	d.Remaining = int((now - allowAt) / interval)
+	d.ResetAfter = time.Duration(newTAT-now) * time.Microsecond
+	return d
+}
+
+// Allow implements Store. It returns an error only for an invalid rule.
 func (s *LocalStore) Allow(_ context.Context, key string, r Rule) (Decision, error) {
 	r = r.normalize()
-	if r.validate() != nil {
-		return Decision{Allowed: true}, nil
+	if err := r.validate(); err != nil {
+		return Decision{}, fmt.Errorf("ratelimit: invalid rule: %w", err)
 	}
-	now := s.now()
+	now := s.now().UnixMicro()
 	sh := &s.shards[maphash.String(s.seed, key)%localShards]
 
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	lim := sh.get(key, r, now)
-
-	interval := r.Per / time.Duration(r.Rate)
-	d := Decision{Limit: r.Rate}
-	res := lim.ReserveN(now, 1)
-	if !res.OK() {
-		return d, nil // burst < 1: never allowed
-	}
-	if delay := res.DelayFrom(now); delay > 0 {
-		res.CancelAt(now)
-		d.RetryAfter = delay
-		d.ResetAfter = fullAfter(lim, now, r.Burst, interval)
-		return d, nil
-	}
-	tokens := lim.TokensAt(now)
-	d.Allowed = true
-	d.Remaining = max(0, int(math.Floor(tokens)))
-	d.ResetAfter = fullAfter(lim, now, r.Burst, interval)
-	return d, nil
+	e := sh.get(key, now)
+	return gcra(&e.tat, now, r), nil
 }
 
-func fullAfter(lim *rate.Limiter, now time.Time, burst int, interval time.Duration) time.Duration {
-	missing := float64(burst) - lim.TokensAt(now)
-	if missing <= 0 {
-		return 0
-	}
-	return time.Duration(missing * float64(interval))
-}
-
-// get returns the limiter for key, creating it (and evicting the LRU entry)
-// when needed. A changed rule replaces the bucket.
-func (sh *localShard) get(key string, r Rule, now time.Time) *rate.Limiter {
+// get returns the bucket for key, creating it (and evicting an LRU entry)
+// when needed.
+func (sh *localShard) get(key string, now int64) *localEntry {
 	if el, ok := sh.items[key]; ok {
-		e := el.Value.(*localEntry)
-		if e.rule == r {
-			sh.lru.MoveToFront(el)
-			return e.lim
-		}
-		sh.lru.Remove(el)
-		delete(sh.items, key)
+		sh.lru.MoveToFront(el)
+		return el.Value.(*localEntry)
 	}
 	for len(sh.items) >= sh.cap {
 		sh.evict(now)
 	}
-	e := &localEntry{key: key, rule: r, lim: rate.NewLimiter(rate.Every(r.Per/time.Duration(r.Rate)), r.Burst)}
+	e := &localEntry{key: key, tat: now}
 	sh.items[key] = sh.lru.PushFront(e)
-	return e.lim
+	return e
 }
 
-// evict drops one bucket, preferring a full one near the LRU tail.
-func (sh *localShard) evict(now time.Time) {
+// evict drops one bucket, preferring a full one (tat <= now) near the LRU
+// tail.
+func (sh *localShard) evict(now int64) {
 	victim := sh.lru.Back()
 	for el, i := victim, 0; el != nil && i < evictScan; el, i = el.Prev(), i+1 {
-		e := el.Value.(*localEntry)
-		if e.lim.TokensAt(now) >= float64(e.rule.Burst) {
+		if el.Value.(*localEntry).tat <= now {
 			victim = el
 			break
 		}

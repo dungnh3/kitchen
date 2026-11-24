@@ -32,6 +32,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -81,9 +82,19 @@ func (r Rule) validate() error {
 		return fmt.Errorf("per must be > 0, got %s", r.Per)
 	case r.Burst < 0:
 		return fmt.Errorf("burst must be >= 0, got %d", r.Burst)
+	case int64(r.Per/time.Microsecond) < int64(r.Rate):
+		return fmt.Errorf("rate %d per %s is over one request per microsecond", r.Rate, r.Per)
+	}
+	// The bucket state must stay exact in a Lua (float64) number.
+	if interval, _ := gcraParams(r); r.Burst > 0 && interval > maxTolerance/int64(r.Burst) {
+		return fmt.Errorf("burst %d x %s is too long", r.Burst, r.Per/time.Duration(r.Rate))
 	}
 	return nil
 }
+
+// maxTolerance bounds the GCRA burst tolerance (microseconds) so the
+// theoretical arrival time stays an exact integer in float64 (2^53).
+const maxTolerance = 1 << 52
 
 // divide splits r across n instances, keeping at least 1.
 func (r Rule) divide(n int) Rule {
@@ -249,8 +260,15 @@ type Config struct {
 	// LocalMaxKeys bounds the in-memory store and the fallback (LRU).
 	// Default 100_000.
 	LocalMaxKeys int
-	// Prefix starts every bucket key. Default "rl".
+	// Prefix starts every bucket key. Default "rl". It is used as is, so it
+	// may carry a Redis Cluster hash tag; braces in policy names and
+	// identities are escaped and never form one.
 	Prefix string
+	// IPv6Prefix is the prefix length that groups IPv6 client addresses into
+	// one IP bucket (ByIP, ByAnyIP and the IP part of ByCaller), between 32
+	// and 128. Default 64. Use 56 or 48 when clients rotate addresses across
+	// the /64s of their delegated prefix to get fresh IP buckets.
+	IPv6Prefix int
 
 	// Errors renders HTTP denials in Middleware (domain, localization). Nil
 	// uses errs.WriteHTTP.
@@ -267,9 +285,10 @@ const defaultScope = "*"
 // precomputed metric attributes (one option per result).
 type limit struct {
 	Limit
-	scope string // bucket scope: "<policy scope>" or "<policy scope>#<label>"
-	label string
-	opts  map[string]metric.AddOption
+	scope  string // bucket scope: "<policy scope>" or "<policy scope>#<label>"
+	bucket string // prefix + ":" + escaped scope + ":"
+	label  string
+	opts   map[string]metric.AddOption
 }
 
 var results = []string{"allowed", "limited", "dry_run", "degraded", "unavailable"}
@@ -306,6 +325,7 @@ type Limiter struct {
 	timeout   time.Duration
 	cooldown  time.Duration
 	prefix    string
+	v6bits    int
 	log       *log.Logger
 	errs      *errs.Handler
 	now       func() time.Time
@@ -334,6 +354,7 @@ func New(cfg Config) (*Limiter, error) {
 		timeout:    cmpOr(cfg.StoreTimeout, 100*time.Millisecond),
 		cooldown:   cmpOr(cfg.BreakerCooldown, time.Second),
 		prefix:     cfg.Prefix,
+		v6bits:     cmp.Or(cfg.IPv6Prefix, 64),
 		log:        cfg.Logger,
 		errs:       cfg.Errors,
 		now:        time.Now,
@@ -351,6 +372,9 @@ func New(cfg Config) (*Limiter, error) {
 		l.log = log.Default()
 	}
 	var problems []error
+	if l.v6bits < 32 || l.v6bits > 128 {
+		problems = append(problems, fmt.Errorf("IPv6Prefix must be in [32, 128], got %d", cfg.IPv6Prefix))
+	}
 	if cfg.Default != nil {
 		p, err := resolve(*cfg.Default, defaultScope, "default")
 		if err != nil {
@@ -369,11 +393,19 @@ func New(cfg Config) (*Limiter, error) {
 		}
 		l.policies[name] = rp
 	}
+	for _, p := range append(slices.Collect(maps.Values(l.policies)), l.def) {
+		if p == nil {
+			continue
+		}
+		for i := range p.limits {
+			p.limits[i].bucket = l.prefix + ":" + escapeKey(p.limits[i].scope, true) + ":"
+		}
+	}
 	for _, s := range cfg.Skip {
 		l.skip[s] = true
 	}
 	for _, e := range cfg.Exempt {
-		ref, err := parseRef(e, true)
+		ref, err := parseRef(e, true, l.v6bits)
 		if err == nil && strings.HasPrefix(ref.key, "device:") {
 			err = fmt.Errorf("%q: device ids are unverified and cannot be exempt", e)
 		}
@@ -388,7 +420,7 @@ func New(cfg Config) (*Limiter, error) {
 		}
 	}
 	for k, r := range cfg.Overrides {
-		ref, err := parseRef(k, false)
+		ref, err := parseRef(k, false, l.v6bits)
 		if err == nil {
 			err = r.validate()
 		}
@@ -615,7 +647,7 @@ func (l *Limiter) decide(ctx context.Context, p *policy, keyOf func(limit) (stri
 		if !ok {
 			continue
 		}
-		d, err := l.check(ctx, p.OnStoreError, rule, l.prefix+":"+lim.scope+":"+key)
+		d, err := l.check(ctx, p.OnStoreError, rule, lim.bucket+escapeKey(key, false))
 		if err != nil {
 			errList = append(errList, err)
 		}
@@ -662,7 +694,8 @@ func (l *Limiter) decide(ctx context.Context, p *policy, keyOf func(limit) (stri
 			result = "dry_run"
 		}
 		d.Allowed, d.RetryAfter, d.Unavailable = true, 0, false
-		l.log.DebugContext(ctx, "rate limit dry run would deny", "policy", p.name, "limit", parts[best].lim.label)
+		l.log.LogAttrs(ctx, log.LevelDebug, "rate limit dry run would deny",
+			log.String("policy", p.name), log.String("limit", parts[best].lim.label))
 	}
 	label := parts[best].lim.label
 	l.decisions.Add(ctx, 1, parts[best].lim.opts[result])
@@ -690,13 +723,17 @@ func (l *Limiter) check(ctx context.Context, mode StoreErrorMode, r Rule, bucket
 	if err != nil {
 		// A caller that went away says nothing about the store's health.
 		if ctx.Err() == nil {
-			l.openUntil.Store(l.now().Add(l.cooldown).UnixNano())
+			// Log once per opening (and per failed probe), not per request.
+			if prev := l.openUntil.Swap(l.now().Add(l.cooldown).UnixNano()); prev == 0 || open != 0 {
+				l.log.LogAttrs(ctx, log.LevelWarn, "rate-limit store failing; OnStoreError applies until it recovers",
+					log.Err(err), log.Duration("retry_in", l.cooldown))
+			}
 		}
 		l.storeErrors.Add(ctx, 1)
 		return l.degrade(ctx, mode, r, bucket, fmt.Errorf("ratelimit: store: %w", err))
 	}
-	if open != 0 {
-		l.openUntil.Store(0) // probe succeeded
+	if open != 0 && l.openUntil.Swap(0) != 0 { // probe succeeded
+		l.log.LogAttrs(ctx, log.LevelInfo, "rate-limit store recovered")
 	}
 	return d, nil
 }

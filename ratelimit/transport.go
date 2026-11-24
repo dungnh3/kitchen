@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -38,7 +39,7 @@ func ResponseHeaders() []string {
 
 // Key returns the ByCaller bucket key of a request: "user:<id>",
 // "anon:<id>", "device:<hash>" or "ip:<client IP>" (IPv6 collapsed to its
-// /64). The client IP is the one package server resolved with its trusted
+// Config.IPv6Prefix, /64 by default). The client IP is the one package server resolved with its trusted
 // proxies (xcontext.Info.ClientIP); without it, remote (the transport peer
 // address) is the client. ok is false when nothing identifies the caller.
 func (l *Limiter) Key(ctx context.Context, remote string) (string, bool) {
@@ -63,9 +64,11 @@ func clientIP(ctx context.Context, remote string) (netip.Addr, bool) {
 	return a.Unmap().WithZone(""), true
 }
 
-func bucketIP(a netip.Addr) string {
+// bucketIP is the IP bucket of a: the address for IPv4, its /bits prefix for
+// IPv6.
+func bucketIP(a netip.Addr, bits int) string {
 	if a.Is6() {
-		p, _ := a.Prefix(64)
+		p, _ := a.Prefix(bits)
 		return p.String()
 	}
 	return a.String()
@@ -74,6 +77,11 @@ func bucketIP(a netip.Addr) string {
 // deny builds the client error for a denied decision.
 func deny(name string, d Decision) error {
 	if d.Unavailable {
+		// RetryInfo gives HTTP clients a Retry-After, as gRPC gets one in
+		// the retry-after metadata.
+		if d.RetryAfter > 0 {
+			return ErrUnavailable.With(errs.Meta("policy", name), errs.RetryAfter(d.RetryAfter))
+		}
 		return ErrUnavailable.With(errs.Meta("policy", name))
 	}
 	return ErrRateLimited.With(errs.Meta("policy", name),
@@ -96,8 +104,9 @@ func headers(p *policy, d Decision, parts []part) map[string]string {
 			id += "#" + pt.lim.label
 		}
 		pi := httpsfv.NewItem(id)
-		pi.Params.Add("q", int64(pt.rule.Rate))
-		pi.Params.Add("w", int64(max(1, ceilSeconds(pt.rule.Per))))
+		q, w := quotaWindow(pt.rule)
+		pi.Params.Add("q", q)
+		pi.Params.Add("w", w)
 		pol = append(pol, pi)
 		ri := httpsfv.NewItem(id)
 		ri.Params.Add("r", int64(pt.d.Remaining))
@@ -129,10 +138,9 @@ func (l *Limiter) grpcCheck(ctx context.Context, method string, setHeader func(m
 	if pr, ok := peer.FromContext(ctx); ok && pr.Addr != nil {
 		remote = pr.Addr.String()
 	}
-	d, parts, err := l.checkIdentity(ctx, method, remote)
-	if err != nil {
-		l.log.WarnContext(ctx, "rate-limit store failed", "rpc.method", method, "error", err)
-	}
+	// Store failures were handled by OnStoreError and are logged by the
+	// breaker once per outage, not per request.
+	d, parts, _ := l.checkIdentity(ctx, method, remote)
 	md := metadata.MD{}
 	for k, v := range headers(p, d, parts) {
 		md.Set(k, v)
@@ -181,10 +189,7 @@ func (l *Limiter) LimitHTTP(w http.ResponseWriter, r *http.Request, pattern stri
 	if !ok {
 		return nil
 	}
-	d, parts, err := l.checkIdentity(r.Context(), pattern, r.RemoteAddr)
-	if err != nil {
-		l.log.WarnContext(r.Context(), "rate-limit store failed", "http.route", pattern, "error", err)
-	}
+	d, parts, _ := l.checkIdentity(r.Context(), pattern, r.RemoteAddr) // failures: see grpcCheck
 	for k, v := range headers(p, d, parts) {
 		w.Header().Set(k, v)
 	}
@@ -211,6 +216,17 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// quotaWindow expresses r as the draft's quota q per window w, w in whole
+// seconds (sub-second windows are not allowed): Rate per Per scaled to
+// ceil(Per), rounded down, so 1 per 100ms is q=10;w=1, not q=1;w=1.
+func quotaWindow(r Rule) (q, w int64) {
+	w = int64(max(1, ceilSeconds(r.Per)))
+	if r.Per == time.Duration(w)*time.Second {
+		return int64(r.Rate), w
+	}
+	return int64(math.Floor(float64(r.Rate) * float64(w) * float64(time.Second) / float64(r.Per))), w
 }
 
 func ceilSeconds(d time.Duration) int {

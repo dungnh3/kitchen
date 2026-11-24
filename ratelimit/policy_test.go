@@ -217,7 +217,7 @@ func TestAllowCustomKeyAndConfigErrors(t *testing.T) {
 	}
 }
 
-// Review 2026-11-21: a ByCaller limit cannot be bypassed by rotating the
+// A ByCaller limit cannot be bypassed by rotating the
 // unverified device id (the client IP is counted too); users are not
 // affected by that IP bucket.
 func TestByCallerDeviceRotation(t *testing.T) {

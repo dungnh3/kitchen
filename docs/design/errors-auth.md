@@ -245,7 +245,7 @@ future, tampered payload, unknown `kid`, missing or malformed header, and
 
 ## 5. Package `ratelimit` (core) and module `ratelimit/redis`
 
-Core dependencies: `golang.org/x/time/rate`, grpc, OTel metric, `errs`.
+Core dependencies: grpc, OTel metric, `errs`, httpsfv.
 
 ```go
 type Rule struct{ Rate int; Per time.Duration; Burst int } // Burst 0 → Rate
@@ -296,7 +296,7 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler // policy = r.Patte
 func (l *Limiter) Key(ctx context.Context, remote string) (string, bool)
 func (l *Limiter) LimitHTTP(w http.ResponseWriter, r *http.Request, pattern string) error // used by server.WithRateLimit
 
-func NewLocalStore(maxKeys int) *LocalStore // GCRA via x/time/rate, sharded LRU, no goroutines
+func NewLocalStore(maxKeys int) *LocalStore // integer-µs GCRA (same arithmetic as the Lua script), sharded LRU, no goroutines
 ```
 
 When a request is denied the client gets `ResourceExhausted`, reason
@@ -346,3 +346,28 @@ Approved by the owner (all "Recommended"):
 
 Reuse review (2026-11-21): interceptors stay hand-written rather than built on go-grpc-middleware/v2 `auth` (owner: kitchen has no go-grpc-middleware dependency and only ~30 lines would move); JWT stays on jwx v3, HTTP on `httpx`, caching on `cache`, errors on `errs`.
 
+
+## Deep review of 2026-11-24 (`ratelimit`, `ratelimit/redis`)
+
+Owner decisions (all "Recommended"):
+
+| # | Finding | Decision |
+|---|---|---|
+| RL1 | The Lua script worked in float seconds: `(now - allow_at) / interval` lost precision and reported `remaining` one too low on about half of the allowed requests (seen with a differential test), and `tostring()` on real Redis keeps 14 significant digits, so the stored TAT was rounded to 10µs (high-rate buckets admitted without limit). | Integer microseconds everywhere; the TAT is stored with `string.format("%d")`; replies are integers. `redis.replicate_commands()` is called when it exists (Redis 5/6). |
+| RL2 | `LocalStore` was a token bucket (x/time/rate): truncated interval, an infinite limiter for rules over 1 request/ns, a reset when the rule of a key changed, four lock round-trips per call. | `LocalStore` is an integer-µs GCRA with the Lua script's arithmetic; x/time/rate is no longer a dependency. A differential test (synctest + miniredis) requires identical `Decision`s. 437 → 145 ns per call. |
+| RL3 | Multi-limit: a request denied by a shared limit (IP, global) has used a token of the specific limits. | Kept and documented (no refund round-trip under a flood; Envoy's default). |
+| RL4 | `RateLimit` header draft revision 12 renamed `r`/`t` to `a`/`w`. | Keep revisions 09–11, documented. Sub-second `Per` is now scaled into `q`/`w`. |
+| RL5 | IPv6 clients rotate across the /64s of their /56 or /48. | `Config.IPv6Prefix` (32–128), default 64. |
+
+Fixed without a decision (bugs): bucket keys percent-encode `{`, `}`, `%`
+(and `:` in policy names) so a route like `GET /files/{id}` no longer puts
+every bucket of the route in one Redis Cluster slot and a policy name cannot
+reach another policy's keys; the breaker logs once per outage instead of a
+warning per request; `OnStoreError: Deny` 503s carry `RetryInfo`, so HTTP
+gets `Retry-After`; rules over one request per microsecond or with a burst
+tolerance over 2^52 µs are rejected by `New`; `LocalStore.Allow` returns an
+error for an invalid rule instead of allowing.
+
+Deferred: one breaker per Limiter, not per Cluster node (documented in
+USAGE.md); the REST gateway error path does not forward the RateLimit
+response metadata on a 429 (a `server`/`errs` change, routed to the owner).
