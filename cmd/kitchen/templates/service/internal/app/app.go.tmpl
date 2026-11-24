@@ -1,4 +1,4 @@
-// Package app wires the service together: telemetry, {% if .Postgres %}database, {% end %}errors,
+// Package app wires the service together: telemetry, {% if .SQL %}database, {% end %}errors,
 // authentication, rate limits and the gRPC + REST server{% if .Worker %}, and the
 // worker{% end %}.
 package app
@@ -13,7 +13,6 @@ import (
 	"github.com/dungnh3/kitchen/errs"
 	"github.com/dungnh3/kitchen/i18n"
 	"github.com/dungnh3/kitchen/log"
-	"github.com/dungnh3/kitchen/otelx/sdk"
 {%- if .Outbox %}
 	outboxpgx "github.com/dungnh3/kitchen/pubsub/outbox/pgx"
 {%- end %}
@@ -30,8 +29,11 @@ import (
 {%- end %}{% end %}
 	"{% .Module %}/internal/service"
 	"{% .Module %}/internal/store"
-{%- if .Postgres %}
-	"{% .Module %}/internal/store/pgstore"
+{%- if .Cache %}
+	"{% .Module %}/internal/store/cachestore"
+{%- end %}
+{%- if .SQL %}
+	"{% .Module %}/internal/store/{% .StoreDir %}"
 {%- else %}
 	"{% .Module %}/internal/store/memstore"
 {%- end %}
@@ -61,10 +63,10 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 		return err
 	}
 	defer func() { err = errors.Join(err, d.close(ctx)) }()
-{%- if .Postgres %}
+{%- if .SQL %}
 
 	if cfg.Database.MigrateOnStart {
-		if err := migrateUp(ctx, d.pool, logger); err != nil {
+		if err := migrateUp(ctx, d.{% if .Postgres %}pool{% else %}db{% end %}, logger); err != nil {
 			return err
 		}
 	}
@@ -85,6 +87,8 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 	var items store.Items = pgstore.NewItems(d.pool, ob, cfg.PubSub.ItemsTopic)
 {%- else if .Postgres %}
 	var items store.Items = pgstore.NewItems(d.pool)
+{%- else if .MySQL %}
+	var items store.Items = mysqlstore.NewItems(d.db)
 {%- else %}
 	// The data lives in memory: replace memstore with a real store.
 	var items store.Items = memstore.NewItems()
@@ -92,6 +96,14 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 {%- if .PubSub %}{% if not .Outbox %}
 	items = events.NewItems(items, d.broker, cfg.PubSub.ItemsTopic, logger)
 {%- end %}{% end %}
+{%- if .Cache %}
+	cached, err := cachestore.NewItems(items, d.redis, cfg.Cache.TTL, Name+":item:v1:", logger)
+	if err != nil {
+		return fmt.Errorf("cache: %w", err)
+	}
+	defer func() { err = errors.Join(err, cached.Close(context.WithoutCancel(ctx))) }()
+	items = cached
+{%- end %}
 	// kitchen:stores
 	services := []server.Service{
 		service.NewItemService(items),
@@ -159,7 +171,7 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 	if cfg.Auth.Disabled {
 		logger.WarnContext(ctx, "authentication is disabled (AUTH_DISABLED=true): every caller is anonymous")
 	} else {
-		authn, closeAuth, err := newAuthenticator(ctx, cfg.Auth, errh, logger, d.tel)
+		authn, closeAuth, err := newAuthenticator(ctx, cfg.Auth, errh, logger, d)
 		if err != nil {
 			return err
 		}
@@ -174,9 +186,48 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 	return srv.Run(ctx)
 }
 
+{%- if .Introspection %}
+// newAuthenticator verifies opaque tokens with RFC 7662 introspection. The
+// answers are cached{% if .Redis %} and shared by the instances through Redis{% else %} in process{% end %} for at
+// most 30s, so a revoked token stops working within that time. JWTs are
+// rejected: their issuer has no verifier.
+func newAuthenticator(_ context.Context, cfg config.Auth, errh *errs.Handler, logger *log.Logger, d *deps) (*auth.Authenticator, func(context.Context) error, error) {
+	in, err := auth.NewIntrospection(auth.IntrospectionConfig{
+		Introspect: auth.RFC7662(auth.RFC7662Config{
+			Endpoint:     cfg.IntrospectionURL,
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret,
+			Issuer:       cfg.Issuer,
+			Audience:     cfg.Audience,
+		}),
+{%- if .Redis %}
+		Redis:    d.redis,
+		CacheKey: []byte(cfg.CacheKey),
+		Prefix:   Name + ":introspection:",
+{%- end %}
+		Logger: logger,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("auth: %w", err)
+	}
+	authn, err := auth.New(auth.Config{
+		Opaque:        in,
+		Audience:      cfg.Audience,
+		Public:        publicMethods,
+		WriteError:    errh.WriteHTTP,
+		Logger:        logger,
+		MeterProvider: d.tel.MeterProvider(),
+	})
+	if err != nil {
+		in.Close()
+		return nil, nil, fmt.Errorf("auth: %w", err)
+	}
+	return authn, func(context.Context) error { in.Close(); return nil }, nil
+}
+{%- else %}
 // newAuthenticator verifies JWTs with the issuer's JWKS. It fails if the key
 // set cannot be fetched, so a misconfigured service never starts.
-func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, logger *log.Logger, tel *sdk.Telemetry) (*auth.Authenticator, func(context.Context) error, error) {
+func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, logger *log.Logger, d *deps) (*auth.Authenticator, func(context.Context) error, error) {
 	jwks, err := auth.NewJWKS(ctx, auth.JWKSConfig{
 		Issuer:   cfg.Issuer,
 		Audience: cfg.Audience,
@@ -192,7 +243,7 @@ func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, 
 		Public:        publicMethods,
 		WriteError:    errh.WriteHTTP,
 		Logger:        logger,
-		MeterProvider: tel.MeterProvider(),
+		MeterProvider: d.tel.MeterProvider(),
 	})
 	if err != nil {
 		_ = jwks.Close(ctx)
@@ -200,3 +251,4 @@ func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, 
 	}
 	return authn, jwks.Close, nil
 }
+{%- end %}

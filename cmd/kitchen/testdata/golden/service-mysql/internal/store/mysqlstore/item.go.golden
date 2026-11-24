@@ -1,0 +1,79 @@
+package mysqlstore
+
+import (
+	"context"
+	"database/sql"
+	"time"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/mysqlx"
+	"github.com/google/uuid"
+
+	"github.com/acme/shop/internal/store"
+	"github.com/acme/shop/internal/store/mysqlstore/sqlcdb"
+)
+
+// Items is a store.Items on a MySQL database.
+type Items struct {
+	q   *sqlcdb.Queries
+	now func() time.Time
+}
+
+var _ store.Items = (*Items)(nil)
+
+// NewItems returns Items on db, which the caller owns.
+func NewItems(db *sql.DB) *Items {
+	return &Items{q: sqlcdb.New(db), now: time.Now}
+}
+
+// GetItem implements store.Items.
+func (s *Items) GetItem(ctx context.Context, id string) (store.Item, error) {
+	row, err := s.q.GetItem(ctx, id)
+	if err != nil {
+		// mysqlx.MapError turns sql.ErrNoRows into errs.ErrNotFound, duplicate
+		// keys into errs.ErrAlreadyExists, and so on.
+		return store.Item{}, mysqlx.MapError(err)
+	}
+	return itemFromRow(row), nil
+}
+
+// ListItems implements store.Items.
+func (s *Items) ListItems(ctx context.Context, after string, limit int32) ([]store.Item, error) {
+	rows, err := s.q.ListItems(ctx, sqlcdb.ListItemsParams{After: after, Limit: limit})
+	if err != nil {
+		return nil, mysqlx.MapError(err)
+	}
+	out := make([]store.Item, len(rows))
+	for i, r := range rows {
+		out[i] = itemFromRow(r)
+	}
+	return out, nil
+}
+
+// CreateItem implements store.Items. MySQL has no RETURNING, so the id
+// and the creation time are set here; the time is truncated to the
+// microseconds that DATETIME(6) keeps.
+func (s *Items) CreateItem(ctx context.Context, title string) (store.Item, error) {
+	v := store.Item{ID: uuid.NewString(), Title: title, CreateTime: s.now().UTC().Truncate(time.Microsecond)}
+	err := s.q.CreateItem(ctx, sqlcdb.CreateItemParams{ID: v.ID, Title: v.Title, CreateTime: v.CreateTime})
+	if err != nil {
+		return store.Item{}, mysqlx.MapError(err)
+	}
+	return v, nil
+}
+
+// DeleteItem implements store.Items.
+func (s *Items) DeleteItem(ctx context.Context, id string) error {
+	n, err := s.q.DeleteItem(ctx, id)
+	if err != nil {
+		return mysqlx.MapError(err)
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+func itemFromRow(r sqlcdb.Item) store.Item {
+	return store.Item{ID: r.ID, Title: r.Title, CreateTime: r.CreateTime.UTC()}
+}

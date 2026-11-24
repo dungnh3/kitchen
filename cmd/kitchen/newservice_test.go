@@ -37,6 +37,12 @@ var serviceGoldenCases = map[string]serviceParams{
 		With:          []string{withPubSub},
 		Broker:        brokerKafka,
 	},
+	"service-mysql": {
+		projectParams: projectParams{Module: "github.com/acme/shop", Description: "Shop.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
+		DB:            dbMySQL,
+		With:          []string{withCache},
+		Auth:          authIntrospection,
+	},
 	"service-sqs": {
 		projectParams: projectParams{Module: "github.com/acme/catalog", Description: "Catalog.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
 		DB:            dbPostgres,
@@ -169,7 +175,7 @@ func TestGeneratedServiceBuilds(t *testing.T) {
 				t.Fatalf("generate: %v\n%s", err, out.String())
 			}
 			if _, ok := serviceAdds[name]; ok {
-				if err := generateDomain(t.Context(), dir, env, p.Postgres(), &out, &out); err != nil {
+				if err := generateDomain(t.Context(), dir, env, p.SQL(), &out, &out); err != nil {
 					t.Fatalf("generate domains: %v\n%s", err, out.String())
 				}
 			}
@@ -188,7 +194,7 @@ func TestGeneratedServiceBuilds(t *testing.T) {
 			goCmd("test", "-race", "-count=1", "./...")
 			goCmd("run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"+golangciLintVersion, "run", "--allow-parallel-runners", "./...")
 			goCmd("run", "github.com/bufbuild/buf/cmd/buf@"+serviceVersions.Buf, "lint")
-			if p.Postgres() {
+			if p.SQL() {
 				goCmd("run", "github.com/sqlc-dev/sqlc/cmd/sqlc@"+serviceVersions.Sqlc, "diff")
 			}
 		})
@@ -211,12 +217,16 @@ func TestServiceValidate(t *testing.T) {
 	}{
 		{"ok", func(*serviceParams) {}, ""},
 		{"no db", func(p *serviceParams) { p.DB = dbNone }, ""},
-		{"bad db", func(p *serviceParams) { p.DB = "mysql" }, "-db"},
+		{"mysql", func(p *serviceParams) { p.DB = dbMySQL }, ""},
+		{"bad db", func(p *serviceParams) { p.DB = "sqlite" }, "-db"},
+		{"introspection", func(p *serviceParams) { p.Auth = authIntrospection }, ""},
+		{"bad auth", func(p *serviceParams) { p.Auth = "basic" }, "-auth"},
+		{"outbox on mysql", func(p *serviceParams) { p.DB, p.With = dbMySQL, []string{withPubSub, withOutbox} }, "-with outbox needs"},
 		{"missing module", func(p *serviceParams) { p.Module = "" }, "-module is required"},
 		{"bad name", func(p *serviceParams) { p.Name = "Orders" }, "-name"},
 		{"bad kitchen version", func(p *serviceParams) { p.KitchenVersion = "main" }, "-kitchen-version"},
 		{"events", func(p *serviceParams) { p.With = []string{withPubSub, withOutbox, withLease} }, ""},
-		{"unknown feature", func(p *serviceParams) { p.With = []string{"cache"} }, "-with \"cache\""},
+		{"unknown feature", func(p *serviceParams) { p.With = []string{"sse"} }, "-with \"sse\""},
 		{"outbox without pubsub", func(p *serviceParams) { p.With = []string{withOutbox} }, "-with outbox needs"},
 		{"outbox without postgres", func(p *serviceParams) {
 			p.DB, p.With = dbNone, []string{withPubSub, withOutbox}
@@ -258,7 +268,7 @@ func TestRunServiceCLI(t *testing.T) {
 	}{
 		{"create", newArgs, 0, "make generate"},
 		{"refuse non-empty dir", newArgs, 1, "not empty"},
-		{"bad db", []string{"new", "service", "-module", "github.com/acme/x", "-db", "mysql", "-yes"}, 1, "-db"},
+		{"bad db", []string{"new", "service", "-module", "github.com/acme/x", "-db", "sqlite", "-yes"}, 1, "-db"},
 		{"outbox without db", []string{"new", "service", "-module", "github.com/acme/x", "-db", "none", "-with", "pubsub,outbox", "-yes"}, 1, "-with outbox needs"},
 		{"bad flag", []string{"new", "service", "-nope"}, 2, ""},
 		{"help flag", []string{"new", "service", "-h"}, 0, "-no-generate"},
@@ -285,8 +295,8 @@ func TestRunServiceCLI(t *testing.T) {
 // TestServiceFeatureMatrix renders every valid combination of database,
 // features and broker: each must render and gofmt, and keep only its files.
 func TestServiceFeatureMatrix(t *testing.T) {
-	names := []string{withRedis, withLease, withPubSub, withOutbox}
-	for _, db := range []string{dbPostgres, dbNone} {
+	names := []string{withRedis, withCache, withLease, withPubSub, withOutbox}
+	for _, db := range []string{dbPostgres, dbMySQL, dbNone} {
 		for mask := range 1 << len(names) {
 			var with []string
 			for i, n := range names {
@@ -295,9 +305,13 @@ func TestServiceFeatureMatrix(t *testing.T) {
 				}
 			}
 			for _, broker := range []string{brokerGCP, brokerKafka, brokerSQS} {
+				auth := authJWKS
+				if mask%2 == 1 {
+					auth = authIntrospection
+				}
 				p := serviceParams{
 					projectParams: projectParams{Module: "example.com/x/svc", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
-					DB:            db, With: with, Broker: broker,
+					DB:            db, With: with, Broker: broker, Auth: auth,
 				}
 				p.applyDefaults()
 				if p.validate() != nil {
@@ -327,10 +341,12 @@ func TestServiceFeatureMatrix(t *testing.T) {
 	}
 }
 
-func TestLeaseAddsRedis(t *testing.T) {
-	p := serviceParams{With: []string{withLease, withLease}}
-	p.applyDefaults()
-	if want := []string{withLease, withRedis}; !slices.Equal(p.With, want) {
-		t.Errorf("With = %v, want %v", p.With, want)
+func TestRedisFeaturesAddRedis(t *testing.T) {
+	for _, f := range []string{withLease, withCache} {
+		p := serviceParams{With: []string{f, f}}
+		p.applyDefaults()
+		if want := []string{f, withRedis}; !slices.Equal(p.With, want) {
+			t.Errorf("-with %s: With = %v, want %v", f, p.With, want)
+		}
 	}
 }

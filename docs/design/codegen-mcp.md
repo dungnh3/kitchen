@@ -246,7 +246,7 @@ kitchen new service ... [-with redis,lease,pubsub,outbox] [-pubsub gcp|kafka|sqs
 | F5 | Upgrades of generated projects: a manifest plus a drift check first (§3c), a three-way `kitchen upgrade` later | upgrade now; none | Cheap and safe while templates still change |
 | F6 | Add-on generators `kitchen add domain`, `add consumer`, `add job` (§3d); no `add rpc` or `add migration` (buf and goose do that) | – | – |
 | F7 | Internal APIs: a per-method policy, deny by default | a second gRPC port | One mechanism, fail-closed |
-| F8 | MySQL template later; MongoDB documented only | both; Postgres only | – |
+| F8 | MySQL template (§3e); MongoDB documented only | both; Postgres only | – |
 
 Defaults chosen without a popup: broker default `gcp`; Redis and Kafka use
 TLS unless `REDIS_TLS` / `PUBSUB_TLS` is `false` (local only); without
@@ -300,6 +300,30 @@ case; the plural is the regular English one unless `-plural` is given. A
 consumer gets a required `PUBSUB_<NAME>_*` subscription (`config.Subscription`
 with `Validate`) and its local topic, subscription or queue in the
 Makefile. `item` keeps its flat `PUBSUB_ITEMS_*` settings with defaults.
+
+## 3e. MySQL, introspection and cache (owner, popup 2026-11-24)
+
+The owner chose `-db mysql`, `-auth introspection` and `-with cache` for
+this phase; `-with sse` and an HTTP client feature wait.
+
+- `-db mysql`: `mysqlx.Open` (TLS required unless the DSN sets `tls`,
+  parseTime, UTC), sqlc engine `mysql` on database/sql, goose through
+  `migrate.NewMySQL` (lock table), `internal/store/mysqlstore`, MySQL 8.4 in
+  compose and testcontainers. MySQL has no `RETURNING`, so the store sets
+  the UUID and the creation time (truncated to the microseconds that
+  `DATETIME(6)` keeps); ids are `CHAR(36)` in `ascii_bin` so key order
+  matches Go string order for pagination. `DB_STATEMENT_TIMEOUT` is
+  Postgres only. The outbox stays Postgres only.
+- `-auth introspection`: `auth.NewIntrospection` over `auth.RFC7662` as the
+  `Opaque` verifier, fail-closed, `AUTH_INTROSPECTION_URL` https or
+  localhost, client credentials and audience required; with Redis the
+  answers are shared under `<name>:introspection:` with a required
+  `AUTH_INTROSPECTION_CACHE_KEY` of at least 32 bytes. JWTs are rejected in
+  this mode.
+- `-with cache` (adds `redis`): `cachestore.Items` wraps the item store
+  after the event wrapper; Redis only (no in-process tier, so a delete is
+  seen by every instance at its next read), `CACHE_TTL` default 5m, keys
+  `<name>:item:v1:`; a failed cache delete is logged, not returned.
 
 ## 4. Sequencing
 

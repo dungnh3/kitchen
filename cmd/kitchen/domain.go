@@ -95,6 +95,7 @@ type domainData struct {
 	Module       string
 	ProtoPackage string
 	Postgres     bool
+	MySQL        bool
 	// Outbox writes an <Entity>Created event in the transaction of a
 	// create; only the example domain of a new service has events.
 	Outbox bool
@@ -105,7 +106,7 @@ type domainData struct {
 // prefix of its migration file, for example 00001.
 func renderDomain(p serviceParams, e entity, migration string, outbox bool) (scaffold.Files, error) {
 	files, err := scaffold.Render(templatesFS, "templates/domain", domainData{
-		Module: p.Module, ProtoPackage: p.ProtoPackage(), Postgres: p.Postgres(), Outbox: outbox, E: e,
+		Module: p.Module, ProtoPackage: p.ProtoPackage(), Postgres: p.Postgres(), MySQL: p.MySQL(), Outbox: outbox, E: e,
 	})
 	if err != nil {
 		return nil, err
@@ -118,7 +119,9 @@ func renderDomain(p serviceParams, e entity, migration string, outbox bool) (sca
 	)
 	out := scaffold.Files{}
 	for rel, b := range files {
-		if !p.Postgres() && (strings.HasPrefix(rel, "migrations/") || strings.HasPrefix(rel, "internal/store/pgstore/")) {
+		if !p.SQL() && strings.HasPrefix(rel, "migrations/") ||
+			!p.Postgres() && strings.HasPrefix(rel, "internal/store/pgstore/") ||
+			!p.MySQL() && strings.HasPrefix(rel, "internal/store/mysqlstore/") {
 			continue
 		}
 		out[r.Replace(rel)] = b

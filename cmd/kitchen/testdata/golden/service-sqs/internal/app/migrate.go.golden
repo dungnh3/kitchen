@@ -30,15 +30,15 @@ func Migrate(ctx context.Context, cfg config.Config, logger *log.Logger, command
 	if err != nil {
 		return err
 	}
-	pool, err := openDB(ctx, cfg, logger, tel)
+	conn, err := openDB(ctx, cfg, logger, tel)
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+	defer conn.Close()
 	if command == "up" {
-		return migrateUp(ctx, pool, logger)
+		return migrateUp(ctx, conn, logger)
 	}
-	m, err := newMigrator(pool, logger)
+	m, err := newMigrator(conn, logger)
 	if err != nil {
 		return err
 	}
@@ -58,8 +58,8 @@ func Migrate(ctx context.Context, cfg config.Config, logger *log.Logger, command
 	return tw.Flush()
 }
 
-func migrateUp(ctx context.Context, pool *pgxpool.Pool, logger *log.Logger) error {
-	m, err := newMigrator(pool, logger)
+func migrateUp(ctx context.Context, conn *pgxpool.Pool, logger *log.Logger) error {
+	m, err := newMigrator(conn, logger)
 	if err != nil {
 		return err
 	}
@@ -70,8 +70,8 @@ func migrateUp(ctx context.Context, pool *pgxpool.Pool, logger *log.Logger) erro
 	return nil
 }
 
-func newMigrator(pool *pgxpool.Pool, logger *log.Logger) (*migrate.Migrator, error) {
-	m, err := migrate.NewPostgres(pool, migrate.Config{Source: migrations.FS, Logger: logger})
+func newMigrator(conn *pgxpool.Pool, logger *log.Logger) (*migrate.Migrator, error) {
+	m, err := migrate.NewPostgres(conn, migrate.Config{Source: migrations.FS, Logger: logger})
 	if err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}

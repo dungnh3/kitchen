@@ -1,0 +1,79 @@
+package mysqlstore
+
+import (
+	"context"
+	"database/sql"
+	"time"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/mysqlx"
+	"github.com/google/uuid"
+
+	"github.com/acme/shop/internal/store"
+	"github.com/acme/shop/internal/store/mysqlstore/sqlcdb"
+)
+
+// OrderItems is a store.OrderItems on a MySQL database.
+type OrderItems struct {
+	q   *sqlcdb.Queries
+	now func() time.Time
+}
+
+var _ store.OrderItems = (*OrderItems)(nil)
+
+// NewOrderItems returns OrderItems on db, which the caller owns.
+func NewOrderItems(db *sql.DB) *OrderItems {
+	return &OrderItems{q: sqlcdb.New(db), now: time.Now}
+}
+
+// GetOrderItem implements store.OrderItems.
+func (s *OrderItems) GetOrderItem(ctx context.Context, id string) (store.OrderItem, error) {
+	row, err := s.q.GetOrderItem(ctx, id)
+	if err != nil {
+		// mysqlx.MapError turns sql.ErrNoRows into errs.ErrNotFound, duplicate
+		// keys into errs.ErrAlreadyExists, and so on.
+		return store.OrderItem{}, mysqlx.MapError(err)
+	}
+	return orderItemFromRow(row), nil
+}
+
+// ListOrderItems implements store.OrderItems.
+func (s *OrderItems) ListOrderItems(ctx context.Context, after string, limit int32) ([]store.OrderItem, error) {
+	rows, err := s.q.ListOrderItems(ctx, sqlcdb.ListOrderItemsParams{After: after, Limit: limit})
+	if err != nil {
+		return nil, mysqlx.MapError(err)
+	}
+	out := make([]store.OrderItem, len(rows))
+	for i, r := range rows {
+		out[i] = orderItemFromRow(r)
+	}
+	return out, nil
+}
+
+// CreateOrderItem implements store.OrderItems. MySQL has no RETURNING, so the id
+// and the creation time are set here; the time is truncated to the
+// microseconds that DATETIME(6) keeps.
+func (s *OrderItems) CreateOrderItem(ctx context.Context, title string) (store.OrderItem, error) {
+	v := store.OrderItem{ID: uuid.NewString(), Title: title, CreateTime: s.now().UTC().Truncate(time.Microsecond)}
+	err := s.q.CreateOrderItem(ctx, sqlcdb.CreateOrderItemParams{ID: v.ID, Title: v.Title, CreateTime: v.CreateTime})
+	if err != nil {
+		return store.OrderItem{}, mysqlx.MapError(err)
+	}
+	return v, nil
+}
+
+// DeleteOrderItem implements store.OrderItems.
+func (s *OrderItems) DeleteOrderItem(ctx context.Context, id string) error {
+	n, err := s.q.DeleteOrderItem(ctx, id)
+	if err != nil {
+		return mysqlx.MapError(err)
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+func orderItemFromRow(r sqlcdb.OrderItem) store.OrderItem {
+	return store.OrderItem{ID: r.ID, Title: r.Title, CreateTime: r.CreateTime.UTC()}
+}

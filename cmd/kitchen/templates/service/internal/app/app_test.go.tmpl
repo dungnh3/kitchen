@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+{%- if not .Introspection %}
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
+{%- end %}
 	"encoding/json"
 	"io"
 	"net"
@@ -25,6 +27,9 @@ import (
 {%- if .Postgres %}
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+{%- else if .MySQL %}
+	"github.com/testcontainers/testcontainers-go"
+	tcmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
 {%- end %}
 	"go.uber.org/goleak"
 
@@ -42,11 +47,11 @@ func TestMain(m *testing.M) {
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 {%- end %}
 
-// TestApp starts the whole service on random ports{% if .Postgres %} against a Postgres
+// TestApp starts the whole service on random ports{% if .SQL %} against a {% .DBName %}
 // container{% end %} and calls it over REST.
 func TestApp(t *testing.T) {
 	if testing.Short() {
-		t.Skip("starts the service{% if .Postgres %} and a Postgres container{% end %}")
+		t.Skip("starts the service{% if .SQL %} and a {% .DBName %} container{% end %}")
 	}
 	base := config.Config{
 		Env:             "test",
@@ -56,9 +61,14 @@ func TestApp(t *testing.T) {
 		ErrorDomain:     Name,
 {%- if .Postgres %}
 		Database:        config.Database{URL: startPostgres(t), MigrateOnStart: true},
+{%- else if .MySQL %}
+		Database:        config.Database{URL: startMySQL(t), MigrateOnStart: true},
 {%- end %}
 {%- if .Redis %}
 		Redis:           config.Redis{Addrs: []string{miniredis.RunT(t).Addr()}},
+{%- end %}
+{%- if .Cache %}
+		Cache:           config.Cache{TTL: time.Minute},
 {%- end %}
 {%- if .PubSub %}
 		PubSub: config.PubSub{
@@ -92,7 +102,7 @@ func TestApp(t *testing.T) {
 	var opts []Option
 {%- end %}
 {%- if .Worker %}
-{%- if .Postgres %}
+{%- if .SQL %}
 	if err := Migrate(t.Context(), base, log.Discard(), "up", io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +149,30 @@ func TestApp(t *testing.T) {
 	})
 
 	t.Run("auth", func(t *testing.T) {
+{%- if .Introspection %}
+		idp := httptest.NewServer(introspectionHandler(t))
+		defer idp.Close()
+		cfg := base
+		cfg.Auth = config.Auth{IntrospectionURL: idp.URL, ClientID: Name, ClientSecret: "secret", Audience: Name{% if .Redis %}, CacheKey: "0123456789abcdef0123456789abcdef"{% end %}}
+		url := start(t, cfg, opts...)
+
+		get, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, url+"/v1/items", nil)
+		get.Header.Set("Authorization", "Bearer active-token")
+		ok, err := http.DefaultClient.Do(get)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = ok.Body.Close()
+		if ok.StatusCode != http.StatusOK {
+			t.Errorf("active token: status %d, want 200", ok.StatusCode)
+		}
+{%- else %}
 		jwks := httptest.NewServer(jwksHandler(t))
 		defer jwks.Close()
 		cfg := base
 		cfg.Auth = config.Auth{Issuer: "https://issuer.example.com", JWKSURL: jwks.URL, Audience: Name}
 		url := start(t, cfg, opts...)
+{%- end %}
 
 		var e apiError
 		call(t, http.MethodGet, url+"/v1/items", "", http.StatusUnauthorized, &e)
@@ -286,6 +315,25 @@ func call(t *testing.T, method, url, body string, wantStatus int, out any) {
 	}
 }
 
+{%- if .Introspection %}
+// introspectionHandler is an RFC 7662 endpoint: "active-token" is an active
+// token for this service, every other token is inactive.
+func introspectionHandler(t *testing.T) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, pass, ok := r.BasicAuth(); !ok || user != Name || pass != "secret" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		resp := map[string]any{"active": false}
+		if r.PostFormValue("token") == "active-token" {
+			resp = map[string]any{"active": true, "sub": "user-1", "aud": Name, "exp": time.Now().Add(time.Hour).Unix()}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+}
+{%- else %}
 // jwksHandler serves a key set with one fresh ES256 key.
 func jwksHandler(t *testing.T) http.Handler {
 	t.Helper()
@@ -310,6 +358,7 @@ func jwksHandler(t *testing.T) http.Handler {
 		_, _ = w.Write(body)
 	})
 }
+{%- end %}
 {%- if .Postgres %}
 
 // startPostgres starts a disposable Postgres and returns its URL. It skips
@@ -330,5 +379,25 @@ func startPostgres(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return url
+}
+{%- else if .MySQL %}
+
+// startMySQL starts a disposable MySQL and returns its DSN. It skips the
+// test when Docker is not available.
+func startMySQL(t *testing.T) string {
+	t.Helper()
+	testcontainers.SkipIfProviderIsNotHealthy(t)
+	ctx := context.Background()
+	c, err := tcmysql.Run(ctx, "{% .Images.MySQL %}",
+		tcmysql.WithDatabase("app"), tcmysql.WithUsername("app"), tcmysql.WithPassword("app"))
+	testcontainers.CleanupContainer(t, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dsn, err := c.ConnectionString(ctx, "tls=false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dsn
 }
 {%- end %}

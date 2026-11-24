@@ -1,0 +1,64 @@
+package cachestore
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/goleak"
+
+	"github.com/acme/shop/internal/store"
+	"github.com/acme/shop/internal/store/memstore"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+// counting counts the GetItem calls that reach the store.
+type counting struct {
+	store.Items
+	gets atomic.Int32
+}
+
+func (c *counting) GetItem(ctx context.Context, id string) (store.Item, error) {
+	c.gets.Add(1)
+	return c.Items.GetItem(ctx, id)
+}
+
+func TestItems(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	inner := &counting{Items: memstore.NewItems()}
+	s, err := NewItems(inner, rdb, time.Minute, "test:item:", log.Discard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+	ctx := t.Context()
+
+	it, err := s.CreateItem(ctx, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		got, err := s.GetItem(ctx, it.ID)
+		if err != nil || got.Title != "first" {
+			t.Fatalf("GetItem = %+v, %v", got, err)
+		}
+	}
+	if n := inner.gets.Load(); n != 1 {
+		t.Errorf("store reads = %d, want 1 (then served from the cache)", n)
+	}
+
+	if err := s.DeleteItem(ctx, it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetItem(ctx, it.ID); !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("GetItem after delete: %v, want not found", err)
+	}
+}

@@ -5,7 +5,7 @@
 ## How it was tested
 
 - [ ] Unit tests
-- [ ] Integration tests (`make test` starts the whole service with a Postgres container)
+- [ ] Integration tests (`make test` starts the whole service with a PostgreSQL container)
 - [ ] Manual test
 
 ## Checklist

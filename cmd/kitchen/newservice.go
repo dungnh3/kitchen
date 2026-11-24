@@ -58,9 +58,10 @@ var serviceVersions = struct {
 // localImages are the images of the local dependencies in compose.yaml;
 // Postgres is also the image of the integration test.
 var localImages = struct {
-	Postgres, Redis, PubSubEmulator, Kafka, SQS string
+	Postgres, MySQL, Redis, PubSubEmulator, Kafka, SQS string
 }{
 	Postgres:       "postgres:18-alpine",
+	MySQL:          "mysql:8.4",
 	Redis:          "redis:8.6-alpine",
 	PubSubEmulator: "gcr.io/google.com/cloudsdktool/google-cloud-cli:555.0.0-emulators",
 	Kafka:          "apache/kafka:4.2.0",
@@ -70,12 +71,20 @@ var localImages = struct {
 // Databases.
 const (
 	dbPostgres = "postgres"
+	dbMySQL    = "mysql"
 	dbNone     = "none"
+)
+
+// Authentication modes (-auth).
+const (
+	authJWKS          = "jwks"
+	authIntrospection = "introspection"
 )
 
 // Optional features (-with). Each one wires one canonical kitchen package.
 const (
 	withRedis  = "redis"
+	withCache  = "cache"
 	withLease  = "lease"
 	withPubSub = "pubsub"
 	withOutbox = "outbox"
@@ -84,6 +93,7 @@ const (
 // features lists the -with values in the order they are shown.
 var features = []struct{ name, desc string }{
 	{withRedis, "Redis client (redisx), shared rate limits"},
+	{withCache, "Read-through Redis cache in front of the item store (cache)"},
 	{withLease, "Leader-elected periodic jobs in the worker (lease on Redis)"},
 	{withPubSub, "Events: publisher, consumer in the worker (pubsub)"},
 	{withOutbox, "Transactional outbox and relay (pubsub/outbox/pgx); needs postgres and pubsub"},
@@ -112,10 +122,48 @@ type serviceParams struct {
 	Broker string
 	// brokerSet records an explicit -pubsub flag.
 	brokerSet bool
+	// Auth is the token verification: jwks or introspection.
+	Auth string
 }
 
 // Postgres reports whether the service uses PostgreSQL.
 func (p serviceParams) Postgres() bool { return p.DB == dbPostgres }
+
+// MySQL reports whether the service uses MySQL.
+func (p serviceParams) MySQL() bool { return p.DB == dbMySQL }
+
+// SQL reports whether the service has a SQL database, migrations and sqlc.
+func (p serviceParams) SQL() bool { return p.Postgres() || p.MySQL() }
+
+// DBName, StoreDir and DBHandle name the SQL database, its store package and
+// the Go type of its connection.
+func (p serviceParams) DBName() string {
+	if p.MySQL() {
+		return "MySQL"
+	}
+	return "PostgreSQL"
+}
+
+func (p serviceParams) StoreDir() string {
+	if p.MySQL() {
+		return "mysqlstore"
+	}
+	return "pgstore"
+}
+
+func (p serviceParams) DBHandle() string {
+	if p.MySQL() {
+		return "*sql.DB"
+	}
+	return "*pgxpool.Pool"
+}
+
+// Cache reports whether item reads go through a Redis cache.
+func (p serviceParams) Cache() bool { return p.Has(withCache) }
+
+// Introspection reports whether tokens are verified by RFC 7662
+// introspection instead of JWKS.
+func (p serviceParams) Introspection() bool { return p.Auth == authIntrospection }
 
 // Has reports whether feature f is enabled.
 func (p serviceParams) Has(f string) bool { return slices.Contains(p.With, f) }
@@ -147,7 +195,7 @@ func (p serviceParams) Commands() string {
 	if p.Worker() {
 		cmds = append(cmds, "worker")
 	}
-	if p.Postgres() {
+	if p.SQL() {
 		cmds = append(cmds, "migrate up|down|status")
 	}
 	return strings.Join(cmds, " | ")
@@ -155,7 +203,7 @@ func (p serviceParams) Commands() string {
 
 // Compose reports whether the service has local dependencies to run in
 // Docker Compose.
-func (p serviceParams) Compose() bool { return p.Postgres() || p.Redis() || p.PubSub() }
+func (p serviceParams) Compose() bool { return p.SQL() || p.Redis() || p.PubSub() }
 
 // ProtoPackage is the proto package (without ".v1") and the directory under
 // proto/ and gen/: the name with dashes turned into underscores.
@@ -249,7 +297,8 @@ func parseServiceFlags(args []string, stderr io.Writer) (serviceParams, error) {
 	fs := flag.NewFlagSet("kitchen new service", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	p.addFlags(fs, "github.com/acme/orders", "service name, used for the proto package and telemetry")
-	fs.StringVar(&p.DB, "db", dbPostgres, `database: "postgres" (pgx + sqlc + goose migrations) or "none"`)
+	fs.StringVar(&p.DB, "db", dbPostgres, `database: "postgres" (pgx), "mysql" (database/sql), both with sqlc and goose migrations, or "none"`)
+	fs.StringVar(&p.Auth, "auth", authJWKS, `token verification: "jwks" (JWTs) or "introspection" (RFC 7662, opaque tokens)`)
 	fs.BoolVar(&p.NoGenerate, "no-generate", false, "do not run go mod tidy and buf generate after writing the project")
 	fs.BoolVar(&p.DryRun, "dry-run", false, "list the files that would be generated; write nothing")
 	fs.Func("with", "comma-separated optional features: "+featureNames(), func(v string) error {
@@ -278,9 +327,12 @@ func featureNames() string {
 
 func (p *serviceParams) applyDefaults() {
 	p.projectParams.applyDefaults("A gRPC and REST service.")
-	// A lease lives in Redis.
-	if p.Lease() && !p.Redis() {
+	// A lease and the cache live in Redis.
+	if (p.Lease() || p.Cache()) && !p.Redis() {
 		p.With = append(p.With, withRedis)
+	}
+	if p.Auth == "" {
+		p.Auth = authJWKS
 	}
 	slices.Sort(p.With)
 	p.With = slices.Compact(p.With)
@@ -292,9 +344,14 @@ func (p *serviceParams) applyDefaults() {
 func (p *serviceParams) validate() error {
 	errs := p.projectParams.validate()
 	switch p.DB {
-	case dbPostgres, dbNone:
+	case dbPostgres, dbMySQL, dbNone:
 	default:
-		errs = append(errs, fmt.Errorf("-db %q: want %q or %q", p.DB, dbPostgres, dbNone))
+		errs = append(errs, fmt.Errorf("-db %q: want %q, %q or %q", p.DB, dbPostgres, dbMySQL, dbNone))
+	}
+	switch p.Auth {
+	case authJWKS, authIntrospection:
+	default:
+		errs = append(errs, fmt.Errorf("-auth %q: want %q or %q", p.Auth, authJWKS, authIntrospection))
 	}
 	for _, f := range p.With {
 		if !slices.ContainsFunc(features, func(x struct{ name, desc string }) bool { return x.name == f }) {
@@ -321,7 +378,10 @@ var fileRules = []struct {
 	paths []string
 	keep  func(serviceParams) bool
 }{
-	{[]string{"migrations/", "sqlc.yaml", "internal/app/migrate.go", "internal/store/pgstore/"}, serviceParams.Postgres},
+	{[]string{"migrations/", "sqlc.yaml", "internal/app/migrate.go"}, serviceParams.SQL},
+	{[]string{"internal/store/pgstore/"}, serviceParams.Postgres},
+	{[]string{"internal/store/mysqlstore/"}, serviceParams.MySQL},
+	{[]string{"internal/store/cachestore/"}, serviceParams.Cache},
 	{[]string{"migrations/00002_create_outbox.sql"}, serviceParams.Outbox},
 	{[]string{"internal/app/redis.go"}, serviceParams.Redis},
 	{[]string{"internal/events/", "internal/consumer/"}, serviceParams.PubSub},
@@ -420,6 +480,7 @@ func promptService(ctx context.Context, p *serviceParams) error {
 			huh.NewInput().Title("Description").Value(&p.Description),
 			huh.NewSelect[string]().Title("Database").Options(
 				huh.NewOption("PostgreSQL (pgx, sqlc, goose migrations)", dbPostgres),
+				huh.NewOption("MySQL (database/sql, sqlc, goose migrations)", dbMySQL),
 				huh.NewOption("None", dbNone),
 			).Value(&p.DB),
 			huh.NewMultiSelect[string]().Title("Optional features").
@@ -431,6 +492,10 @@ func promptService(ctx context.Context, p *serviceParams) error {
 					}
 					return nil
 				}),
+			huh.NewSelect[string]().Title("Token verification").Options(
+				huh.NewOption("JWTs checked against the issuer's JWKS", authJWKS),
+				huh.NewOption("Opaque tokens through RFC 7662 introspection", authIntrospection),
+			).Value(&p.Auth),
 			huh.NewSelect[string]().Title("CI workflow").Options(
 				huh.NewOption("Self-contained GitHub Actions", ciStandalone),
 				huh.NewOption("Reusable workflow pinned to a commit", ciReusable),

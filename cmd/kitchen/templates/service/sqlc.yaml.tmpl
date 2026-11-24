@@ -1,6 +1,7 @@
 # Query code generation: make generate. The generated package is committed.
 version: "2"
 sql:
+{%- if .Postgres %}
   - engine: postgresql
     schema: migrations
     queries: internal/store/pgstore/queries
@@ -14,3 +15,12 @@ sql:
             go_type: string
           - db_type: timestamptz
             go_type: time.Time
+{%- else %}
+  - engine: mysql
+    schema: migrations
+    queries: internal/store/mysqlstore/queries
+    gen:
+      go:
+        package: sqlcdb
+        out: internal/store/mysqlstore/sqlcdb
+{%- end %}

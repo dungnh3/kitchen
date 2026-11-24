@@ -1,0 +1,10 @@
+# Query code generation: make generate. The generated package is committed.
+version: "2"
+sql:
+  - engine: mysql
+    schema: migrations
+    queries: internal/store/mysqlstore/queries
+    gen:
+      go:
+        package: sqlcdb
+        out: internal/store/mysqlstore/sqlcdb

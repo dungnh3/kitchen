@@ -32,11 +32,11 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"))
 }
 
-// TestApp starts the whole service on random ports against a Postgres
+// TestApp starts the whole service on random ports against a PostgreSQL
 // container and calls it over REST.
 func TestApp(t *testing.T) {
 	if testing.Short() {
-		t.Skip("starts the service and a Postgres container")
+		t.Skip("starts the service and a PostgreSQL container")
 	}
 	base := config.Config{
 		Env:             "test",

@@ -8,6 +8,7 @@ answers:
   name: notify
   description: Notifications.
   db: none
+  auth: jwks
   with: [pubsub]
   pubsub: kafka
   ci: standalone

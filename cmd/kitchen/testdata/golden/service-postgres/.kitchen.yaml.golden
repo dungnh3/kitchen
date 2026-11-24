@@ -8,12 +8,13 @@ answers:
   name: orders
   description: Order management.
   db: postgres
+  auth: jwks
   with: []
   ci: standalone
   kitchen_version: v0.1.0
 managed:
   .dockerignore: sha256:19c651bb213f364f7b6684d33b830e85c7bf12d70dbdda8de9be74a05c935882
-  .github/workflows/ci.yml: sha256:34be75710ee0f96d76fd69f39d1fab51e3a5aa4ab7bf4c676bbce5b4d364a09a
+  .github/workflows/ci.yml: sha256:46c6e433bb3c80d74c157d57dfb104c954293c87dd9adac17a1c5f7f97d43024
   .golangci.yml: sha256:1ed6fb4bc05cb441692585bd9b590dea2c378f980466106ba05e0add6620617f
   Dockerfile: sha256:4253a2d12006542258859b1b66b335aa59cfc99065cb1e30d405ad54a1ed53e7
   buf.gen.yaml: sha256:69d61cf7d047108b82a7a5be2c826499bd7e9157f86e3ec4dd52e4d759f2521c

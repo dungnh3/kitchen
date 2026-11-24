@@ -1,0 +1,14 @@
+-- name: GetItem :one
+SELECT id, title, create_time FROM items WHERE id = ?;
+
+-- name: ListItems :many
+SELECT id, title, create_time FROM items
+WHERE id > sqlc.arg(after)
+ORDER BY id
+LIMIT ?;
+
+-- name: CreateItem :exec
+INSERT INTO items (id, title, create_time) VALUES (?, ?, ?);
+
+-- name: DeleteItem :execrows
+DELETE FROM items WHERE id = ?;

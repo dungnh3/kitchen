@@ -1,0 +1,14 @@
+-- name: Get{% .E.Name %} :one
+SELECT id, title, create_time FROM {% .E.Snakes %} WHERE id = ?;
+
+-- name: List{% .E.Names %} :many
+SELECT id, title, create_time FROM {% .E.Snakes %}
+WHERE id > sqlc.arg(after)
+ORDER BY id
+LIMIT ?;
+
+-- name: Create{% .E.Name %} :exec
+INSERT INTO {% .E.Snakes %} (id, title, create_time) VALUES (?, ?, ?);
+
+-- name: Delete{% .E.Name %} :execrows
+DELETE FROM {% .E.Snakes %} WHERE id = ?;

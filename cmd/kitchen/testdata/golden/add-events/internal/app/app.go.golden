@@ -13,7 +13,6 @@ import (
 	"github.com/dungnh3/kitchen/errs"
 	"github.com/dungnh3/kitchen/i18n"
 	"github.com/dungnh3/kitchen/log"
-	"github.com/dungnh3/kitchen/otelx/sdk"
 	outboxpgx "github.com/dungnh3/kitchen/pubsub/outbox/pgx"
 	"github.com/dungnh3/kitchen/ratelimit"
 	ratelimitredis "github.com/dungnh3/kitchen/ratelimit/redis"
@@ -134,7 +133,7 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 	if cfg.Auth.Disabled {
 		logger.WarnContext(ctx, "authentication is disabled (AUTH_DISABLED=true): every caller is anonymous")
 	} else {
-		authn, closeAuth, err := newAuthenticator(ctx, cfg.Auth, errh, logger, d.tel)
+		authn, closeAuth, err := newAuthenticator(ctx, cfg.Auth, errh, logger, d)
 		if err != nil {
 			return err
 		}
@@ -151,7 +150,7 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 
 // newAuthenticator verifies JWTs with the issuer's JWKS. It fails if the key
 // set cannot be fetched, so a misconfigured service never starts.
-func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, logger *log.Logger, tel *sdk.Telemetry) (*auth.Authenticator, func(context.Context) error, error) {
+func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, logger *log.Logger, d *deps) (*auth.Authenticator, func(context.Context) error, error) {
 	jwks, err := auth.NewJWKS(ctx, auth.JWKSConfig{
 		Issuer:   cfg.Issuer,
 		Audience: cfg.Audience,
@@ -167,7 +166,7 @@ func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, 
 		Public:        publicMethods,
 		WriteError:    errh.WriteHTTP,
 		Logger:        logger,
-		MeterProvider: tel.MeterProvider(),
+		MeterProvider: d.tel.MeterProvider(),
 	})
 	if err != nil {
 		_ = jwks.Close(ctx)

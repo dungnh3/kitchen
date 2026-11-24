@@ -40,12 +40,15 @@ type Config struct {
 	TrustedProxies []string `env:"TRUSTED_PROXIES"`
 	// ErrorDomain is the ErrorInfo.domain of API errors (AIP-193).
 	ErrorDomain string `env:"ERROR_DOMAIN" envDefault:"{% .Name %}"`
-{%- if .Postgres %}
+{%- if .SQL %}
 
 	Database Database `envPrefix:"DB_"`
 {%- end %}
 {%- if .Redis %}
 	Redis Redis `envPrefix:"REDIS_"`
+{%- end %}
+{%- if .Cache %}
+	Cache Cache `envPrefix:"CACHE_"`
 {%- end %}
 {%- if .PubSub %}
 	PubSub PubSub `envPrefix:"PUBSUB_"`
@@ -70,6 +73,19 @@ type Database struct {
 	// running "server migrate up" as a separate deployment step.
 	MigrateOnStart bool `env:"MIGRATE_ON_START"`
 }
+{%- else if .MySQL %}
+
+// Database configures MySQL.
+type Database struct {
+	// URL is a MySQL DSN: user:pass@tcp(host:3306)/db. TLS is required
+	// unless the DSN sets tls, for example tls=false for a local database.
+	URL string `env:"URL,required"`
+	// MaxConns bounds the open connections; 0 means 25.
+	MaxConns int32 `env:"MAX_CONNS"`
+	// MigrateOnStart applies pending migrations before serving. Prefer
+	// running "server migrate up" as a separate deployment step.
+	MigrateOnStart bool `env:"MIGRATE_ON_START"`
+}
 {%- end %}
 
 {%- if .Redis %}
@@ -84,6 +100,14 @@ type Redis struct {
 	DB         int      `env:"DB"`
 	// TLS encrypts the connections. Turn it off only for a local Redis.
 	TLS bool `env:"TLS" envDefault:"true"`
+}
+
+{% end -%}
+{%- if .Cache %}
+// Cache configures the Redis cache of the item store.
+type Cache struct {
+	// TTL is how long a cached item is served before it is read again.
+	TTL time.Duration `env:"TTL" envDefault:"5m"`
 }
 
 {% end -%}
@@ -174,6 +198,31 @@ func (s Subscription) Validate(prefix string) error {
 }
 
 {% end -%}
+{%- if .Introspection %}
+// Auth configures bearer-token authentication. Every method, except the
+// health service, needs an opaque token that the authorization server's
+// RFC 7662 introspection endpoint reports active for Audience.
+type Auth struct {
+	// Disabled turns authentication off. It is refused in production.
+	Disabled bool `env:"DISABLED"`
+	// IntrospectionURL is the introspection endpoint, for example
+	// https://idp.example.com/oauth2/introspect.
+	IntrospectionURL string `env:"INTROSPECTION_URL"`
+	// ClientID and ClientSecret authenticate this service to the endpoint
+	// (HTTP Basic).
+	ClientID     string `env:"CLIENT_ID"`
+	ClientSecret string `env:"CLIENT_SECRET"`
+	// Issuer, when set, must equal the iss of every introspection response.
+	Issuer   string `env:"ISSUER"`
+	Audience string `env:"AUDIENCE"`
+{%- if .Redis %}
+	// CacheKey authenticates the introspection results that the instances
+	// share through Redis: at least 32 random bytes, the same on every
+	// instance, kept secret.
+	CacheKey string `env:"INTROSPECTION_CACHE_KEY"`
+{%- end %}
+}
+{%- else %}
 // Auth configures bearer-token authentication. Every method needs a valid
 // JWT signed by Issuer for Audience, except the health service.
 type Auth struct {
@@ -188,6 +237,7 @@ type Auth struct {
 	// at+jwt for RFC 9068 access tokens.
 	TokenTypes []string `env:"TOKEN_TYPES"`
 }
+{%- end %}
 
 // RateLimit configures the per-caller rate limits.
 type RateLimit struct {
@@ -219,6 +269,10 @@ func (c Config) validate() error {
 	if c.Database.MaxConns < 0 || c.Database.StatementTimeout < 0 {
 		errs = append(errs, errors.New("DB_MAX_CONNS and DB_STATEMENT_TIMEOUT must not be negative"))
 	}
+{%- else if .MySQL %}
+	if c.Database.MaxConns < 0 {
+		errs = append(errs, errors.New("DB_MAX_CONNS must not be negative"))
+	}
 {%- end %}
 	return errors.Join(errs...)
 }
@@ -241,6 +295,11 @@ func (c Config) validateDeps() error {
 {%- if .Redis %}
 	if len(c.Redis.Addrs) == 0 {
 		errs = append(errs, errors.New("REDIS_ADDRS is required"))
+	}
+{%- end %}
+{%- if .Cache %}
+	if c.Cache.TTL <= 0 {
+		errs = append(errs, errors.New("CACHE_TTL must be positive"))
 	}
 {%- end %}
 {%- if .PubSub %}
@@ -279,14 +338,39 @@ func (c Config) validateAuth() error {
 		return nil
 	}
 	var errs []error
+{%- if .Introspection %}
+	if a.IntrospectionURL == "" {
+		errs = append(errs, errors.New("AUTH_INTROSPECTION_URL is required (or set AUTH_DISABLED=true outside production)"))
+	} else if !secureURL(a.IntrospectionURL) {
+		errs = append(errs, fmt.Errorf("AUTH_INTROSPECTION_URL: want an https URL (http only for localhost), got %q", a.IntrospectionURL))
+	}
+	if a.ClientID == "" || a.ClientSecret == "" {
+		errs = append(errs, errors.New("AUTH_CLIENT_ID and AUTH_CLIENT_SECRET are required: the introspection endpoint authenticates this service"))
+	}
+	if a.Audience == "" {
+		errs = append(errs, errors.New("AUTH_AUDIENCE is required: it stops tokens issued for other services from being accepted"))
+	}
+{%- if .Redis %}
+	if len(a.CacheKey) < 32 {
+		errs = append(errs, errors.New("AUTH_INTROSPECTION_CACHE_KEY: want at least 32 random bytes"))
+	}
+{%- end %}
+{%- else %}
 	if a.Issuer == "" {
 		errs = append(errs, errors.New("AUTH_ISSUER is required (or set AUTH_DISABLED=true outside production)"))
 	}
 	if a.Audience == "" {
 		errs = append(errs, errors.New("AUTH_AUDIENCE is required: it stops tokens issued for other services from being accepted"))
 	}
-	if u, err := url.Parse(a.JWKSURL); err != nil || u.Host == "" || u.Scheme != "https" && u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" {
+	if !secureURL(a.JWKSURL) {
 		errs = append(errs, fmt.Errorf("AUTH_JWKS_URL: want an https URL (http only for localhost), got %q", a.JWKSURL))
 	}
+{%- end %}
 	return errors.Join(errs...)
+}
+
+// secureURL reports whether s is an https URL, or an http URL of localhost.
+func secureURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))
 }

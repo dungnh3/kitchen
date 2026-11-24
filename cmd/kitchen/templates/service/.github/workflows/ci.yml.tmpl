@@ -35,7 +35,7 @@ jobs:
           test -z "$(git status --porcelain)"
       - run: go mod tidy -diff
       - run: go vet ./...
-      # The integration test starts the whole service{% if .Postgres %} and a Postgres container (Docker is available on ubuntu runners){% end %}.
+      # The integration test starts the whole service{% if .SQL %} and a {% .DBName %} container (Docker is available on ubuntu runners){% end %}.
       - run: go test -race -count=1 ./...
       - uses: golangci/golangci-lint-action@{% .Actions.GolangciLint %}
         with:

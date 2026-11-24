@@ -1,0 +1,4 @@
+// Package memstore implements the store interfaces in memory, for tests and
+// local runs. Its data is lost on restart and is not shared between
+// instances.
+package memstore

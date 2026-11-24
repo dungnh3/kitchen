@@ -8,13 +8,14 @@ answers:
   name: billing
   description: Billing.
   db: postgres
+  auth: jwks
   with: [lease, outbox, pubsub, redis]
   pubsub: gcp
   ci: standalone
   kitchen_version: v0.1.0
 managed:
   .dockerignore: sha256:19c651bb213f364f7b6684d33b830e85c7bf12d70dbdda8de9be74a05c935882
-  .github/workflows/ci.yml: sha256:34be75710ee0f96d76fd69f39d1fab51e3a5aa4ab7bf4c676bbce5b4d364a09a
+  .github/workflows/ci.yml: sha256:46c6e433bb3c80d74c157d57dfb104c954293c87dd9adac17a1c5f7f97d43024
   .golangci.yml: sha256:4b33cf9d0125c6badf5843a5d404a3da549ffce8d24aef7e837078322c3427a0
   Dockerfile: sha256:4253a2d12006542258859b1b66b335aa59cfc99065cb1e30d405ad54a1ed53e7
   buf.gen.yaml: sha256:b9a163bdfd87b8e79a742126b573fc69c494682627403529e2dd11f3c36acf47

@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+{%- if .MySQL %}
+	"database/sql"
+{%- end %}
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +14,9 @@ import (
 	"github.com/dungnh3/kitchen/log"
 	kprom "github.com/dungnh3/kitchen/otelx/prometheus"
 	"github.com/dungnh3/kitchen/otelx/sdk"
+{%- if .MySQL %}
+	"github.com/dungnh3/kitchen/mysqlx"
+{%- end %}
 {%- if .Postgres %}
 	"github.com/dungnh3/kitchen/pg"
 {%- end %}
@@ -56,6 +62,8 @@ type deps struct {
 	registry *prometheus.Registry
 {%- if .Postgres %}
 	pool     *pgxpool.Pool
+{%- else if .MySQL %}
+	db       *sql.DB
 {%- end %}
 {%- if .Redis %}
 	redis    redis.UniversalClient
@@ -110,6 +118,13 @@ func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, versio
 		return d, err
 	}
 	d.onClose(func(context.Context) error { d.pool.Close(); return nil })
+{%- else if .MySQL %}
+
+	d.db, err = openDB(ctx, cfg, logger, d.tel)
+	if err != nil {
+		return d, err
+	}
+	d.onClose(func(context.Context) error { return d.db.Close() })
 {%- end %}
 {%- if .Redis %}
 
@@ -153,6 +168,8 @@ func (d *deps) checks() []server.Check {
 	var checks []server.Check
 {%- if .Postgres %}
 	checks = append(checks, server.Check{Name: "postgres", Func: d.pool.Ping})
+{%- else if .MySQL %}
+	checks = append(checks, server.Check{Name: "mysql", Func: d.db.PingContext})
 {%- end %}
 {%- if .Redis %}
 	checks = append(checks, server.Check{Name: "redis", Func: func(ctx context.Context) error { return d.redis.Ping(ctx).Err() }})
@@ -188,5 +205,21 @@ func openDB(ctx context.Context, cfg config.Config, logger *log.Logger, tel *sdk
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
 	return pool, nil
+}
+{%- else if .MySQL %}
+
+func openDB(ctx context.Context, cfg config.Config, logger *log.Logger, tel *sdk.Telemetry) (*sql.DB, error) {
+	db, err := mysqlx.Open(ctx, mysqlx.Config{
+		DSN:          cfg.Database.URL,
+		MaxOpenConns: int(cfg.Database.MaxConns),
+	},
+		mysqlx.WithLogger(logger),
+		mysqlx.WithTracerProvider(tel.TracerProvider()),
+		mysqlx.WithMeterProvider(tel.MeterProvider()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("mysql: %w", err)
+	}
+	return db, nil
 }
 {%- end %}

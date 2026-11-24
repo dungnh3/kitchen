@@ -58,22 +58,23 @@ func TestLoadErrors(t *testing.T) {
 }
 
 func TestValidateServer(t *testing.T) {
-	jwt := []string{"AUTH_ISSUER", "https://issuer.example.com", "AUTH_JWKS_URL", "https://issuer.example.com/jwks", "AUTH_AUDIENCE", "catalog"}
+	valid := []string{"AUTH_ISSUER", "https://issuer.example.com", "AUTH_JWKS_URL", "https://issuer.example.com/jwks", "AUTH_AUDIENCE", "catalog"}
+	with := func(kv ...string) []string { return append(append([]string{}, valid...), kv...) }
 	tests := []struct {
 		name string
 		kv   []string
 		want string // "" means valid
 	}{
 		{"auth required by default", nil, "AUTH_ISSUER"},
-		{"jwt ok", jwt, ""},
-		{"audience required", jwt[:4], "AUTH_AUDIENCE"},
-		{"https jwks", append(append([]string{}, jwt...), "AUTH_JWKS_URL", "http://issuer.example.com/jwks"), "AUTH_JWKS_URL"},
-		{"http localhost jwks", append(append([]string{}, jwt...), "AUTH_JWKS_URL", "http://localhost:8081/jwks"), ""},
+		{"jwt ok", valid, ""},
+		{"audience required", with("AUTH_AUDIENCE", ""), "AUTH_AUDIENCE"},
+		{"https jwks", with("AUTH_JWKS_URL", "http://issuer.example.com/jwks"), "AUTH_JWKS_URL"},
+		{"http localhost jwks", with("AUTH_JWKS_URL", "http://localhost:8081/jwks"), ""},
 		{"disabled in development", []string{"AUTH_DISABLED", "true"}, ""},
 		{"disabled in production", []string{"AUTH_DISABLED", "true", "APP_ENV", EnvProduction}, "not allowed"},
-		{"redis required", append(append([]string{}, jwt...), "REDIS_ADDRS", ""), "REDIS_ADDRS"},
-		{"queue required", append(append([]string{}, jwt...), "PUBSUB_ITEMS_TOPIC", ""), "PUBSUB_ITEMS_TOPIC"},
-		{"concurrency", append(append([]string{}, jwt...), "PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
+		{"redis required", with("REDIS_ADDRS", ""), "REDIS_ADDRS"},
+		{"queue required", with("PUBSUB_ITEMS_TOPIC", ""), "PUBSUB_ITEMS_TOPIC"},
+		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

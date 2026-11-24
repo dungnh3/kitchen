@@ -8,6 +8,7 @@ answers:
   name: edge-gw
   description: Edge gateway.
   db: none
+  auth: jwks
   with: []
   ci: reusable
   ci_workflow: acme/devops-workflows/.github/workflows/go.yml@0123456789abcdef0123456789abcdef01234567

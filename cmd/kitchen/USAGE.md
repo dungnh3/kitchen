@@ -107,7 +107,8 @@ Run `kitchen new service -h` or `kitchen new mcp -h` for the same list.
 
 | Flag | Default | When to change it |
 |---|---|---|
-| `-db` | `postgres` | `none` for a service without a database. It uses an in-memory store and drops `migrations/`, `sqlc.yaml`, `internal/app/migrate.go` and `internal/store/pgstore/` |
+| `-db` | `postgres` | `mysql` for MySQL (`mysqlx`, database/sql, sqlc, goose; `internal/store/mysqlstore/`). `none` for a service without a database: an in-memory store, no `migrations/`, `sqlc.yaml` or `internal/app/migrate.go` |
+| `-auth` | `jwks` | `introspection` for opaque tokens checked at an RFC 7662 endpoint (`auth.NewIntrospection`, cached; shared through Redis with `-with redis`) |
 | `-no-generate` | `false` | Skip `go mod tidy` and `buf generate`, for example offline or in a sandbox. The CLI prints the steps to run by hand |
 | `-with` | | Comma-separated optional features, see below |
 | `-dry-run` | `false` | List the files that would be generated, marking the managed ones; write nothing |
@@ -119,6 +120,7 @@ readiness check, local container in `compose.yaml` and tests:
 | Feature | Package | What it adds |
 |---|---|---|
 | `redis` | `redisx`, `ratelimit/redis` | A Redis client (TLS by default) with a readiness check; rate limits shared by every instance |
+| `cache` | `cache` | A read-through Redis cache in front of the item store (`internal/store/cachestore`, `CACHE_TTL`). Adds `redis` |
 | `lease` | `lease`, `lease/redis` | Periodic jobs in the worker (`internal/job`), each on one replica at a time. Adds `redis` |
 | `pubsub` | `pubsub` and the broker adapter | An `ItemCreated` event per new item (`internal/events`), a consumer in the worker (`internal/consumer`) |
 | `outbox` | `pubsub/outbox/pgx` | The event is written in the item's transaction and the worker relays it. Needs `-db postgres` and `pubsub` |
@@ -161,7 +163,8 @@ kitchen new mcp -module example.com/team/mcp-tickets -name tickets \
 The exact trees are in [testdata/golden](testdata/golden):
 `service-postgres` and `service-nodb` (no features), `service-events`
 (Postgres, `lease,pubsub,outbox`, Pub/Sub), `service-kafka` (no database,
-`pubsub`, Kafka) and `service-sqs` (Postgres, `redis,pubsub`, SQS).
+`pubsub`, Kafka), `service-sqs` (Postgres, `redis,pubsub`, SQS) and
+`service-mysql` (MySQL, `cache`, `-auth introspection`).
 
 | Path | What |
 |---|---|
@@ -259,11 +262,16 @@ files rather than copies here:
   REST, localized by `i18n`. In a tool, only the message of an `errs` error
   reaches the model; any other error is logged and becomes "internal
   error".
-- **Auth.** The service verifies JWTs with `auth.NewJWKS` and is
-  fail-closed. The MCP server enables auth when `MCP_RESOURCE_URL` is set.
+- **Auth.** The service verifies JWTs with `auth.NewJWKS`, or with
+  `-auth introspection` opaque tokens with `auth.NewIntrospection` and
+  `auth.RFC7662`; both are fail-closed. The MCP server enables auth when `MCP_RESOURCE_URL` is set.
 - **Database.** The service opens Postgres with `pg.Open` (TLS required
   unless the URL sets `sslmode`, UTC session time zone) and maps errors
-  with `pg.MapError`.
+  with `pg.MapError`, or MySQL with `mysqlx.Open` (TLS required unless the
+  DSN sets `tls`) and `mysqlx.MapError`. Migrations run through
+  `migrate.NewPostgres` (advisory lock) or `migrate.NewMySQL` (lock table).
+- **Cache.** `cache.New` on the Redis client; `cachestore.Items` serves
+  `GetItem` through `GetOrLoad` and deletes the entry after `DeleteItem`.
 - **Redis.** `redisx.Open` with TLS unless `REDIS_TLS=false`; the client
   backs the shared rate limits (`ratelimit/redis`) and the job leases
   (`lease/redis`). See [redisx](../../redisx) and [lease](../../lease).
@@ -391,16 +399,15 @@ start it after the migrations. Add a migration with
 
 ### Add a database to a `-db none` service
 
-The simplest way is to generate a second project with `-db postgres` and
-copy `internal/app/migrate.go`, `internal/store/pgstore/`, `migrations/`,
-`sqlc.yaml`, and the `Database` config and `openDB` wiring from
-[service-postgres](testdata/golden/service-postgres).
+The simplest way is to generate a second project with `-db postgres` (or
+`-db mysql`) and copy `internal/app/migrate.go`, `internal/store/pgstore/`
+(or `mysqlstore/`), `migrations/`, `sqlc.yaml`, and the `Database` config
+and `openDB` wiring from [service-postgres](testdata/golden/service-postgres)
+(or [service-mysql](testdata/golden/service-mysql)).
 
-For MySQL or MongoDB there is no template. Implement the store interfaces and open the client in `internal/app` with `mysqlx.Open` or
-`mongox.Open`; never call the drivers directly (the lint config denies
-them). For MySQL migrations, use `migrate.NewMySQL` in place of
-`migrate.NewPostgres`. See [pg](../../pg), [mysqlx](../../mysqlx),
-[mongox](../../mongox) and [migrate](../../migrate).
+For MongoDB there is no template. Implement the store interfaces and open
+the client in `internal/app` with `mongox.Open`; never call the driver
+directly (the lint config denies it). See [mongox](../../mongox).
 
 ### Auth
 
@@ -408,8 +415,15 @@ A service needs `AUTH_ISSUER`, `AUTH_JWKS_URL` (https, http only for
 localhost) and `AUTH_AUDIENCE`. An unreachable JWKS stops startup. Only
 `/grpc.health.v1.Health/` is public. To require scopes per method, set
 `Authorizer: auth.RequireScopes(...)` in the `auth.Config` built by
-`newAuthenticator` in `internal/app/app.go`. For opaque tokens, add an
-`auth.NewIntrospection` verifier next to the JWKS one.
+`newAuthenticator` in `internal/app/app.go`.
+
+With `-auth introspection` a service needs `AUTH_INTROSPECTION_URL` (https,
+http only for localhost), `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET` and
+`AUTH_AUDIENCE`; with Redis also `AUTH_INTROSPECTION_CACHE_KEY` (at least 32
+random bytes, the same on every instance). Answers are cached for up to
+30s, so a revoked token stops working within that time. An unreachable
+endpoint makes requests fail with 503, never pass. JWT access tokens are
+rejected in this mode; use `-auth jwks` for them.
 
 > `AUTH_DISABLED=true` makes every caller anonymous. It exists for local
 > runs and tests only, and the service refuses it when `APP_ENV=production`.

@@ -1,5 +1,5 @@
 // Package store defines how the service persists its data: for each domain,
 // its types and a store interface (for example Items). The services depend
 // on these interfaces only; memstore keeps the data in memory (tests, local
-// runs){% if .Postgres %} and pgstore keeps it in PostgreSQL{% end %}.
+// runs){% if .Postgres %} and pgstore keeps it in PostgreSQL{% else if .MySQL %} and mysqlstore keeps it in MySQL{% end %}.
 package store

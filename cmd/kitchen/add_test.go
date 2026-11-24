@@ -18,6 +18,7 @@ var serviceAdds = map[string][][]string{
 	"service-events": {{"domain", "order-item"}, {"consumer", "payments"}, {"job", "cleanup", "-every", "5m"}},
 	"service-kafka":  {{"domain", "category"}, {"consumer", "order-events"}},
 	"service-sqs":    {{"domain", "box"}, {"consumer", "order-events"}},
+	"service-mysql":  {{"domain", "order-item"}},
 }
 
 // runAdds writes the case into dir and runs its add commands without code

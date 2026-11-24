@@ -63,6 +63,7 @@ type serviceAnswers struct {
 	Name           string   `yaml:"name"`
 	Description    string   `yaml:"description"`
 	DB             string   `yaml:"db"`
+	Auth           string   `yaml:"auth"`
 	With           []string `yaml:"with,flow"`
 	PubSub         string   `yaml:"pubsub,omitempty"`
 	CI             string   `yaml:"ci"`
@@ -72,7 +73,7 @@ type serviceAnswers struct {
 
 func answersOf(p serviceParams) serviceAnswers {
 	a := serviceAnswers{
-		Module: p.Module, Name: p.Name, Description: p.Description, DB: p.DB,
+		Module: p.Module, Name: p.Name, Description: p.Description, DB: p.DB, Auth: p.Auth,
 		With: slices.Clone(p.With), CI: p.CI, CIWorkflow: p.CIWorkflow, KitchenVersion: p.KitchenVersion,
 	}
 	if a.With == nil {
@@ -90,7 +91,7 @@ func (a serviceAnswers) params() serviceParams {
 			Module: a.Module, Name: a.Name, Description: a.Description,
 			CI: a.CI, CIWorkflow: a.CIWorkflow, KitchenVersion: a.KitchenVersion, Yes: true,
 		},
-		DB: a.DB, With: slices.Clone(a.With), Broker: a.PubSub,
+		DB: a.DB, Auth: a.Auth, With: slices.Clone(a.With), Broker: a.PubSub,
 	}
 }
 

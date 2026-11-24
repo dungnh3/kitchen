@@ -28,7 +28,7 @@ require (
 {%- if .Lease %}
 	github.com/dungnh3/kitchen/lease/redis {% .KitchenVersion %}
 {%- end %}
-{%- if .Postgres %}
+{%- if .SQL %}
 	github.com/dungnh3/kitchen/migrate {% .KitchenVersion %}
 {%- end %}
 	github.com/dungnh3/kitchen/otelx/prometheus {% .KitchenVersion %}
@@ -51,9 +51,9 @@ require (
 {%- if .Redis %}
 	github.com/redis/go-redis/v9 {% .Versions.Redis %}
 {%- end %}
-{%- if .Postgres %}
+{%- if .SQL %}
 	github.com/testcontainers/testcontainers-go {% .Versions.Testcontainers %}
-	github.com/testcontainers/testcontainers-go/modules/postgres {% .Versions.Testcontainers %}
+	github.com/testcontainers/testcontainers-go/modules/{% .DB %} {% .Versions.Testcontainers %}
 {%- end %}
 {%- if .Kafka %}
 	github.com/twmb/franz-go {% .Versions.FranzGo %}

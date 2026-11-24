@@ -1,0 +1,14 @@
+-- name: GetOrderItem :one
+SELECT id, title, create_time FROM order_items WHERE id = ?;
+
+-- name: ListOrderItems :many
+SELECT id, title, create_time FROM order_items
+WHERE id > sqlc.arg(after)
+ORDER BY id
+LIMIT ?;
+
+-- name: CreateOrderItem :exec
+INSERT INTO order_items (id, title, create_time) VALUES (?, ?, ?);
+
+-- name: DeleteOrderItem :execrows
+DELETE FROM order_items WHERE id = ?;

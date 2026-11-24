@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+{%- if .MySQL %}
+	"database/sql"
+{%- end %}
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -9,7 +12,9 @@ import (
 	"github.com/dungnh3/kitchen/log"
 	"github.com/dungnh3/kitchen/migrate"
 	"github.com/dungnh3/kitchen/otelx/sdk"
+{%- if .Postgres %}
 	"github.com/jackc/pgx/v5/pgxpool"
+{%- end %}
 
 	"{% .Module %}/internal/config"
 	"{% .Module %}/migrations"
@@ -17,7 +22,7 @@ import (
 
 // Migrate runs a migration command: "up" applies every pending migration,
 // "down" rolls back the last one and "status" prints the state of each
-// migration to out. A Postgres advisory lock serializes concurrent runs.
+// migration to out. {% if .Postgres %}A Postgres advisory lock{% else %}A lock table{% end %} serializes concurrent runs.
 // logger nil means log.Default().
 func Migrate(ctx context.Context, cfg config.Config, logger *log.Logger, command string, out io.Writer) error {
 	logger = log.OrDefault(logger)
@@ -30,15 +35,19 @@ func Migrate(ctx context.Context, cfg config.Config, logger *log.Logger, command
 	if err != nil {
 		return err
 	}
-	pool, err := openDB(ctx, cfg, logger, tel)
+	conn, err := openDB(ctx, cfg, logger, tel)
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+{%- if .Postgres %}
+	defer conn.Close()
+{%- else %}
+	defer func() { _ = conn.Close() }()
+{%- end %}
 	if command == "up" {
-		return migrateUp(ctx, pool, logger)
+		return migrateUp(ctx, conn, logger)
 	}
-	m, err := newMigrator(pool, logger)
+	m, err := newMigrator(conn, logger)
 	if err != nil {
 		return err
 	}
@@ -58,8 +67,8 @@ func Migrate(ctx context.Context, cfg config.Config, logger *log.Logger, command
 	return tw.Flush()
 }
 
-func migrateUp(ctx context.Context, pool *pgxpool.Pool, logger *log.Logger) error {
-	m, err := newMigrator(pool, logger)
+func migrateUp(ctx context.Context, conn {% .DBHandle %}, logger *log.Logger) error {
+	m, err := newMigrator(conn, logger)
 	if err != nil {
 		return err
 	}
@@ -70,8 +79,8 @@ func migrateUp(ctx context.Context, pool *pgxpool.Pool, logger *log.Logger) erro
 	return nil
 }
 
-func newMigrator(pool *pgxpool.Pool, logger *log.Logger) (*migrate.Migrator, error) {
-	m, err := migrate.NewPostgres(pool, migrate.Config{Source: migrations.FS, Logger: logger})
+func newMigrator(conn {% .DBHandle %}, logger *log.Logger) (*migrate.Migrator, error) {
+	m, err := migrate.New{% if .Postgres %}Postgres{% else %}MySQL{% end %}(conn, migrate.Config{Source: migrations.FS, Logger: logger})
 	if err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}

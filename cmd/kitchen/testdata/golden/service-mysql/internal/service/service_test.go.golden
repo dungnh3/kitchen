@@ -1,0 +1,27 @@
+package service
+
+import (
+	"testing"
+
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+func TestPageToken(t *testing.T) {
+	tests := []struct {
+		token   string
+		want    string
+		wantErr bool
+	}{
+		{"", "", false},
+		{encodePageToken("00000000-0000-0000-0000-000000000001"), "00000000-0000-0000-0000-000000000001", false},
+		{"%%%", "", true},
+	}
+	for _, tt := range tests {
+		got, err := decodePageToken(tt.token)
+		if got != tt.want || (err != nil) != tt.wantErr {
+			t.Errorf("decodePageToken(%q) = %q, %v", tt.token, got, err)
+		}
+	}
+}

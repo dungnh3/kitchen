@@ -1,0 +1,98 @@
+package service
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/server"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "github.com/acme/shop/gen/shop/v1"
+	"github.com/acme/shop/internal/store"
+)
+
+// OrderItemService implements pb.OrderItemServiceServer.
+type OrderItemService struct {
+	pb.UnimplementedOrderItemServiceServer
+
+	store store.OrderItems
+}
+
+var (
+	_ server.Service          = (*OrderItemService)(nil)
+	_ server.GatewayRegistrar = (*OrderItemService)(nil)
+)
+
+// NewOrderItemService returns an OrderItemService that keeps order items in s.
+func NewOrderItemService(s store.OrderItems) *OrderItemService {
+	return &OrderItemService{store: s}
+}
+
+// RegisterGRPC implements server.Service.
+func (s *OrderItemService) RegisterGRPC(r grpc.ServiceRegistrar) {
+	pb.RegisterOrderItemServiceServer(r, s)
+}
+
+// RegisterGateway implements server.GatewayRegistrar.
+func (s *OrderItemService) RegisterGateway(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
+	return pb.RegisterOrderItemServiceHandler(ctx, mux, conn)
+}
+
+// GetOrderItem implements pb.OrderItemServiceServer.
+func (s *OrderItemService) GetOrderItem(ctx context.Context, req *pb.GetOrderItemRequest) (*pb.OrderItem, error) {
+	v, err := s.store.GetOrderItem(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return orderItemToProto(v), nil
+}
+
+// ListOrderItems implements pb.OrderItemServiceServer.
+func (s *OrderItemService) ListOrderItems(ctx context.Context, req *pb.ListOrderItemsRequest) (*pb.ListOrderItemsResponse, error) {
+	size := req.GetPageSize()
+	if size == 0 {
+		size = defaultPageSize
+	}
+	after, err := decodePageToken(req.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	// Ask for one more to know whether there is a next page.
+	list, err := s.store.ListOrderItems(ctx, after, size+1)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.ListOrderItemsResponse{}
+	if len(list) > int(size) {
+		list = list[:size]
+		resp.NextPageToken = encodePageToken(list[len(list)-1].ID)
+	}
+	resp.OrderItems = make([]*pb.OrderItem, len(list))
+	for i, v := range list {
+		resp.OrderItems[i] = orderItemToProto(v)
+	}
+	return resp, nil
+}
+
+// CreateOrderItem implements pb.OrderItemServiceServer.
+func (s *OrderItemService) CreateOrderItem(ctx context.Context, req *pb.CreateOrderItemRequest) (*pb.OrderItem, error) {
+	v, err := s.store.CreateOrderItem(ctx, req.GetOrderItem().GetTitle())
+	if err != nil {
+		return nil, err
+	}
+	return orderItemToProto(v), nil
+}
+
+// DeleteOrderItem implements pb.OrderItemServiceServer.
+func (s *OrderItemService) DeleteOrderItem(ctx context.Context, req *pb.DeleteOrderItemRequest) (*emptypb.Empty, error) {
+	if err := s.store.DeleteOrderItem(ctx, req.GetId()); err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func orderItemToProto(v store.OrderItem) *pb.OrderItem {
+	return &pb.OrderItem{Id: v.ID, Title: v.Title, CreateTime: timestamppb.New(v.CreateTime)}
+}

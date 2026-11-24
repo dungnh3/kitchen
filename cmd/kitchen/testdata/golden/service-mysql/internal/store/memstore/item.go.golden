@@ -1,0 +1,77 @@
+package memstore
+
+import (
+	"cmp"
+	"context"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/google/uuid"
+
+	"github.com/acme/shop/internal/store"
+)
+
+// Items is an in-memory store.Items. The zero value is not usable; call
+// NewItems.
+type Items struct {
+	mu   sync.RWMutex
+	byID map[string]store.Item
+	now  func() time.Time
+}
+
+var _ store.Items = (*Items)(nil)
+
+// NewItems returns an empty Items.
+func NewItems() *Items {
+	return &Items{byID: map[string]store.Item{}, now: time.Now}
+}
+
+// GetItem implements store.Items.
+func (s *Items) GetItem(_ context.Context, id string) (store.Item, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.byID[id]
+	if !ok {
+		return store.Item{}, errs.ErrNotFound
+	}
+	return v, nil
+}
+
+// ListItems implements store.Items.
+func (s *Items) ListItems(_ context.Context, after string, limit int32) ([]store.Item, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]store.Item, 0, len(s.byID))
+	for _, v := range s.byID {
+		if v.ID > after {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b store.Item) int { return cmp.Compare(a.ID, b.ID) })
+	if len(out) > int(limit) {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// CreateItem implements store.Items.
+func (s *Items) CreateItem(_ context.Context, title string) (store.Item, error) {
+	v := store.Item{ID: uuid.NewString(), Title: title, CreateTime: s.now().UTC()}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byID[v.ID] = v
+	return v, nil
+}
+
+// DeleteItem implements store.Items.
+func (s *Items) DeleteItem(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byID[id]; !ok {
+		return errs.ErrNotFound
+	}
+	delete(s.byID, id)
+	return nil
+}

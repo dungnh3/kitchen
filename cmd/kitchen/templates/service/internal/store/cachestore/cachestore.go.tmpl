@@ -1,0 +1,63 @@
+// Package cachestore puts a read-through Redis cache (kitchen cache) in
+// front of a store.
+package cachestore
+
+import (
+	"context"
+	"time"
+
+	"github.com/dungnh3/kitchen/cache"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/redis/go-redis/v9"
+
+	"{% .Module %}/internal/store"
+)
+
+// Items is a store.Items that serves GetItem from Redis. A miss loads the
+// item from the wrapped store once, however many callers wait for it; an id
+// that does not exist is not cached. DeleteItem removes the cached item
+// after the store deletes it.
+type Items struct {
+	store.Items
+	cache  *cache.Cache[store.Item]
+	logger *log.Logger
+}
+
+// NewItems returns an Items that caches the items of s in rdb for ttl,
+// under keys that start with prefix. logger nil means log.Default(). Call
+// Close when done.
+func NewItems(s store.Items, rdb redis.UniversalClient, ttl time.Duration, prefix string, logger *log.Logger) (*Items, error) {
+	logger = log.OrDefault(logger)
+	c, err := cache.New(cache.Config[store.Item]{
+		Redis:  rdb,
+		Prefix: prefix,
+		TTL:    ttl,
+		Logger: logger,
+		Name:   "items",
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Items{Items: s, cache: c, logger: logger}, nil
+}
+
+// GetItem implements store.Items.
+func (s *Items) GetItem(ctx context.Context, id string) (store.Item, error) {
+	return s.cache.GetOrLoad(ctx, id, s.Items.GetItem)
+}
+
+// DeleteItem implements store.Items. When the cached copy cannot be removed,
+// the deletion still succeeds and other readers may see the item until its
+// cache entry expires.
+func (s *Items) DeleteItem(ctx context.Context, id string) error {
+	if err := s.Items.DeleteItem(ctx, id); err != nil {
+		return err
+	}
+	if err := s.cache.Delete(ctx, id); err != nil {
+		s.logger.WarnContext(ctx, "cached item not removed", log.String("item_id", id), log.Err(err))
+	}
+	return nil
+}
+
+// Close stops the cache's background work.
+func (s *Items) Close(ctx context.Context) error { return s.cache.Close(ctx) }

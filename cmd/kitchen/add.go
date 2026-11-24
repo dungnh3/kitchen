@@ -116,7 +116,7 @@ func addCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 			return nil
 		}
 		_, _ = fmt.Fprintln(stdout, "Generating code...")
-		if err := generateDomain(ctx, *dir, nil, p.Postgres(), stdout, stderr); err != nil {
+		if err := generateDomain(ctx, *dir, nil, p.SQL(), stdout, stderr); err != nil {
 			return fmt.Errorf("%w\nThe files are written; finish by hand:\n%s", err, manual)
 		}
 	}
@@ -126,9 +126,9 @@ func addCommand(ctx context.Context, args []string, stdout, stderr io.Writer) er
 
 // generateDomain runs the code generators after a new domain.
 // env, when non-nil, replaces the environment of the commands.
-func generateDomain(ctx context.Context, dir string, env []string, postgres bool, stdout, stderr io.Writer) error {
+func generateDomain(ctx context.Context, dir string, env []string, sql bool, stdout, stderr io.Writer) error {
 	steps := [][]string{{"go", "run", "github.com/bufbuild/buf/cmd/buf@" + serviceVersions.Buf, "generate"}}
-	if postgres {
+	if sql {
 		steps = append(steps, []string{"go", "run", "github.com/sqlc-dev/sqlc/cmd/sqlc@" + serviceVersions.Sqlc, "generate"})
 	}
 	for _, s := range steps {
@@ -286,7 +286,7 @@ func addDomain(root *os.Root, p serviceParams, name, plural string) (*change, er
 		return nil, err
 	}
 	version := ""
-	if p.Postgres() {
+	if p.SQL() {
 		if version, err = nextMigration(root); err != nil {
 			return nil, err
 		}
@@ -296,8 +296,11 @@ func addDomain(root *os.Root, p serviceParams, name, plural string) (*change, er
 		return nil, err
 	}
 	newStore := "memstore.New" + e.Names + "()"
-	if p.Postgres() {
+	switch {
+	case p.Postgres():
 		newStore = "pgstore.New" + e.Names + "(d.pool)"
+	case p.MySQL():
+		newStore = "mysqlstore.New" + e.Names + "(d.db)"
 	}
 	return &change{files: files, inserts: []insertion{
 		{"internal/app/app.go", "kitchen:stores", e.Camels + " := " + newStore},

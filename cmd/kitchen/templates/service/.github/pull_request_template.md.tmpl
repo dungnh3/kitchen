@@ -5,14 +5,14 @@
 ## How it was tested
 
 - [ ] Unit tests
-- [ ] Integration tests (`make test` starts the whole service{% if .Postgres %} with a Postgres container{% end %})
+- [ ] Integration tests (`make test` starts the whole service{% if .SQL %} with a {% .DBName %} container{% end %})
 - [ ] Manual test
 
 ## Checklist
 
-- [ ] `make generate` was run after changing `proto/`{% if .Postgres %}, `migrations/` or SQL queries{% end %}
+- [ ] `make generate` was run after changing `proto/`{% if .SQL %}, `migrations/` or SQL queries{% end %}
 - [ ] API changes are backward compatible (`make breaking`), or the break is intended and announced
-{%- if .Postgres %}
+{%- if .SQL %}
 - [ ] New migrations are backward compatible with the running version (expand, then contract)
 - [ ] New queries are covered by an index (no sequential scan on large tables)
 {%- end %}

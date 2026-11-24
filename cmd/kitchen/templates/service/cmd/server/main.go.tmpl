@@ -6,7 +6,7 @@
 {%- if .Worker %}
 //	server worker            do the background work until SIGINT or SIGTERM
 {%- end %}
-{%- if .Postgres %}
+{%- if .SQL %}
 //	server migrate up        apply pending database migrations
 //	server migrate down      roll back the last migration
 //	server migrate status    print the state of each migration
@@ -67,7 +67,7 @@ func run(args []string) error {
 	case len(args) == 1 && args[0] == "worker":
 		return app.RunWorker(ctx, cfg, logger, version)
 {%- end %}
-{%- if .Postgres %}
+{%- if .SQL %}
 	case len(args) == 2 && args[0] == "migrate":
 		return app.Migrate(ctx, cfg, logger, args[1], os.Stdout)
 {%- end %}

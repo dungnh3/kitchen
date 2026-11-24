@@ -1,0 +1,34 @@
+// Package service implements the gRPC API. The server serves it over gRPC
+// and, through the grpc-gateway mapping in the proto file, over REST.
+//
+// Request validation (protovalidate rules in the proto file), errors,
+// authentication, rate limits, logging and tracing are handled by the server
+// before a method runs; methods only implement the business logic and return
+// errs errors.
+package service
+
+import (
+	"encoding/base64"
+
+	"github.com/dungnh3/kitchen/errs"
+)
+
+// defaultPageSize is used when a List request has no page_size.
+const defaultPageSize = 50
+
+// Page tokens are opaque to clients (https://google.aip.dev/158): the id of
+// the last resource of the previous page, base64url-encoded.
+func encodePageToken(lastID string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(lastID))
+}
+
+func decodePageToken(token string) (string, error) {
+	if token == "" {
+		return "", nil
+	}
+	b, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(b) == 0 {
+		return "", errs.BadRequest(errs.FieldViolation{Field: "page_token", Description: "invalid page token"})
+	}
+	return string(b), nil
+}

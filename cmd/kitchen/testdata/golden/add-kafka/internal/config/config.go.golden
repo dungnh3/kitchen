@@ -183,8 +183,14 @@ func (c Config) validateAuth() error {
 	if a.Audience == "" {
 		errs = append(errs, errors.New("AUTH_AUDIENCE is required: it stops tokens issued for other services from being accepted"))
 	}
-	if u, err := url.Parse(a.JWKSURL); err != nil || u.Host == "" || u.Scheme != "https" && u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" {
+	if !secureURL(a.JWKSURL) {
 		errs = append(errs, fmt.Errorf("AUTH_JWKS_URL: want an https URL (http only for localhost), got %q", a.JWKSURL))
 	}
 	return errors.Join(errs...)
+}
+
+// secureURL reports whether s is an https URL, or an http URL of localhost.
+func secureURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))
 }
