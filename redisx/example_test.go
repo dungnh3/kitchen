@@ -120,7 +120,7 @@ func Example_cache() {
 	if err != nil {
 		panic(err)
 	}
-	defer users.Close()
+	defer func() { _ = users.Close(ctx) }()
 	u, err := users.GetOrLoad(ctx, "42", func(context.Context, string) (user, error) {
 		return user{Name: "Ann"}, nil
 	})

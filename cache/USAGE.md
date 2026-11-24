@@ -39,7 +39,7 @@ products, err := cache.New(cache.Config[product]{
 if err != nil {
 	panic(err)
 }
-defer products.Close()
+defer func() { _ = products.Close(ctx) }()
 
 p, err := products.GetOrLoad(ctx, "p1", func(_ context.Context, id string) (product, error) {
 	return product{ID: id, Price: 100}, nil // e.g. repo.GetProduct(ctx, id)
@@ -60,16 +60,20 @@ What the defaults give you:
 - `GetOrLoad` checks L1, then Redis, then calls the loader. Concurrent
   callers for one key share a single loader call (singleflight), so a cold
   key costs one load per pod, not one per request.
-- Redis failures in `GetOrLoad` fail open: they are logged and counted,
-  and the loader answers.
-- Redis TTLs get ±10 % jitter, so keys written together do not expire
-  together.
+- Redis failures in `GetOrLoad` fail open: they are logged (at most once
+  per 10s) and counted, and the loader answers. Each Redis command is
+  bounded by 500ms, and after 5 failures in a row Redis is skipped for 5s.
+- A `Set` or `Delete` that runs while a key is loading wins: the load
+  cannot write its older value back, on this pod or in Redis.
+- Redis TTLs get ±10 % jitter and L1 TTLs up to −10 %, so keys written
+  together do not expire together.
 - A loader is bounded by a 30s timeout, and a panic in it becomes an
   error instead of a crash.
 - Values are JSON in Redis.
 
-`Close` stops L1's background goroutines. It does not close the Redis
-client, which you own.
+`Close(ctx)` cancels loads still running, waits for them (and for
+background refreshes) until `ctx` ends, and stops L1's goroutines. It does
+not close the Redis client, which you own.
 
 ## Configuration
 
@@ -81,30 +85,36 @@ client, which you own.
 | `Prefix` | required with Redis | always; version it (`user:v1:`) so a format change starts clean |
 | `TTL` | required with Redis | how stale Redis entries may get |
 | `Local` | nil (no L1) | hot keys; saves a Redis round trip |
-| `Local.MaxSize` | required (> 0) | number of entries kept per pod |
+| `Local.MaxSize` | one of MaxSize/MaxWeight | number of entries kept per pod |
+| `Local.MaxWeight` + `Weigher` | off | values of very different sizes: bound L1 by bytes |
 | `Local.TTL` | required (> 0) | keep it short: L1 on other pods is not invalidated |
 | `Local.RefreshAfter` | 0 (off) | refresh hot keys in the background; must be < `Local.TTL` |
 | `NegativeTTL` | 0 (off) | cache "not found" answers from the loader |
 | `Jitter` | 0.1 (±10 %) | `-1` disables; must be < 1 |
 | `LoadTimeout` | 30s (`DefaultLoadTimeout`) | slow or fast loaders |
+| `RedisTimeout` | 500ms (`DefaultRedisTimeout`) | each Redis command; raise it for big values |
 | `Clone` | nil | pointer, slice or map values |
 | `Codec` | `cache.JSON[V]` | a faster or more compact format |
 | `Logger` | `log.Default()` | pass the `*log.Logger` from `main` |
 | `MeterProvider` | global | tests, or a custom provider |
-| `Name` | `Prefix` | the `cache.name` metric attribute |
+| `Name` | `Prefix`; required without it | the `cache.name` metric and log attribute |
 
 ## Integration with kitchen
 
 ### Redis via redisx
 
 Always open the client with `redisx.Open` (TLS, OTel, timeouts, Cluster and
-Sentinel). `cache` accepts any `redis.UniversalClient` and never builds
+Sentinel). Its clients honour context deadlines, which `RedisTimeout`
+relies on. `cache` accepts any `redis.UniversalClient` and never builds
 one. One client can serve many caches, each with its own `Prefix`.
 
 ### Logger
 
 Pass the process logger: `Config.Logger`. `main` calls `log.Setup` once;
-the cache never configures logging. It logs L2 failures at Warn level.
+the cache never configures logging. It logs L2 failures at Warn level, at
+most once per kind every 10s. Logs never contain keys (they may hold emails
+or tokens): they carry `cache.key_hash`, the first 8 bytes of the key's
+SHA-256 in hex. Compute it the same way to find a key's lines.
 
 ### Errors
 
@@ -115,7 +125,8 @@ it becomes 404 / NotFound. Other loader errors pass through unchanged.
 
 ### Telemetry
 
-The cache counts lookups in `kitchen.cache.requests`. Redis commands are
+The cache counts lookups in `kitchen.cache.requests` and times loaders in
+`kitchen.cache.load.duration`. Redis commands are
 traced by `redisx`. See [Observability](#observability).
 
 ### Server wiring
@@ -134,10 +145,11 @@ again:
 
 ```go
 c, _ := cache.New(cache.Config[product]{
+	Name:        "products", // required without Prefix (L1 only)
 	Local:       &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute},
 	NegativeTTL: 30 * time.Second, // remember "not found" for 30s
 })
-defer c.Close()
+defer func() { _ = c.Close(ctx) }()
 
 calls := 0
 load := func(context.Context, string) (product, error) {
@@ -190,7 +202,7 @@ c, _ := cache.New(cache.Config[string]{
 	TTL:    time.Hour,
 	Jitter: -1, // exact TTLs; the default ±10 % spreads expiries
 })
-defer c.Close()
+defer func() { _ = c.Close(ctx) }()
 
 _ = c.Set(ctx, "u42", "123456", cache.WithTTL(5*time.Minute))
 ```
@@ -208,6 +220,7 @@ current value meanwhile, so hot keys never expire under load.
 
 ```go
 c, err := cache.New(cache.Config[int]{
+	Name:        "answers", // required without Prefix (L1 only)
 	Local:       &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute, RefreshAfter: 45 * time.Second},
 	LoadTimeout: 2 * time.Second,
 })
@@ -216,7 +229,7 @@ c, err := cache.New(cache.Config[int]{
 ### Load timeout, cancellation and panics
 
 The loader runs detached from the caller that started it, bounded by
-`LoadTimeout`. A caller whose `ctx` ends returns at once, but the load
+`LoadTimeout` and cancelled by `Close`. A caller whose `ctx` ends returns at once, but the load
 still fills the cache for the others. In `GetOrLoadMany` the loader uses
 the caller's `ctx`, bounded by `LoadTimeout`.
 
@@ -238,22 +251,34 @@ map values, or never mutate what the cache returns:
 ```go
 type cart struct{ Items []string }
 c, _ := cache.New(cache.Config[*cart]{
+	Name:  "carts", // required without Prefix (L1 only)
 	Local: &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute},
 	Clone: func(c *cart) *cart { return &cart{Items: slices.Clone(c.Items)} },
 })
 ```
 
-### Invalidation
+### Invalidation and consistency
 
 `Delete` removes keys from this pod's L1 and from Redis. Other pods keep
 their L1 copy until `Local.TTL`, so keep that TTL short for data that
-changes. `DeleteByPrefix` removes a whole group with SCAN + UNLINK on every
+changes: it is the bound on how stale another pod can be.
+
+Update the source first, then `Set` or `Delete` the key. A load that runs
+at the same time cannot undo that:
+
+- in Redis, a load that misses leaves a lease on the key and writes back
+  only if the lease is still there. `Set` and `Delete` replace or remove it
+  (the lease scheme of Facebook's "Scaling Memcache");
+- in L1, a load's result is dropped if this pod wrote the key meanwhile.
+
+The caller of that load still gets the value it loaded; it is just not
+cached. `DeleteByPrefix` removes a whole group with SCAN + UNLINK on every
 shard (Cluster-aware). It is O(keyspace): use it in admin and
 invalidation jobs, not on hot paths.
 
 ```go
 c, _ := cache.New(cache.Config[int]{Redis: rdb, Prefix: "price:v1:", TTL: time.Hour})
-defer c.Close()
+defer func() { _ = c.Close(ctx) }()
 for _, k := range []string{"shop1:a", "shop1:b", "shop2:a"} {
 	_ = c.Set(ctx, k, 1)
 }
@@ -279,13 +304,16 @@ codec or the value type.
 ### Fail-open behaviour
 
 Only the read-through paths fail open. `GetOrLoad` and `GetOrLoadMany`
-log a Redis error, count it, and call the loader. `Get`, `GetMany`, `Set`,
+log a Redis error, count it, and call the loader. Every Redis command waits
+at most `RedisTimeout`. After 5 failures in a row the read-through paths
+skip Redis for 5s (`cache.result=skipped`), then try again. `Get`, `Set`
+and `Delete` always try Redis, so an invalidation is never skipped. `Get`, `GetMany`, `Set`,
 `Delete` and `DeleteByPrefix` return Redis errors to you. `Set` still
 updates L1 when Redis fails.
 
 ## Testing
 
-- L1-only caches need nothing: set only `Local`.
+- L1-only caches need nothing: set only `Local` and `Name`.
 - For L2, run miniredis and open it with `redisx.Open`, as in the quick
   start. `mr.TTL(key)` and `mr.FastForward(d)` check expiry.
 - Pass `Logger: log.Discard()` to keep test output clean.
@@ -298,15 +326,19 @@ updates L1 when Redis fails.
 - **Metric** `kitchen.cache.requests` (counter, `{request}`), attributes:
   - `cache.name`: `Config.Name` (default `Prefix`);
   - `cache.tier`: `l1`, `l2` or `loader`;
-  - `cache.result`: `hit`, `miss` or `error` (`ok` or `error` for
-    `loader`).
-- **Logs** (Warn): "lookup failed, loading from source", "store failed",
-  "store negative entry failed", "batch lookup failed", with the cache
-  name, key and error.
+  - `cache.result`: `hit`, `miss`, `error` or `skipped` (`ok`,
+    `not_found` or `error` for `loader`).
+- **Metric** `kitchen.cache.load.duration` (histogram, `s`), with
+  `cache.name` and the loader's `cache.result`.
+- **Logs** (Warn, at most one per kind per 10s with a `suppressed`
+  count): "lookup failed, loading from source", "batch lookup failed,
+  loading from source", "unreadable entry, loading from source", "store
+  failed", with `cache`, `cache.key_hash` and the error. Failed background
+  refreshes: "cache: refresh failed" (Error).
 - **Spans:** none of its own. Redis commands are traced by `redisx`;
   trace your loader.
-- **Errors:** `ErrNotFound` (`errs.ErrNotFound`), `*PanicError`, and
-  wrapped Redis errors.
+- **Errors:** `ErrNotFound` (`errs.ErrNotFound`), `ErrClosed`,
+  `*PanicError`, and wrapped Redis errors (without keys).
 
 ## Production checklist
 
@@ -316,8 +348,16 @@ updates L1 when Redis fails.
 - Set `Clone` for pointer, slice and map values.
 - Leave jitter on unless the TTL itself has meaning.
 - Set `NegativeTTL` when misses are frequent; keep it short.
-- Pass the `*log.Logger` from `main`; call `Close` on shutdown.
-- Alert on `cache.result=error` for `cache.tier=l2`.
+- Pass the `*log.Logger` from `main`; call `Close(ctx)` on shutdown, after
+  the server has drained.
+- Give each cache its own `Prefix`, and make no prefix a prefix of
+  another's (`u:` and `u:a`), or `DeleteByPrefix` crosses caches.
+- Use `MaxWeight` + `Weigher` when values vary a lot in size.
+- Concurrent callers of one key share the first caller's loader and ctx
+  values: never make the loaded value depend on who asks.
+- Alert on `cache.result=error` or `skipped` for `cache.tier=l2`.
+- `GetOrLoadMany` merges concurrent batches only with L1; set `Local`
+  (even with a short TTL) when batch loads are hot.
 
 ## Migrating from the old kitchen
 

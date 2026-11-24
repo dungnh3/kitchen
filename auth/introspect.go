@@ -154,7 +154,7 @@ func NewIntrospection(cfg IntrospectionConfig) (*Introspection, error) {
 }
 
 // Close releases the cache (not the Redis client).
-func (in *Introspection) Close() { in.cache.Close() }
+func (in *Introspection) Close() { _ = in.cache.Close(context.Background()) }
 
 // Issuer implements Verifier.
 func (in *Introspection) Issuer() string { return in.cfg.Issuer }

@@ -195,6 +195,35 @@ Behaviour changes:
 - L1 values are shared: set `Config.Clone` for pointer, slice or map values.
 - `Local.RefreshAfter` refreshes hot keys in the background.
 
+Changes from the deep review (2026-11-24), for code written against the
+first kitchen `cache`:
+
+- **`Close(ctx) error`** replaces `Close()`. It cancels running loads, waits
+  for them until `ctx` ends, and is idempotent. Loading methods return
+  `cache.ErrClosed` afterwards. Write `defer func() { _ = c.Close(ctx) }()`.
+- **`Name` is required when `Prefix` is empty** (L1-only caches): metrics and
+  logs need a name.
+- **Redis format:** a key being loaded holds a lease (tag `l`). Readers treat
+  it as a miss. Deploys that mix the first version with this one read the
+  lease as an unreadable entry; use a new `Prefix` if both run at once.
+- **Write-backs are conditional:** a load writes Redis only if the key still
+  holds what the load saw, so `Set`/`Delete` during a load win on every pod.
+- **`RedisTimeout`** (default 500ms) bounds each Redis command; after 5
+  consecutive failures `GetOrLoad`/`GetOrLoadMany` skip Redis for 5s.
+- **Log schema:** cache warnings carry `cache.key_hash` instead of `key`, and
+  error strings no longer contain keys. Warnings are throttled (one per kind
+  per 10s, with `suppressed`). otter's refresh errors are logged through
+  `Config.Logger` ("cache: refresh failed", attribute `detail`).
+- **Metrics:** `cache.result="skipped"` for `l2`, `"not_found"` for
+  `loader` (before: counted as `error`), new histogram
+  `kitchen.cache.load.duration`.
+- **`GetMany`** now returns Redis errors and unreadable entries for every
+  key (joined), not only the first, along with the values it read.
+- L1 TTLs are jittered downwards (between `Local.TTL×(1−Jitter)` and
+  `Local.TTL`); values promoted from Redis keep their remaining Redis TTL as
+  an upper bound in L1. `LocalConfig.MaxWeight` + `Config.Weigher` bound L1
+  by weight.
+
 ## uploader → objstore + objstore/gcs (+ objstore/s3)
 
 | Old | New |

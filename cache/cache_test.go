@@ -40,7 +40,7 @@ func newCache(t *testing.T, cfg cache.Config[user]) *cache.Cache[user] {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(c.Close)
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
 	return c
 }
 
@@ -50,13 +50,13 @@ func TestNewValidation(t *testing.T) {
 		{},
 		{Redis: rdb, TTL: time.Minute},
 		{Redis: rdb, Prefix: "u:"},
-		{Local: &cache.LocalConfig{MaxSize: 0, TTL: time.Second}},
-		{Local: &cache.LocalConfig{MaxSize: 1, TTL: time.Second}, NegativeTTL: -1},
-		{Local: &cache.LocalConfig{MaxSize: 1, TTL: time.Second}, Jitter: 1},
+		{Name: "t", Local: &cache.LocalConfig{MaxSize: 0, TTL: time.Second}},
+		{Name: "t", Local: &cache.LocalConfig{MaxSize: 1, TTL: time.Second}, NegativeTTL: -1},
+		{Name: "t", Local: &cache.LocalConfig{MaxSize: 1, TTL: time.Second}, Jitter: 1},
 	}
 	for i, cfg := range bad {
 		if c, err := cache.New(cfg); err == nil {
-			c.Close()
+			_ = c.Close(context.Background())
 			t.Errorf("case %d: want error", i)
 		}
 	}
@@ -95,11 +95,11 @@ func TestSetGetDeleteRedis(t *testing.T) {
 
 func TestGetOrLoadSingleflight(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c, err := cache.New(cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 100, TTL: time.Minute}})
+		c, err := cache.New(cache.Config[user]{Name: "t", Local: &cache.LocalConfig{MaxSize: 100, TTL: time.Minute}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close()
+		defer func() { _ = c.Close(context.Background()) }()
 		ctx := context.Background()
 
 		var calls atomic.Int32
@@ -145,11 +145,11 @@ func TestGetOrLoadSingleflight(t *testing.T) {
 
 func TestGetOrLoadCallerCancelDoesNotCancelLoad(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c, err := cache.New(cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}})
+		c, err := cache.New(cache.Config[user]{Name: "t", Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close()
+		defer func() { _ = c.Close(context.Background()) }()
 		release := make(chan struct{})
 		var loadCtxErr error
 		load := func(ctx context.Context, id string) (user, error) {
@@ -205,7 +205,7 @@ func TestNegativeCaching(t *testing.T) {
 }
 
 func TestLoaderErrorNotCached(t *testing.T) {
-	c := newCache(t, cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}, NegativeTTL: time.Minute})
+	c := newCache(t, cache.Config[user]{Name: "t", Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}, NegativeTTL: time.Minute})
 	boom := errors.New("db down")
 	var calls int
 	load := func(context.Context, string) (user, error) { calls++; return user{}, boom }
@@ -319,7 +319,7 @@ func TestCustomCodecAndBadPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 	_ = c.Set(ctx, "k", "hello")
 	if raw, _ := mr.Get("s:k"); raw != "vhello" {
 		t.Fatalf("raw = %q", raw)
@@ -345,7 +345,7 @@ func ExampleCache_GetOrLoad() {
 	if err != nil {
 		panic(err)
 	}
-	defer users.Close()
+	defer func() { _ = users.Close(context.Background()) }()
 
 	u, err := users.GetOrLoad(context.Background(), "42", func(_ context.Context, id string) (user, error) {
 		return user{ID: id, Name: "Ann"}, nil // e.g. repo.GetUser(ctx, id)
@@ -357,7 +357,7 @@ func ExampleCache_GetOrLoad() {
 func TestLoaderPanicIsAnError(t *testing.T) {
 	_, rdb := newRedis(t)
 	for name, cfg := range map[string]cache.Config[user]{
-		"l1": {Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}},
+		"l1": {Name: "t", Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}},
 		"l2": {Redis: rdb, Prefix: "p:", TTL: time.Minute},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -377,11 +377,11 @@ func TestLoaderPanicIsAnError(t *testing.T) {
 
 func TestLoadTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c, err := cache.New(cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}, LoadTimeout: time.Second})
+		c, err := cache.New(cache.Config[user]{Name: "t", Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}, LoadTimeout: time.Second})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close()
+		defer func() { _ = c.Close(context.Background()) }()
 		_, err = c.GetOrLoad(context.Background(), "1", func(ctx context.Context, _ string) (user, error) {
 			<-ctx.Done() // a loader that hangs until its deadline
 			return user{}, ctx.Err()
@@ -395,13 +395,14 @@ func TestLoadTimeout(t *testing.T) {
 func TestCloneProtectsEntries(t *testing.T) {
 	type bag struct{ Items []string }
 	c, err := cache.New(cache.Config[*bag]{
+		Name:  "t",
 		Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute},
 		Clone: func(b *bag) *bag { return &bag{Items: append([]string(nil), b.Items...)} },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 	ctx := context.Background()
 	in := &bag{Items: []string{"a"}}
 	_ = c.Set(ctx, "k", in)
@@ -415,7 +416,7 @@ func TestCloneProtectsEntries(t *testing.T) {
 }
 
 func TestErrsNotFoundIsNegative(t *testing.T) {
-	c := newCache(t, cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}, NegativeTTL: time.Minute})
+	c := newCache(t, cache.Config[user]{Name: "t", Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}, NegativeTTL: time.Minute})
 	var calls atomic.Int32
 	domainNotFound := errs.New(codes.NotFound, "USER_NOT_FOUND")
 	load := func(context.Context, string) (user, error) { calls.Add(1); return user{}, domainNotFound }
@@ -445,11 +446,11 @@ func TestSetWithTTL(t *testing.T) {
 
 func TestRefreshAfter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c, err := cache.New(cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute, RefreshAfter: 10 * time.Second}})
+		c, err := cache.New(cache.Config[user]{Name: "t", Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute, RefreshAfter: 10 * time.Second}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close()
+		defer func() { _ = c.Close(context.Background()) }()
 		ctx := context.Background()
 		var calls atomic.Int32
 		load := func(context.Context, string) (user, error) {
@@ -473,11 +474,11 @@ func TestRefreshAfter(t *testing.T) {
 
 func TestGetOrLoadManySharesLoads(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		c, err := cache.New(cache.Config[user]{Local: &cache.LocalConfig{MaxSize: 100, TTL: time.Minute}})
+		c, err := cache.New(cache.Config[user]{Name: "t", Local: &cache.LocalConfig{MaxSize: 100, TTL: time.Minute}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close()
+		defer func() { _ = c.Close(context.Background()) }()
 		var loadedKeys atomic.Int32
 		release := make(chan struct{})
 		load := func(_ context.Context, keys []string) (map[string]user, error) {

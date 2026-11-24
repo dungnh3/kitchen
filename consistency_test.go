@@ -106,7 +106,7 @@ func TestOneLogFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 	_, _ = c.GetOrLoad(context.Background(), "k", func(context.Context, string) (string, error) { return "v", nil })
 
 	cancel()

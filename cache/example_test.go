@@ -47,7 +47,7 @@ func ExampleNew() {
 	if err != nil {
 		panic(err)
 	}
-	defer products.Close()
+	defer func() { _ = products.Close(context.Background()) }()
 
 	p, err := products.GetOrLoad(ctx, "p1", func(_ context.Context, id string) (product, error) {
 		return product{ID: id, Price: 100}, nil // e.g. repo.GetProduct(ctx, id)
@@ -70,10 +70,11 @@ func ExampleNew() {
 func ExampleCache_GetOrLoad_negative() {
 	ctx := context.Background()
 	c, _ := cache.New(cache.Config[product]{
+		Name:        "products",
 		Local:       &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute},
 		NegativeTTL: 30 * time.Second, // remember "not found" for 30s
 	})
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 
 	calls := 0
 	load := func(context.Context, string) (product, error) {
@@ -94,8 +95,8 @@ func ExampleCache_GetOrLoad_negative() {
 
 func ExampleCache_GetOrLoadMany() {
 	ctx := context.Background()
-	c, _ := cache.New(cache.Config[product]{Local: &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute}})
-	defer c.Close()
+	c, _ := cache.New(cache.Config[product]{Name: "products", Local: &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute}})
+	defer func() { _ = c.Close(context.Background()) }()
 
 	_ = c.Set(ctx, "p1", product{ID: "p1", Price: 1})
 	got, err := c.GetOrLoadMany(ctx, []string{"p1", "p2", "p3"}, func(_ context.Context, missing []string) (map[string]product, error) {
@@ -127,7 +128,7 @@ func ExampleWithTTL() {
 		TTL:    time.Hour,
 		Jitter: -1, // exact TTLs; the default ±10 % spreads expiries
 	})
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 
 	_ = c.Set(ctx, "u42", "123456", cache.WithTTL(5*time.Minute))
 	fmt.Println(mr.TTL("otp:u42"))
@@ -137,10 +138,11 @@ func ExampleWithTTL() {
 func ExampleConfig_clone() {
 	type cart struct{ Items []string }
 	c, _ := cache.New(cache.Config[*cart]{
+		Name:  "carts", // required without Prefix (L1 only)
 		Local: &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute},
 		Clone: func(c *cart) *cart { return &cart{Items: slices.Clone(c.Items)} },
 	})
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 
 	ctx := context.Background()
 	_ = c.Set(ctx, "u1", &cart{Items: []string{"apple"}})
@@ -155,13 +157,14 @@ func ExampleLocalConfig() {
 	// L1 only: no Redis. RefreshAfter reloads hot keys in the background,
 	// so readers never wait for a reload once a key is cached.
 	c, err := cache.New(cache.Config[int]{
+		Name:        "answers", // required without Prefix (L1 only)
 		Local:       &cache.LocalConfig{MaxSize: 1000, TTL: time.Minute, RefreshAfter: 45 * time.Second},
 		LoadTimeout: 2 * time.Second,
 	})
 	if err != nil {
 		panic(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 	n, err := c.GetOrLoad(context.Background(), "42", func(_ context.Context, k string) (int, error) {
 		return strconv.Atoi(k)
 	})
@@ -170,8 +173,8 @@ func ExampleLocalConfig() {
 }
 
 func ExamplePanicError() {
-	c, _ := cache.New(cache.Config[int]{Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}})
-	defer c.Close()
+	c, _ := cache.New(cache.Config[int]{Name: "jobs", Local: &cache.LocalConfig{MaxSize: 10, TTL: time.Minute}})
+	defer func() { _ = c.Close(context.Background()) }()
 	_, err := c.GetOrLoad(context.Background(), "k", func(context.Context, string) (int, error) {
 		panic("bug in loader")
 	})
@@ -188,7 +191,7 @@ func ExampleCache_DeleteByPrefix() {
 	defer func() { _ = rdb.Close() }()
 
 	c, _ := cache.New(cache.Config[int]{Redis: rdb, Prefix: "price:v1:", TTL: time.Hour})
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 	for _, k := range []string{"shop1:a", "shop1:b", "shop2:a"} {
 		_ = c.Set(ctx, k, 1)
 	}
@@ -211,7 +214,7 @@ func ExampleCodec() {
 	defer func() { _ = rdb.Close() }()
 
 	c, _ := cache.New(cache.Config[string]{Redis: rdb, Prefix: "html:", TTL: time.Hour, Codec: rawCodec{}})
-	defer c.Close()
+	defer func() { _ = c.Close(context.Background()) }()
 	_ = c.Set(ctx, "home", "<h1>hi</h1>")
 	s, err := c.Get(ctx, "home")
 	fmt.Println(s, err)

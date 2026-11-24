@@ -199,32 +199,67 @@ unmaintained since 2023, eko/gocache is `any`-typed with Prometheus
 metrics, sturdyc is in-memory first), but use otter v2's loading API for
 L1 instead of hand-rolled code.
 
+Revised 2026-11-24 (deep review, owner): writes win over loads (Redis lease,
+L1 write guard), bounded Redis latency with a fail-fast window, `Close(ctx)
+error`, L1 weight bound and downward L1 jitter, `Name` required without
+`Prefix`, hashed keys in logs.
+
 ```go
 var ErrNotFound = errs.ErrNotFound // any errs NotFound from a loader = negative answer
-type LocalConfig struct { MaxSize int; TTL, RefreshAfter time.Duration }
+var ErrClosed error                // loading methods after Close
+type LocalConfig struct { MaxSize int; MaxWeight uint64; TTL, RefreshAfter time.Duration }
 type Config[V any] struct {
     Redis redis.UniversalClient; Local *LocalConfig; Prefix string; TTL, NegativeTTL time.Duration
-    Jitter float64; LoadTimeout time.Duration /* default 30s */; Clone func(V) V
-    Codec Codec[V]; Logger *slog.Logger; MeterProvider metric.MeterProvider; Name string
+    Jitter float64; LoadTimeout /* 30s */, RedisTimeout /* 500ms */ time.Duration
+    Clone func(V) V; Weigher func(key string, v V) uint32
+    Codec Codec[V]; Logger *log.Logger; MeterProvider metric.MeterProvider; Name string
 }
 func (c *Cache[V]) Set(ctx, key string, v V, opts ...SetOption) error // WithTTL(d)
-type PanicError struct{ Value any } // a panicking loader is an error, not a crash
-// Get, Delete, GetOrLoad, GetMany, GetOrLoadMany, DeleteByPrefix, Close as before
+func (c *Cache[V]) Close(ctx context.Context) error
+type PanicError struct{ Value any } // a panicking loader or codec is an error, not a crash
+// Get, GetMany, Delete, GetOrLoad, GetOrLoadMany, DeleteByPrefix
 ```
 
 - `GetOrLoad` with L1: `otter.Get` with a loader that runs one detached
-  flight per key (L2, then the source, bounded by `LoadTimeout`, panics
-  recovered). Callers return when their ctx ends; the flight still fills
-  both tiers. Without L1: the same flight directly.
+  flight per key (L2, then the source, bounded by `LoadTimeout`, cancelled by
+  `Close`, panics recovered). Callers return when their ctx ends; the flight
+  still fills both tiers. Without L1: the same flight directly.
+- **Writes win over loads.**
+  - Redis (all pods): a flight's L2 lookup is a Lua script that returns the
+    payload or, on a miss, stores a lease (`'l'` + random token, TTL
+    `LoadTimeout + RedisTimeout`). The write-back is a compare-and-set on
+    what the lookup saw (the lease, or a payload that did not decode).
+    `Set` overwrites and `Delete` removes the lease, so a load that read the
+    source before them cannot write back (Facebook's "Scaling Memcache"
+    leases). Readers treat a lease as a miss.
+  - L1 (this pod): `Set`, `Delete` and `DeleteByPrefix` bump a per-key-stripe
+    generation before touching L1; a fill (flight result, L2 promotion) is
+    `SetIfAbsent` between two generation reads and undoes itself if they
+    differ. otter's own write-cancels-load covers its commit. A value whose
+    write-back lost the lease is returned to callers but not kept in L1.
+  - L1 on other pods is bounded only by `Local.TTL` (and, for promoted
+    entries, by the remaining Redis TTL).
+- **Redis failures.** Every command is bounded by `RedisTimeout`. After 5
+  consecutive failures the read-through paths skip Redis for 5s (then one
+  probe). `Get`, `Set` and `Delete` always try Redis (an invalidation is never
+  skipped). Warnings are throttled to one per kind per 10s with a
+  `suppressed` count.
 - `LocalConfig.RefreshAfter`: otter refresh-ahead; a hot entry is reloaded
-  in the background (from L2, else the source) while callers keep the
-  current value.
+  in the background (from L2, else the source), detached from the request
+  that found it stale, while callers keep the current value. A refresh that
+  finds the key gone or changed drops the L1 entry.
 - `GetOrLoadMany` with L1: `otter.BulkGet`, so a key being loaded by
-  another call is waited for, not loaded twice.
+  another call is waited for, not loaded twice. Without L1 concurrent batch
+  calls are not merged. L2 lookups and write-backs are pipelined scripts.
 - `Clone` copies values on Set and on every read; without it L1 values are
   shared between callers.
-- No cache-level spans: Redis commands are traced by redisotel (via
-  `redisx`); the cache exports `kitchen.cache.requests{cache.name,cache.tier,cache.result}`.
+- Metrics: `kitchen.cache.requests{cache.name,cache.tier,cache.result}`
+  (`l2` adds `skipped`, `loader` adds `not_found`) and the histogram
+  `kitchen.cache.load.duration` (s). Attribute sets are precomputed: L1 hits
+  allocate nothing. No cache-level spans: Redis commands are traced by
+  redisotel (via `redisx`).
+- Logs never carry keys, only `cache.key_hash` (first 8 bytes of SHA-256).
+  otter's own logs go to `Config.Logger`.
 
 ### `lease`
 
@@ -358,7 +393,9 @@ recommended / best system-and-security option without asking.
 | DD3 | `cache` emits a metric counter but no spans | span per lookup | Redis spans already come from redisotel; no span noise on hot paths | L1 hits are not visible in traces |
 | DD4 | Cache Redis payload = 1-byte tag + codec bytes | plain JSON + separate negative marker key | one GET resolves value vs negative entry | not readable by old clients (new prefix needed) |
 | DD5 | `cache.Get` returns Redis errors (fail-closed); only `GetOrLoad`/`GetOrLoadMany` fail open | fail-open everywhere | caller of `Get` decides; no silent misses | callers must handle errors |
-| DD6 | Cache loader runs with `context.WithoutCancel(ctx)` | caller ctx | one cancelled caller cannot fail the shared flight | a hung loader is bounded only by its own timeouts |
+| DD6 | Cache loader runs with `context.WithoutCancel(ctx)` | caller ctx | one cancelled caller cannot fail the shared flight | a hung loader is bounded by `LoadTimeout` and cancelled by `Close` |
+| DD6a | Cache write-back uses a Redis lease (Lua compare-and-set) (owner, 2026-11-24) | tombstone + `SET NX`; document the race | `Set`/`Delete` during a load win on every pod; no extra round trip | `EVALSHA` instead of `GET`/`SET` on misses; payload tag `'l'` added |
+| DD6b | Cache read-through skips Redis after 5 consecutive failures for 5s, internal (owner, 2026-11-24) | timeout only; a canonical breaker package | bounded latency and no log flood during an outage | a breaker inside `cache`; a canonical `breaker` package may replace it |
 | DD7 | `webmeta` parses a truncated body instead of rejecting large pages | `ErrTooLarge` | metadata lives in `<head>`; big pages still work | none significant |
 | DD8 | `webmeta` uses `httpx`'s SSRF guard (non-public ranges incl. CGNAT, NAT64, 6to4, Teredo; ports 80/443 only); forbids URL credentials; ignores proxies | own guard (removed 2026-11-21) | one guard to maintain; closes port-scan and Teredo bypasses | internal targets need `Config.Allow` (+ `Ports`) |
 | DD9 | `webmeta` has no custom-transport escape hatch (httpx rejects `WithTransport` with the guard) | `Config.Transport` (removed 2026-11-21) | the guard cannot be bypassed by configuration | customise via `ClientOptions` only |
