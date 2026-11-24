@@ -16,8 +16,8 @@ import (
 
 // Encoder is the default browser wire of the agent platform: like
 // sse.RawEncoder (id = stream position, event = type, data = full envelope
-// JSON), except that "stream.token" envelopes are unwrapped to their text, as
-// the old gateway did.
+// JSON), except that "stream.token" envelopes are unwrapped to their text so
+// browsers append tokens without parsing JSON.
 type Encoder struct{ sawDone bool }
 
 // NewEncoder is an sse.EncoderFactory for Encoder.
@@ -89,9 +89,19 @@ const (
 )
 
 // Rule is an allowlist per envelope field; an empty list skips that check.
+// A Rule with every list empty fails closed: it rejects every envelope
+// (reason "no_rule"), so a Resolve that found no claims never lets events
+// cross users or tenants. Set AllowAll to pass envelopes without checks.
 type Rule struct {
 	AppIDs, TenantIDs, UserIDs, SessionIDs []string
-	Raw                                    RawPolicy
+	// AllowAll passes every envelope when all lists are empty. It has no
+	// effect when any list is set.
+	AllowAll bool
+	Raw      RawPolicy
+}
+
+func (r Rule) empty() bool {
+	return len(r.AppIDs) == 0 && len(r.TenantIDs) == 0 && len(r.UserIDs) == 0 && len(r.SessionIDs) == 0
 }
 
 // ValidatorConfig configures ContextValidator.
@@ -139,6 +149,8 @@ func ContextValidator(cfg ValidatorConfig) sse.TransformFactory {
 				return reject(ctx, "not_envelope", nil)
 			}
 			switch {
+			case rule.empty() && !rule.AllowAll:
+				return reject(ctx, "no_rule", &e)
 			case !allowed(rule.AppIDs, e.AppID):
 				return reject(ctx, "app_mismatch", &e)
 			case !allowed(rule.TenantIDs, e.TenantID):

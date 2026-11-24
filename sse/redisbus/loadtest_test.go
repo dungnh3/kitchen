@@ -49,7 +49,7 @@ func TestLoad(t *testing.T) {
 	tokens := envInt("SSE_LOADTEST_TOKENS", 100)
 	rate := envInt("SSE_LOADTEST_RATE", 20)
 
-	readRDB := redis.NewClient(&redis.Options{Addr: addr, PoolSize: 256})
+	readRDB := redis.NewClient(&redis.Options{Addr: addr, PoolSize: envInt("SSE_LOADTEST_POOL", 256)})
 	writeRDB := redis.NewClient(&redis.Options{Addr: addr, PoolSize: 512})
 	defer func() { _ = readRDB.Close(); _ = writeRDB.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -89,10 +89,15 @@ func TestLoad(t *testing.T) {
 		finished  sync.WaitGroup
 	)
 	connected.Add(streams)
+	// Ramp the dials: a burst of thousands of connects overflows the listen
+	// backlog (128 on macOS) and the kernel resets them.
+	dials := make(chan struct{}, 64)
 	for i := range streams {
 		finished.Go(func() {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/s/load-%d", ln.Addr(), i), nil)
+			dials <- struct{}{}
 			resp, err := client.Do(req)
+			<-dials
 			connected.Done()
 			if err != nil {
 				t.Errorf("connect: %v", err)

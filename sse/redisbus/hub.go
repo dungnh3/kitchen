@@ -9,6 +9,7 @@ import (
 	"hash/maphash"
 	"iter"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ const (
 	DefaultCount          = 256
 	DefaultMaxKeysPerRead = 512
 	DefaultRingSize       = 512
+	DefaultRingBytes      = 1 << 20
 	DefaultCatchupBatch   = 256
 )
 
@@ -47,8 +49,13 @@ type HubConfig struct {
 	// MaxKeysPerRead caps the streams served by one reader. Default 512.
 	MaxKeysPerRead int `json:"max_keys_per_read" yaml:"max_keys_per_read"`
 	// RingSize is the number of recent entries kept per stream in memory.
-	// Subscribers further behind read from Redis. Default 512.
+	// Subscribers further behind read from Redis. Default 512. The ring
+	// grows with traffic, so an idle stream holds no entries.
 	RingSize int `json:"ring_size" yaml:"ring_size"`
+	// RingBytes caps the payload bytes a stream's ring holds; the oldest
+	// entries leave the ring first (subscribers that still need them read
+	// them from Redis). Default 1 MiB.
+	RingBytes int `json:"ring_bytes" yaml:"ring_bytes"`
 	// CatchupBatch is the XRANGE page size for catch-up reads. Default 256.
 	CatchupBatch int64 `json:"catchup_batch" yaml:"catchup_batch"`
 	// RetryBackoff and MaxRetryBackoff bound the jittered backoff after a
@@ -108,13 +115,16 @@ type stream struct {
 	id, key string
 	ready   chan struct{}
 	regErr  error
-	refs    int // guarded by the hub shard mutex
-	rd      *reader
+	refs    int     // guarded by the hub shard mutex
+	rd      *reader // guarded by the hub's gmu
+
+	maxN, maxBytes int // ring limits (HubConfig.RingSize, RingBytes)
 
 	mu     sync.Mutex
-	ring   []entry
+	ring   []entry // circular; grows up to maxN entries
 	start  int
 	n      int
+	bytes  int         // payload bytes of the entries in the ring
 	base   streamid.ID // the ring covers (base, last]
 	last   streamid.ID
 	ended  bool
@@ -125,6 +135,7 @@ type reader struct {
 	h       *Hub
 	g       *group
 	wake    string
+	retired bool // guarded by the hub's gmu
 	mu      sync.Mutex
 	streams map[string]*stream
 	stop    context.CancelFunc
@@ -144,6 +155,7 @@ func NewHub(rdb redis.UniversalClient, cfg HubConfig) (*Hub, error) {
 	setDefault(&cfg.Count, DefaultCount)
 	setDefault(&cfg.MaxKeysPerRead, DefaultMaxKeysPerRead)
 	setDefault(&cfg.RingSize, DefaultRingSize)
+	setDefault(&cfg.RingBytes, DefaultRingBytes)
 	setDefault(&cfg.CatchupBatch, DefaultCatchupBatch)
 	setDefault(&cfg.RetryBackoff, 100*time.Millisecond)
 	setDefault(&cfg.MaxRetryBackoff, 5*time.Second)
@@ -196,18 +208,23 @@ func (h *Hub) Close() {
 	h.readers.Wait()
 }
 
-// CheckCursor implements sse.Source. A cursor is "<ms>-<seq>", "<ms>" or "0".
+// CheckCursor implements sse.Source. It rejects an invalid stream ID
+// (ErrInvalidStreamID) for any cursor, including "" (no Last-Event-ID).
+// A cursor is "<ms>-<seq>", "<ms>" or "0".
 // A well-formed cursor newer than the stream's last entry was never issued
 // and is ErrInvalidCursor. One older than the retained entries, or for an
 // expired stream, passes: Subscribe reports it as sse.ErrReplayGap, so the
 // client gets a stream.replay_gap event and re-fetches state.
 func (h *Hub) CheckCursor(ctx context.Context, streamID, cursor string) error {
+	if err := validStreamID(streamID); err != nil {
+		return err
+	}
+	if cursor == "" {
+		return nil
+	}
 	cur, err := streamid.ParseID(cursor)
 	if err != nil {
 		return sse.ErrInvalidCursor
-	}
-	if err := validStreamID(streamID); err != nil {
-		return err
 	}
 	if cur.IsZero() {
 		return nil
@@ -271,7 +288,9 @@ func (h *Hub) follow(ctx context.Context, st *stream, cur streamid.ID, resume bo
 	}
 
 	resumedSent := !resume
-	batch := make([]entry, 0, h.cfg.CatchupBatch)
+	// Grows on demand: a live subscriber reads one entry at a time and must
+	// not pin a full catch-up page.
+	var batch []entry
 	for {
 		batch = batch[:0]
 		st.mu.Lock()
@@ -297,6 +316,18 @@ func (h *Hub) follow(ctx context.Context, st *stream, cur streamid.ID, resume bo
 			if err != nil {
 				yield(sse.Message{}, err)
 				return
+			}
+			if cur.IsZero() && !resume {
+				// A viewer without Last-Event-ID replays the retained
+				// stream; say so when its head was trimmed.
+				truncated, err := h.headTrimmed(ctx, st)
+				if err != nil {
+					yield(sse.Message{}, err)
+					return
+				}
+				if truncated && !yield(sse.Message{Type: sse.TypeTruncated}, nil) {
+					return
+				}
 			}
 		}
 		for _, e := range batch {
@@ -328,16 +359,49 @@ func (h *Hub) follow(ctx context.Context, st *stream, cur streamid.ID, resume bo
 	}
 }
 
+// checkExists checks a cursor newer than this pod's view of the stream. An
+// existing entry is fine (our reader lags). A cursor beyond the stream's
+// last entry was never issued: ErrInvalidCursor. Otherwise the entry is gone
+// (the stream expired or was trimmed after the client read it): a replay
+// gap, so the client gets a terminal stream.replay_gap instead of a
+// response that ends without one and an endless reconnect loop.
 func (h *Hub) checkExists(ctx context.Context, st *stream, cur streamid.ID) error {
 	id := cur.String()
 	msgs, err := h.rdb.XRangeN(ctx, st.key, id, id, 1).Result()
 	if err != nil {
 		return fmt.Errorf("redisbus: check cursor %s: %w", st.id, err)
 	}
-	if len(msgs) == 0 {
-		return sse.ErrInvalidCursor
+	if len(msgs) == 1 {
+		return nil
 	}
-	return nil
+	last, err := h.rdb.XRevRangeN(ctx, st.key, "+", "-", 1).Result()
+	if err != nil {
+		return fmt.Errorf("redisbus: check cursor %s: %w", st.id, err)
+	}
+	if len(last) == 1 {
+		if lastID, err := streamid.ParseID(last[0].ID); err == nil && cur.Compare(lastID) > 0 {
+			return sse.ErrInvalidCursor
+		}
+	}
+	return sse.ErrReplayGap
+}
+
+// headTrimmed reports whether entries were trimmed from the head of the
+// stream (MAXLEN), so a full replay is missing its beginning. The producer
+// never deletes single entries, so entries-added > length means a trim.
+// Redis < 7.0 does not report entries-added; the check then passes.
+func (h *Hub) headTrimmed(ctx context.Context, st *stream) (bool, error) {
+	info, err := h.rdb.XInfoStream(ctx, st.key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) || strings.Contains(err.Error(), "no such key") {
+			return false, nil
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, fmt.Errorf("redisbus: stream info %s: %w", st.id, err)
+	}
+	return info.EntriesAdded > info.Length, nil
 }
 
 // catchup reads the next page after cur from Redis. With verify, the page
@@ -392,6 +456,9 @@ func toEntry(m redis.XMessage) (entry, bool) {
 
 // after appends ring entries newer than cur (at most max). Caller holds st.mu.
 func (st *stream) after(cur streamid.ID, dst []entry, maxN int) []entry {
+	if st.n == 0 {
+		return dst
+	}
 	size := len(st.ring)
 	// The ring is sorted by ID: binary-search the first entry after cur.
 	lo, hi := 0, st.n
@@ -409,23 +476,53 @@ func (st *stream) after(cur streamid.ID, dst []entry, maxN int) []entry {
 	return dst
 }
 
-// push appends entries read by the reader and wakes subscribers.
+// entrySize is what an entry counts against RingBytes.
+func entrySize(e entry) int { return len(e.msg.Data) + len(e.msg.Type) + len(e.msg.ID) }
+
+// evict drops the oldest ring entry. Caller holds st.mu.
+func (st *stream) evict() {
+	old := st.ring[st.start]
+	st.base = old.id
+	st.bytes -= entrySize(old)
+	st.ring[st.start] = entry{} // release the payload
+	st.start = (st.start + 1) % len(st.ring)
+	st.n--
+}
+
+// grow enlarges a full ring that is below maxN. Caller holds st.mu.
+func (st *stream) grow() {
+	size := min(max(2*len(st.ring), 8), st.maxN)
+	ring := make([]entry, size)
+	for i := range st.n {
+		ring[i] = st.ring[(st.start+i)%len(st.ring)]
+	}
+	st.ring, st.start = ring, 0
+}
+
+// push appends entries read by the reader and wakes subscribers. The ring
+// keeps at most maxN entries and maxBytes payload bytes; an entry larger
+// than maxBytes on its own is not kept (subscribers read it from Redis).
 func (st *stream) push(es []entry) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	changed := false
-	size := len(st.ring)
 	for _, e := range es {
 		if e.id.Compare(st.last) <= 0 || st.ended {
 			continue
 		}
-		if st.n == size {
-			st.base = st.ring[st.start].id
-			st.ring[st.start] = e
-			st.start = (st.start + 1) % size
+		sz := entrySize(e)
+		for st.n > 0 && (st.n == st.maxN || st.bytes+sz > st.maxBytes) {
+			st.evict()
+		}
+		if sz > st.maxBytes {
+			st.base = e.id // the ring is empty and covers (e, e]
 		} else {
-			st.ring[(st.start+st.n)%size] = e
+			if st.n == len(st.ring) {
+				st.grow()
+			}
+			st.ring[(st.start+st.n)%len(st.ring)] = e
 			st.n++
+			st.bytes += sz
 		}
 		st.last = e.id
 		st.ended = e.end
@@ -450,12 +547,13 @@ func (h *Hub) acquire(ctx context.Context, streamID string) (*stream, error) {
 	st := sh.m[streamID]
 	if st == nil {
 		st = &stream{
-			id:     streamID,
-			key:    h.cfg.Keyspace.Key(streamID),
-			ready:  make(chan struct{}),
-			refs:   1,
-			ring:   make([]entry, h.cfg.RingSize),
-			notify: make(chan struct{}),
+			id:       streamID,
+			key:      h.cfg.Keyspace.Key(streamID),
+			ready:    make(chan struct{}),
+			refs:     1,
+			maxN:     h.cfg.RingSize,
+			maxBytes: h.cfg.RingBytes,
+			notify:   make(chan struct{}),
 		}
 		sh.m[streamID] = st
 		sh.mu.Unlock()
@@ -595,8 +693,15 @@ func (h *Hub) unassign(ctx context.Context, st *stream) {
 	}
 }
 
-// retire stops an empty reader. Caller holds h.gmu.
+// retire stops an empty reader, once. Caller holds h.gmu. A stream that
+// ended leaves its reader while its subscribers still point at it, so a
+// reader can become empty (and be retired) more than once; a second retire
+// must not delete the group that replaced this reader's group.
 func (h *Hub) retire(ctx context.Context, r *reader) {
+	if r.retired {
+		return
+	}
+	r.retired = true
 	g := r.g
 	for i, c := range g.readers {
 		if c == r {
@@ -604,7 +709,7 @@ func (h *Hub) retire(ctx context.Context, r *reader) {
 			break
 		}
 	}
-	if len(g.readers) == 0 {
+	if len(g.readers) == 0 && h.groups[g.bucket] == g {
 		delete(h.groups, g.bucket)
 	}
 	r.stop()

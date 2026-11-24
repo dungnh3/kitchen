@@ -108,8 +108,10 @@ for msg, err := range hub.Subscribe(ctx, runID, lastEventID) { … }
 - **Registration.** The first subscriber of a stream reads the current last ID
   (`XREVRANGE COUNT 1`) and registers the stream with that cursor. The reader
   reads only newer entries; history is read by subscribers themselves.
-- **Per-stream state.** Bounded ring (`RingSize`, 512) of recent entries covering
-  `(base, last]`, plus `ended`, plus a broadcast channel replaced on append.
+- **Per-stream state.** Bounded ring of recent entries covering `(base, last]`
+  (at most `RingSize` 512 entries and `RingBytes` 1 MiB of payload; it grows
+  with traffic, so an idle stream holds none), plus `ended`, plus a broadcast
+  channel replaced on append. An entry larger than `RingBytes` is not kept.
 - **Subscriber (cursor pull).** With cursor `C`: entries in the ring after `C` →
   deliver; `C` older than the ring → `XRANGE` from Redis in pages; `C == last` →
   wait for the broadcast. Delivery is paced by the consumer, so a slow client
@@ -120,7 +122,12 @@ for msg, err := range hub.Subscribe(ctx, runID, lastEventID) { … }
   After a resumed catch-up reaches live, a synthetic `stream.resumed` message
   (no ID) is yielded once.
 - **Late joiner without `Last-Event-ID`:** full replay from the start of the
-  retained stream (bounded by `MaxLen`), identical for every viewer.
+  retained stream (bounded by `MaxLen`), identical for every viewer. When the
+  head was trimmed (`XINFO STREAM` entries-added > length, Redis 7.0+), a
+  synthetic, non-terminal `stream.truncated` comes first (owner, 2026-11-24).
+- **Expired stream on resume:** a cursor newer than this pod's view is checked
+  in Redis; if the entry is gone and the cursor is not beyond the last entry
+  (or the stream no longer exists), it is a replay gap, not a bad cursor.
 - **End:** the sentinel ends the sequence cleanly (nil error); the stream leaves
   its reader. The state is dropped when the last subscriber leaves.
 
@@ -168,8 +175,13 @@ defer srv.Shutdown(ctx)
   services declare their own types (safe default, unknown = hidden).
 - `Encoder` (one per connection) maps a `Message` to wire events and writes the
   terminal events: `stream.done` on clean end (once, even if the writer already
-  sent one), `stream.replay_gap` on gap, `stream.error` on idle timeout, and
-  **nothing** on shutdown, so EventSource reconnects to another pod and resumes.
+  sent one), `stream.replay_gap` on gap, `stream.error` on idle timeout,
+  `stream.cancelled {"reason":"stopped"}` after `ActionStop` (owner,
+  2026-11-24: otherwise EventSource resumes past the stop), and **nothing** on
+  shutdown, so EventSource reconnects to another pod and resumes.
+- `Serve` calls `CheckCursor` also without `Last-Event-ID`, so an invalid
+  stream ID is a 400 before the headers. The heartbeat counts only bytes
+  written: hidden messages do not postpone it.
 - `Admit` uses an atomic global counter plus 64-way sharded per-stream counters;
   tickets release idempotently. `Shutdown(ctx)` refuses new admits, ends active
   `Serve` calls and returns `ctx.Err()` if the drain times out.
@@ -203,9 +215,13 @@ err := r.Run(ctx)
 - Per ordering key (default: the source stream ID) order is preserved within a
   replica: after a failure the key is held (its later entries stay pending), the
   publisher's `ResumePublish` is called, and the pending list is retried in ID
-  order after a jittered backoff. Other keys continue.
-- Pending entries are re-read (`XREADGROUP … 0`) every loop, which also keeps
-  their idle time low; `XAUTOCLAIM` takes over entries idle ≥ `MinIdle` from dead
+  order after a jittered backoff. Other keys continue. New entries of a held
+  key stay pending even after its backoff expires; only a full pass over the
+  pending list (run when a hold expires, or after an ack/claim/dead-letter
+  failure, never in a spin) publishes them, then releases the hold. A missing
+  consumer group (`NOGROUP`) is recreated at `0`.
+- Pending entries are re-read (`XREADGROUP … 0`) when a hold expires and at
+  least every `MinIdle/2` while keys are held, which keeps their idle time low; `XAUTOCLAIM` takes over entries idle ≥ `MinIdle` from dead
   consumers. Poison errors (`Classify`) dead-letter after `PoisonAttempts`;
   entries without `data` and entries older than `MaxAge` whose key is failing are
   dead-lettered at once. `Replay` moves DLQ entries back.

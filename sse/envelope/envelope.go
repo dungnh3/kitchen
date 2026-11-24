@@ -28,8 +28,8 @@ var (
 	ErrUnsupportedSchema = errs.New(codes.InvalidArgument, "SSE_ENVELOPE_UNSUPPORTED_SCHEMA", errs.Message("envelope: unsupported schema version"))
 )
 
-// Envelope wraps an event payload. JSON keys are unchanged from the old
-// kitchen/sse envelope.
+// Envelope wraps an event payload. Its JSON keys are the v1 wire contract
+// shared with browsers and consumers; changing one needs a new SchemaVersion.
 type Envelope struct {
 	SchemaVersion string          `json:"schema_version,omitempty"`
 	EventID       string          `json:"event_id"`            // ULID, required

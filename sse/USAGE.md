@@ -111,13 +111,15 @@ errors.
 | `Encoder` | `sse.NewRawEncoder` | `envelope.NewEncoder`, `aisdk.NewEncoder`, or your own. |
 | `Transforms` | none | Per-connection checks and rewrites. |
 | `Visible` | `sse.DefaultVisible` | `sse.VisibleTypes("run.", "step.", ...)`. |
-| `MaxIdle` | 0 (never) | Ends a silent stream with `stream.error {"type":"idle_timeout"}`. |
+| `MaxIdle` | 0 (never) | Ends a silent stream with `stream.error {"type":"idle_timeout"}`. Set it to the longest silence a healthy writer can have: a writer that crashes before `End` otherwise leaves viewers connected until the stream expires (`ActiveTTL`, 24h). |
 | `FlushInterval` | 0 (flush when idle) | Batches small token writes. |
 
 `redisbus.ProducerConfig`: `Keyspace` (`Prefix` "sse:", `Buckets` 64),
 `MaxLen` 10000, `ActiveTTL` 24h, `DoneTTL` 2m, `MaxPayloadBytes` 1 MiB,
 `Outbox`, `OutboxClient`. `redisbus.HubConfig`: `Keyspace`, `Block` 2s,
-`Count` 256, `MaxKeysPerRead` 512, `RingSize` 512, `CatchupBatch` 256,
+`Count` 256, `MaxKeysPerRead` 512, `RingSize` 512, `RingBytes` 1 MiB (the
+ring grows with traffic and evicts its oldest entries past either cap),
+`CatchupBatch` 256,
 `RetryBackoff` 100ms to `MaxRetryBackoff` 5s, `Logger`. All config structs
 have `json` and `yaml` tags.
 
@@ -180,19 +182,27 @@ if errors.Is(err, sse.ErrInvalidCursor) {
 - A malformed cursor, or one newer than the stream's last entry, returns
   `ErrInvalidCursor` before the headers (`Source.CheckCursor`): answer 400.
   A Redis error from that check is also returned before the headers.
-- When the cursor was trimmed (`MaxLen`) or the stream expired, the client
-  gets `stream.replay_gap` with `{"reason":"cursor_trimmed"}`, and `Serve`
+- When the cursor was trimmed (`MaxLen`) or the stream expired (also when
+  the browser reconnects after `DoneTTL`), the client gets
+  `stream.replay_gap` with `{"reason":"cursor_trimmed"}`, and `Serve`
   returns `ErrReplayGap`. The client must reload the state (for example from
   the database) instead of resuming. The library never resumes silently from
   a later point.
 - When a resumed catch-up reaches the live tail, a synthetic `stream.resumed`
   event (no ID) is sent once.
+- A viewer without `Last-Event-ID` whose stream lost its head to `MaxLen`
+  first gets `stream.truncated` (no ID, not terminal), then the retained
+  entries. Load the missing start from your own store if you need it.
+  Detection needs Redis 7.0+ (`XINFO STREAM` entries-added).
 
 ### Transforms and tenant isolation
 
 A `TransformFactory` builds one `Transform` per connection. It returns
 `ActionPass`, `ActionSkip` (drop for this connection) or `ActionStop` (write
-the message, then end). An error ends the connection. From
+the message, then end with `stream.cancelled {"reason":"stopped"}`; aisdk
+writes `finish`). The browser must close on that event: a reconnect with
+`Last-Event-ID` would resume after the stopping message. An error ends the
+connection. From
 `ExampleTransformFactory`:
 
 ```go
@@ -227,7 +237,10 @@ validator := envelope.ContextValidator(envelope.ValidatorConfig{
 })
 ```
 
-An empty list in `Rule` skips that check. `Rule.Raw` decides what happens to
+An empty list in `Rule` skips that check, but a `Rule` with every list
+empty fails closed: it rejects every envelope (reason `no_rule`), so a
+`Resolve` that found no claims leaks nothing. Set `Rule.AllowAll` for a
+connection that may see every envelope. `Rule.Raw` decides what happens to
 payloads that are not envelopes. The default, `RawRejectTokens`, drops raw
 `stream.token` messages and passes raw lifecycle messages. `RawPass`
 turns the check off for raw payloads: use it only for streams whose writers
@@ -257,7 +270,9 @@ case err != nil:
 ```
 
 `Append` after `End` returns `redisbus.ErrStreamEnded`, so late events are
-not lost silently. `End` is idempotent.
+not lost silently. `End` is idempotent. Make `End` the writer's last step:
+once the stream expires (`DoneTTL`, 2m) an `Append` creates a new stream
+without an end, and its viewers wait until `MaxIdle` or `ActiveTTL`.
 
 ## Backends and adapters
 
@@ -265,10 +280,19 @@ not lost silently. `End` is idempotent.
 
 The `Producer` keeps no per-stream state, so any process may write any
 stream. The `Hub` serves up to `MaxKeysPerRead` streams per `XREAD BLOCK`
-connection and keeps a ring of `RingSize` recent entries per stream. Size the
-`redisx` pool for readers plus catch-up reads: hundreds, not thousands. Any
-consumer can range over a stream with `hub.Subscribe(ctx, id, cursor)` (see
-`ExampleHub_Subscribe`).
+connection and keeps a ring of recent entries per stream (`RingSize`,
+`RingBytes`). Any consumer can range over a stream with
+`hub.Subscribe(ctx, id, cursor)` (see `ExampleHub_Subscribe`).
+
+Sizing the `redisx` pool: each reader holds one connection for up to
+`Block` per read. A pod runs `ceil(streams / MaxKeysPerRead)` readers on
+standalone and Sentinel, and on Cluster at least one per bucket in use (up to
+`Buckets`, spread over the shards). go-redis defaults to 10 × GOMAXPROCS
+connections (5 × per node on Cluster), so set `PoolSize` to the readers per
+node plus headroom for registration and catch-up reads. A smaller pool does
+not lose events, but every command waits up to `Block` for a connection.
+On a laptop Redis 7.2, an append cost 25–40µs and an `XREAD` over ~500
+streams 1.5–4ms of Redis CPU; plan Redis capacity from your token rate.
 
 ### sse/envelope
 
@@ -371,13 +395,15 @@ ack and dead-letter failures.
 | `sse.ErrStreamingUnsupported` | Internal | `SSE_STREAMING_UNSUPPORTED` |
 | `sse.ErrInvalidEvent` | InvalidArgument | `SSE_INVALID_EVENT` |
 | `redisbus.ErrStreamEnded` | FailedPrecondition | `SSE_STREAM_ENDED` |
+| `redisbus.ErrInvalidStreamID` | InvalidArgument / 400 | `SSE_INVALID_STREAM_ID` |
 | `redisbus.ErrInvalidMessage` | InvalidArgument | `SSE_INVALID_MESSAGE` |
 | `redisbus.ErrOutboxDiverged` | Internal | `SSE_OUTBOX_DIVERGED` |
 | `envelope.ErrMissingField` | InvalidArgument | `SSE_ENVELOPE_MISSING_FIELD` |
 | `envelope.ErrUnsupportedSchema` | InvalidArgument | `SSE_ENVELOPE_UNSUPPORTED_SCHEMA` |
 
-`redisbus.ErrInvalidStreamID`, `redisbus.ErrHubClosed` and
-`relay.ErrUnroutable` are plain errors.
+`redisbus.ErrHubClosed` and `relay.ErrUnroutable` are plain errors.
+`Serve` checks the stream ID before the headers too, so a malformed ID
+(braces, control characters) is a 400, not a broken stream.
 
 ## Production checklist
 
@@ -385,7 +411,8 @@ ack and dead-letter failures.
   `MaxLen` and TTLs, never by eviction.
 - Use the same `Keyspace` (prefix and buckets) in writers, gateways and
   relays.
-- Set `MaxConnections` and `MaxConnectionsPerStream`.
+- Set `MaxConnections`, `MaxConnectionsPerStream` and `MaxIdle`.
+- Size the Redis pool for the hub's readers (see `sse/redisbus` above).
 - Install `envelope.ContextValidator` and an explicit `Visible` list.
 - Call `End` after the writer's terminal event, and handle `ErrStreamEnded`.
 - Mount the server on kitchen `server`, so drains move viewers to other pods.

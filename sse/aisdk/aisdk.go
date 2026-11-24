@@ -98,7 +98,7 @@ func (e *Encoder) Encode(dst []sse.Event, m sse.Message) []sse.Event {
 		eventID = env.EventID
 	}
 	switch m.Type {
-	case sse.TypeResumed, sse.TypeReplayGap:
+	case sse.TypeResumed, sse.TypeReplayGap, sse.TypeTruncated:
 		return dst // resume markers have no AI SDK equivalent
 	case sse.TypeStarted:
 		return e.start(dst, m.ID, eventID)

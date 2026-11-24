@@ -207,11 +207,8 @@ func DLQKey(shard string) string { return shard + ":dlq" }
 // In-flight publishes finish (bounded by PublishTimeout) before it returns.
 func (r *Relay) Run(ctx context.Context) error {
 	shards := r.Shards()
-	for _, s := range shards {
-		err := r.rdb.XGroupCreateMkStream(ctx, s, r.cfg.Group, "0").Err()
-		if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
-			return fmt.Errorf("relay: create group on %s: %w", s, err)
-		}
+	if err := r.createGroups(ctx, shards); err != nil {
+		return err
 	}
 	// One loop per slot-compatible partition: every shard on Cluster, all
 	// shards together otherwise.
@@ -231,17 +228,39 @@ func (r *Relay) Run(ctx context.Context) error {
 	return nil
 }
 
+// createGroups creates the consumer group on each shard if it is missing.
+// A new group starts at "0": every retained entry is published (at least
+// once) rather than skipped.
+func (r *Relay) createGroups(ctx context.Context, shards []string) error {
+	for _, s := range shards {
+		err := r.rdb.XGroupCreateMkStream(ctx, s, r.cfg.Group, "0").Err()
+		if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
+			return fmt.Errorf("relay: create group on %s: %w", s, err)
+		}
+	}
+	return nil
+}
+
 type backoffState struct {
 	until    time.Time
 	attempts int
 }
 
+// loop relays one slot-compatible set of shards.
+//
+// Ordering: entries of a key are published in ID order. A key whose publish
+// failed is held (it has a backoff record) and its entries stay in our
+// pending list (PEL). New entries of a held key are left pending too, so
+// only a full pass over the PEL, which sees every pending entry of the key
+// in ID order, retries them. The record is dropped after a full pass in
+// which the key was neither failing nor still held.
 type loop struct {
 	r        *Relay
 	shards   []string
 	backoff  map[string]backoffState // ordering key → hold
 	attempts map[string]int          // entry ID → poison attempts
-	pending  bool                    // our PEL may hold entries to retry
+	dirty    bool                    // the PEL may hold entries of keys without a record
+	lastPass time.Time               // last full pending pass
 	reclaim  time.Time
 	sem      chan struct{}
 }
@@ -249,34 +268,56 @@ type loop struct {
 func newLoop(r *Relay, shards []string) *loop {
 	return &loop{
 		r: r, shards: shards, backoff: map[string]backoffState{}, attempts: map[string]int{},
-		pending: true, sem: make(chan struct{}, r.cfg.MaxInFlight),
+		dirty: true, sem: make(chan struct{}, r.cfg.MaxInFlight),
 	}
+}
+
+// nextPass is when the pending list must be re-read: when the earliest hold
+// expires, or MinIdle/2 after the last pass if that is sooner. Zero when
+// nothing is held.
+func (l *loop) nextPass() time.Time {
+	var next time.Time
+	for _, b := range l.backoff {
+		if next.IsZero() || b.until.Before(next) {
+			next = b.until
+		}
+	}
+	if refresh := l.lastPass.Add(l.r.cfg.MinIdle / 2); !next.IsZero() && refresh.Before(next) {
+		next = refresh
+	}
+	return next
 }
 
 func (l *loop) run(ctx context.Context) {
 	cfg := l.r.cfg
 	errAttempt := 0
 	for ctx.Err() == nil {
-		if now := time.Now(); now.After(l.reclaim) {
+		now := time.Now()
+		if now.After(l.reclaim) {
 			l.reclaim = now.Add(cfg.ReclaimInterval)
 			if l.claim(ctx) {
-				l.pending = true
+				l.dirty = true
 			}
 		}
-		drained := true
-		if l.pending {
-			var err error
-			if drained, err = l.processPending(ctx); err != nil {
+		// Re-read the PEL when a hold expires, and at least every MinIdle/2
+		// while keys are held, so other replicas never see our held entries
+		// as idle and take them over.
+		next := l.nextPass()
+		if l.dirty || (!next.IsZero() && !now.Before(next)) {
+			if err := l.processPending(ctx); err != nil {
 				if !l.readFailed(ctx, err, &errAttempt) {
 					return
 				}
 				continue
 			}
+			next = l.nextPass()
 		}
-		if !drained {
-			continue // finish the pending list before reading new entries
+		// Wake up for the next retry instead of waiting out a full Block.
+		block := cfg.Block
+		if !next.IsZero() {
+			block = min(block, max(time.Until(next), time.Millisecond))
 		}
-		entries, err := l.read(ctx, ">", cfg.Block)
+		entries, err := l.read(ctx, ">", block)
 		if err != nil {
 			if !l.readFailed(ctx, err, &errAttempt) {
 				return
@@ -284,7 +325,7 @@ func (l *loop) run(ctx context.Context) {
 			continue
 		}
 		errAttempt = 0
-		l.process(ctx, entries)
+		l.process(ctx, entries, false)
 	}
 }
 
@@ -292,10 +333,22 @@ func (l *loop) readFailed(ctx context.Context, err error, attempt *int) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	l.r.cfg.Logger.WarnContext(ctx, "relay: read failed", "err", err)
+	if isNoGroup(err) {
+		// The shard or its group was deleted (e.g. a failover without
+		// persistence): recreate it, or the loop stays stuck forever.
+		l.r.cfg.Logger.WarnContext(ctx, "relay: consumer group missing; recreating", "err", err)
+		if cerr := l.r.createGroups(ctx, l.shards); cerr != nil {
+			l.r.cfg.Logger.WarnContext(ctx, "relay: recreate consumer group", "err", cerr)
+		}
+		l.dirty = true
+	} else {
+		l.r.cfg.Logger.WarnContext(ctx, "relay: read failed", "err", err)
+	}
 	*attempt++
 	return sleep(ctx, timex.Backoff(l.r.cfg.RetryBackoff, l.r.cfg.MaxRetryBackoff, *attempt))
 }
+
+func isNoGroup(err error) bool { return err != nil && strings.HasPrefix(err.Error(), "NOGROUP") }
 
 // read reads from every shard of the loop. id is ">" for new entries or an
 // entry ID for this consumer's pending list.
@@ -338,26 +391,25 @@ func toEntry(shard string, m redis.XMessage) Entry {
 	return e
 }
 
-// maxPendingPages bounds one pass over the pending list.
+// maxPendingPages bounds one XAUTOCLAIM pass per shard.
 const maxPendingPages = 100
 
-// processPending re-reads this consumer's pending entries per shard (which
-// also keeps them from looking idle to other consumers) and retries those
-// whose key is not on hold. It reports whether the whole list was read.
-func (l *loop) processPending(ctx context.Context) (bool, error) {
-	l.pending = false
+// processPending re-reads this consumer's whole pending list, shard by
+// shard in ID order (which also keeps its entries from looking idle to
+// other consumers), and retries the entries whose key is not held. After
+// the full pass it drops the records of keys that were neither failing nor
+// held, so their new entries flow again.
+func (l *loop) processPending(ctx context.Context) error {
+	blocked := map[string]bool{}
 	for _, shard := range l.shards {
 		cursor := "0"
-		for page := 0; ; page++ {
-			if page == maxPendingPages {
-				return false, nil
-			}
+		for {
 			res, err := l.r.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 				Group: l.r.cfg.Group, Consumer: l.r.cfg.Consumer,
 				Streams: []string{shard, cursor}, Count: l.r.cfg.Batch, Block: -1,
 			}).Result()
 			if err != nil && !errors.Is(err, redis.Nil) {
-				return false, err
+				return err
 			}
 			var entries []Entry
 			for _, s := range res {
@@ -368,23 +420,34 @@ func (l *loop) processPending(ctx context.Context) (bool, error) {
 			if len(entries) == 0 {
 				break
 			}
-			l.process(ctx, entries)
+			for _, k := range l.process(ctx, entries, true) {
+				blocked[k] = true
+			}
 			cursor = entries[len(entries)-1].ID
 			if int64(len(entries)) < l.r.cfg.Batch {
 				break
 			}
 		}
 	}
-	if len(l.backoff) > 0 {
-		l.pending = true
+	l.dirty = false
+	now := time.Now()
+	l.lastPass = now
+	for k, b := range l.backoff {
+		if !blocked[k] && !now.Before(b.until) {
+			delete(l.backoff, k)
+		}
 	}
-	return true, nil
+	return nil
 }
 
 // process publishes a batch: per ordering key in order, keys in parallel.
-func (l *loop) process(ctx context.Context, entries []Entry) {
+// Entries read as new (fromPEL false) of a key that has a backoff record
+// stay pending: older entries of that key are still in the PEL and only a
+// pending pass publishes them in order. It returns the keys that were held
+// or failed.
+func (l *loop) process(ctx context.Context, entries []Entry, fromPEL bool) (blocked []string) {
 	if len(entries) == 0 {
-		return
+		return nil
 	}
 	type keyed struct {
 		key     string
@@ -423,9 +486,9 @@ func (l *loop) process(ctx context.Context, entries []Entry) {
 		wg     sync.WaitGroup
 	)
 	for _, k := range order {
-		if b, held := l.backoff[k.key]; held && now.Before(b.until) {
-			l.pending = true
-			continue // stays pending; retried in order after the backoff
+		if b, held := l.backoff[k.key]; held && (!fromPEL || now.Before(b.until)) {
+			blocked = append(blocked, k.key)
+			continue // stays pending; retried in order by a pending pass
 		}
 		attempts := make(map[string]int, len(k.entries))
 		for _, e := range k.entries {
@@ -460,11 +523,10 @@ func (l *loop) process(ctx context.Context, entries []Entry) {
 			n := l.backoff[k.key].attempts + 1
 			d := timex.Backoff(l.r.cfg.RetryBackoff, l.r.cfg.MaxRetryBackoff, n)
 			l.backoff[k.key] = backoffState{until: time.Now().Add(d), attempts: n}
-			l.pending = true
-		} else if _, held := l.backoff[k.key]; held && !now.Before(l.backoff[k.key].until) {
-			delete(l.backoff, k.key)
+			blocked = append(blocked, k.key)
 		}
 	}
+	return blocked
 }
 
 // attemptsSet runs on the loop goroutine only.
@@ -534,7 +596,7 @@ func (l *loop) ack(ctx context.Context, acks map[string][]string) {
 		if err := l.r.rdb.XAck(actx, shard, l.r.cfg.Group, ids...).Err(); err != nil {
 			// The entries stay pending and are published again: at least once.
 			l.r.cfg.Logger.WarnContext(ctx, "relay: ack failed", "shard", shard, "n", len(ids), "err", err)
-			l.pending = true
+			l.dirty = true
 		}
 	}
 }
@@ -550,7 +612,7 @@ func (l *loop) deadLetter(ctx context.Context, dl []deadLetter) {
 			l.r.cfg.Group, d.e.ID, d.e.Type, string(d.e.Data), d.e.StreamID, d.reason, d.err).Err()
 		if err != nil {
 			l.r.cfg.Logger.ErrorContext(ctx, "relay: dead-letter failed", "entry", d.e.ID, "err", err)
-			l.pending = true
+			l.dirty = true
 			continue
 		}
 		delete(l.attempts, d.e.ID)

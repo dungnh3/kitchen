@@ -17,7 +17,9 @@ const (
 	EndIdle
 	// EndShutdown means the server is shutting down; the client should reconnect.
 	EndShutdown
-	// EndStopped means a Transform returned ActionStop.
+	// EndStopped means a Transform returned ActionStop. The encoders write a
+	// terminal event so the browser does not reconnect and resume past the
+	// message that stopped the stream.
 	EndStopped
 )
 
@@ -57,7 +59,9 @@ type EncoderFactory func() Encoder
 //   - EndDone: "stream.done" unless the stream already carried one;
 //   - EndGap: "stream.replay_gap" with {"reason":"cursor_trimmed"};
 //   - EndIdle: "stream.error" with {"type":"idle_timeout"};
-//   - EndShutdown, EndStopped: nothing (the browser reconnects and resumes).
+//   - EndStopped: "stream.cancelled" with {"reason":"stopped"}, so the
+//     browser closes instead of resuming after the stopping message;
+//   - EndShutdown: nothing (the browser reconnects and resumes).
 type RawEncoder struct{ sawDone bool }
 
 // NewRawEncoder is an EncoderFactory for RawEncoder.
@@ -91,7 +95,9 @@ func AppendEndEvents(dst []Event, reason EndReason, sawDone bool) []Event {
 		dst = append(dst, Event{Type: TypeReplayGap, Data: []byte(`{"reason":"cursor_trimmed"}`)})
 	case EndIdle:
 		dst = append(dst, Event{Type: TypeError, Data: []byte(`{"type":"idle_timeout"}`)})
-	case EndShutdown, EndStopped:
+	case EndStopped:
+		dst = append(dst, Event{Type: TypeCancelled, Data: []byte(`{"reason":"stopped"}`)})
+	case EndShutdown:
 	}
 	return dst
 }
@@ -112,7 +118,10 @@ const (
 	// ActionSkip drops the message for this connection only.
 	ActionSkip
 	// ActionStop writes the (possibly rewritten) message, then ends the
-	// connection with EndStopped. Use it for e.g. "safety.blocked".
+	// connection with EndStopped (raw and envelope encoders write
+	// "stream.cancelled"; aisdk writes finish). Use it for e.g.
+	// "safety.blocked". Clients must close on that terminal event: a client
+	// that reconnects with Last-Event-ID resumes after the stopping message.
 	ActionStop
 )
 

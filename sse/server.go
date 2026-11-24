@@ -71,6 +71,7 @@ type Server struct {
 	log     *log.Logger
 	adm     *admission
 	met     serverMetrics
+	mu      sync.Mutex // orders wg.Add in Serve before wg.Wait in Shutdown
 	wg      sync.WaitGroup
 	closed  atomic.Bool
 	stop    chan struct{}
@@ -142,18 +143,21 @@ func (s *Server) Serve(w http.ResponseWriter, r *http.Request, streamID string, 
 		return fmt.Errorf("sse: ticket for stream %q used for %q", t.streamID, streamID)
 	}
 	defer t.Release()
+	s.mu.Lock()
 	if s.closed.Load() {
+		s.mu.Unlock()
 		return ErrServerClosed
 	}
+	s.wg.Add(1)
+	s.mu.Unlock()
+	defer s.wg.Done()
 
 	cursor := opts.LastEventID
 	if cursor == "" {
 		cursor = r.Header.Get("Last-Event-ID")
 	}
-	if cursor != "" {
-		if err := s.src.CheckCursor(r.Context(), streamID, cursor); err != nil {
-			return err
-		}
+	if err := s.src.CheckCursor(r.Context(), streamID, cursor); err != nil {
+		return err
 	}
 	newEnc := opts.Encoder
 	if newEnc == nil {
@@ -171,8 +175,6 @@ func (s *Server) Serve(w http.ResponseWriter, r *http.Request, streamID string, 
 		return ErrStreamingUnsupported
 	}
 
-	s.wg.Add(1)
-	defer s.wg.Done()
 	ctx := r.Context()
 	s.met.conns.Add(ctx, 1)
 	defer s.met.conns.Add(context.WithoutCancel(ctx), -1)
@@ -204,7 +206,9 @@ func draining(ctx context.Context) bool {
 // ErrServerClosed without a terminal event, so clients reconnect elsewhere)
 // and waits for them. It returns ctx.Err() if the wait is cut short.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
 	s.closed.Store(true)
+	s.mu.Unlock()
 	s.stopOne.Do(func() { close(s.stop) })
 	done := make(chan struct{})
 	go func() { s.wg.Wait(); close(done) }()
@@ -285,6 +289,7 @@ func (c *conn) run(reqCtx context.Context, streamID, cursor string) error {
 			if end {
 				c.events = c.enc.End(c.events, reason)
 			}
+			wrote := len(c.events) > 0
 			if werr := c.flushEvents(ctx, !end && err == nil && flush != nil); werr != nil {
 				return c.writeFailed(ctx, werr)
 			}
@@ -294,7 +299,11 @@ func (c *conn) run(reqCtx context.Context, streamID, cursor string) error {
 			if c.pending && flush != nil {
 				flush.Reset(c.opts.FlushInterval)
 			}
-			heartbeat.Reset(c.s.cfg.Heartbeat)
+			if wrote {
+				// Only bytes on the wire keep proxies from closing an idle
+				// connection; hidden or skipped messages do not.
+				heartbeat.Reset(c.s.cfg.Heartbeat)
+			}
 		case <-flushC:
 			if c.pending {
 				if err := c.doFlush(); err != nil {

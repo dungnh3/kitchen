@@ -20,6 +20,7 @@ const (
 	TypeCancelled = "stream.cancelled"  // cancelled before completion
 	TypeResumed   = "stream.resumed"    // synthetic: resume catch-up reached live
 	TypeReplayGap = "stream.replay_gap" // synthetic: the resume cursor was trimmed
+	TypeTruncated = "stream.truncated"  // synthetic: a full replay is missing its trimmed head
 )
 
 // Message is one entry of a logical stream.
@@ -36,16 +37,19 @@ type Message struct {
 // Source delivers the messages of a stream. redisbus.Hub implements it.
 type Source interface {
 	// Subscribe yields the messages after cursor (all retained messages when
-	// cursor is ""), then live messages, until the stream ends (the sequence
-	// finishes with no error) or ctx is done. It yields ErrReplayGap when the
+	// cursor is "", preceded by a TypeTruncated message when the stream's
+	// head was trimmed), then live messages, until the stream ends (the
+	// sequence finishes with no error) or ctx is done. It yields ErrReplayGap when the
 	// cursor is no longer retained and ErrInvalidCursor for a malformed or
 	// future cursor; both are terminal. Serve calls CheckCursor first, so a
 	// bad cursor is normally refused before the response is committed.
 	Subscribe(ctx context.Context, streamID, cursor string) iter.Seq2[Message, error]
-	// CheckCursor reports whether cursor may resume streamID: nil, or
+	// CheckCursor reports whether streamID may be served from cursor: nil,
+	// an InvalidArgument error for a malformed stream ID, or
 	// ErrInvalidCursor for a malformed cursor or one newer than the stream.
 	// A cursor that is merely too old passes; Subscribe reports the gap.
-	// Serve calls it before writing headers.
+	// Serve calls it before writing headers, also with cursor "" (no
+	// Last-Event-ID) so a bad stream ID is refused with a 400.
 	CheckCursor(ctx context.Context, streamID, cursor string) error
 }
 
@@ -63,7 +67,7 @@ var (
 // until the service declares them, so internal events never leak by accident.
 func DefaultVisible(eventType string) bool {
 	switch eventType {
-	case TypeStarted, TypeToken, TypeDone, TypeError, TypeCancelled, TypeResumed, TypeReplayGap:
+	case TypeStarted, TypeToken, TypeDone, TypeError, TypeCancelled, TypeResumed, TypeReplayGap, TypeTruncated:
 		return true
 	}
 	return false

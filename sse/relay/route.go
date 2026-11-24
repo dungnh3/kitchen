@@ -9,7 +9,8 @@ import (
 	"github.com/dungnh3/kitchen/pubsub"
 )
 
-// Attribute keys set by EnvelopeRoute (unchanged from the old outbox).
+// Attribute keys set by EnvelopeRoute. Consumers of the topic read them, so
+// they are part of the relay's wire contract.
 const (
 	AttrSource      = "source"
 	AttrTenantID    = "tenant_id"

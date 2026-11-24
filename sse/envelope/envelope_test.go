@@ -117,6 +117,10 @@ func TestContextValidator(t *testing.T) {
 		{envelope.Rule{SessionIDs: []string{"other"}}, tok("u1"), sse.ActionSkip},
 		{envelope.Rule{TenantIDs: []string{"t9"}}, tok("u1"), sse.ActionSkip},
 		{envelope.Rule{AppIDs: []string{"app"}}, tok("u1"), sse.ActionPass},
+		{envelope.Rule{}, tok("u1"), sse.ActionSkip}, // no rule: fail closed
+		{envelope.Rule{AllowAll: true}, tok("u1"), sse.ActionPass},
+		{envelope.Rule{AllowAll: true, UserIDs: []string{"u1"}}, tok("u2"), sse.ActionSkip},
+		{envelope.Rule{AllowAll: true}, wrongType, sse.ActionSkip},
 		{envelope.Rule{}, wrongType, sse.ActionSkip},
 		{envelope.Rule{}, raw(sse.TypeToken), sse.ActionSkip}, // secure default
 		{envelope.Rule{}, raw("presentation.slide"), sse.ActionPass},

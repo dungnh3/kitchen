@@ -193,6 +193,39 @@ Each item below was a defect or a risky behaviour in the old module
     types to AI SDK parts (reasoning, tool calls, steps); unmapped types stay
     `data-<type>`.
 
+28. **Deep review (2026-11-24): wire and contract changes.** Clients and
+    gateways built on an earlier kitchen `sse` must check these:
+    - `ActionStop` now ends the stream with `stream.cancelled`
+      `{"reason":"stopped"}` (raw and envelope encoders; aisdk already wrote
+      `finish` + `[DONE]`). Before, nothing was written and EventSource
+      reconnected and resumed after the stopping message. Clients must close
+      on `stream.cancelled`.
+    - New synthetic, non-terminal `stream.truncated` (no ID, visible by
+      default, skipped by aisdk): sent first to a viewer without
+      `Last-Event-ID` when the stream's head was trimmed by `MaxLen`. Needs
+      Redis 7.0+ to detect.
+    - A resume after the stream expired is `stream.replay_gap` (was
+      `INVALID_LAST_EVENT_ID` after the headers, which ended the response
+      without a terminal event and made EventSource reconnect forever).
+    - `redisbus.ErrInvalidStreamID` is an errs error, InvalidArgument / 400,
+      reason `SSE_INVALID_STREAM_ID` (was a plain error, 500). `Serve` calls
+      `Source.CheckCursor` also when there is no `Last-Event-ID` (cursor
+      `""`), so a bad stream ID is refused before the headers. Custom
+      sources must accept `""`.
+    - `envelope.Rule` with every list empty now rejects every envelope
+      (reason `no_rule`, fail closed). Set `Rule.AllowAll: true` where a
+      connection may see everything.
+    - The heartbeat is no longer postponed by hidden or skipped messages.
+    - `redisbus.HubConfig.RingBytes` (default 1 MiB) caps a stream's ring by
+      payload size; the ring also grows with traffic instead of being
+      allocated at `RingSize` up front.
+    - Relay: new entries of a held key wait for the key's pending entries
+      (per-key order held across backoff expiry); the pending list is read
+      in full, only when a hold expires or after an ack/claim/dead-letter
+      failure, so one failing key with a long pending list no longer stops
+      every other key and shard; a missing consumer group (`NOGROUP`) is
+      recreated at `0` (at-least-once re-publish of the retained shard).
+
 ## 4. Config keys
 
 | Old YAML | New |
