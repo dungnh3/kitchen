@@ -4,7 +4,9 @@
 templates:
 
 - `kitchen new service`: a gRPC + REST (grpc-gateway) service, with
-  PostgreSQL or without a database.
+  PostgreSQL or without a database, and optional Redis, events (Pub/Sub,
+  Kafka or SQS), a transactional outbox and leader-elected jobs in a
+  worker.
 - `kitchen new mcp`: an MCP server that speaks Streamable HTTP and stdio.
 
 The output already follows the kitchen rules: `log.Setup` in `main`, the
@@ -30,10 +32,20 @@ A service with PostgreSQL (the default):
 ```bash
 kitchen new service -module github.com/acme/orders
 cd orders
-make db-up        # local Postgres in Docker
+make up           # local Postgres in Docker (compose.yaml)
 make run          # gRPC on :10000, REST on :8080, auth disabled
 make test
 curl -s localhost:8080/v1/items
+```
+
+A service with events, a transactional outbox and periodic jobs:
+
+```bash
+kitchen new service -module github.com/acme/billing -with pubsub,outbox,lease -pubsub gcp
+cd billing
+make up           # Postgres, Redis and the Pub/Sub emulator, with the topic and subscription
+make run          # the API; creating an item writes an ItemCreated event to the outbox
+make run-worker   # the worker: relays the outbox, consumes the events, runs the jobs
 ```
 
 An MCP server:
@@ -63,9 +75,11 @@ What the defaults give you:
 ### Interactive prompts
 
 With a terminal on stdin, no `-module` and no `-yes`, the CLI asks for the
-values with a form: module path, name, description, database (`service`
-only) and CI workflow. It asks for the reusable workflow only when you pick
-"Reusable workflow pinned to a commit". Run `kitchen new service` or
+values with a form: module path, name, description, database, optional
+features and message broker (`service` only), and CI workflow. It asks for
+the broker only when you pick `pubsub`, and for the reusable workflow only
+when you pick "Reusable workflow pinned to a commit". The form refuses
+`outbox` without PostgreSQL and `pubsub`. Run `kitchen new service` or
 `kitchen new mcp` with no flags to get the form.
 
 Without a terminal, or with `-yes`, it uses flags only and fails on
@@ -94,6 +108,21 @@ Run `kitchen new service -h` or `kitchen new mcp -h` for the same list.
 |---|---|---|
 | `-db` | `postgres` | `none` for a service without a database. It uses an in-memory store and drops `migrations/`, `sqlc.yaml`, `internal/app/migrate.go` and `internal/store/pgstore/` |
 | `-no-generate` | `false` | Skip `go mod tidy` and `buf generate`, for example offline or in a sandbox. The CLI prints the steps to run by hand |
+| `-with` | | Comma-separated optional features, see below |
+| `-pubsub` | `gcp` | Message broker with `-with pubsub`: `gcp` (Google Cloud Pub/Sub), `kafka` or `sqs`. Refused without `-with pubsub` |
+
+Each `-with` feature wires one kitchen package, with its configuration,
+readiness check, local container in `compose.yaml` and tests:
+
+| Feature | Package | What it adds |
+|---|---|---|
+| `redis` | `redisx`, `ratelimit/redis` | A Redis client (TLS by default) with a readiness check; rate limits shared by every instance |
+| `lease` | `lease`, `lease/redis` | Periodic jobs in the worker (`internal/job`), each on one replica at a time. Adds `redis` |
+| `pubsub` | `pubsub` and the broker adapter | An `ItemCreated` event per new item (`internal/events`), a consumer in the worker (`internal/consumer`) |
+| `outbox` | `pubsub/outbox/pgx` | The event is written in the item's transaction and the worker relays it. Needs `-db postgres` and `pubsub` |
+
+With `pubsub` or `lease` the binary gets a `worker` command (`server
+worker`): deploy it from the same image as a second Deployment.
 
 What `-name` controls in a service: the proto package (dashes become
 underscores, so `edge-gw` gives `proto/edge_gw/v1/`), the telemetry service
@@ -115,6 +144,9 @@ telemetry service name.
 # No database, custom name and directory.
 kitchen new service -module example.com/team/edge-gateway -name edge-gw -dir ./edge -db none -yes
 
+# Kafka events without a database, plus periodic jobs.
+kitchen new service -module example.com/team/notify -db none -with pubsub,lease -pubsub kafka -yes
+
 # Reusable CI workflow pinned to a commit.
 kitchen new mcp -module example.com/team/mcp-tickets -name tickets \
   -ci reusable -ci-workflow acme/devops-workflows/.github/workflows/go.yml@0123456789abcdef0123456789abcdef01234567 -yes
@@ -124,26 +156,33 @@ kitchen new mcp -module example.com/team/mcp-tickets -name tickets \
 
 ### `kitchen new service`
 
-The exact tree is in
-[testdata/golden/service-postgres](testdata/golden/service-postgres) and
-[testdata/golden/service-nodb](testdata/golden/service-nodb).
+The exact trees are in [testdata/golden](testdata/golden):
+`service-postgres` and `service-nodb` (no features), `service-events`
+(Postgres, `lease,pubsub,outbox`, Pub/Sub), `service-kafka` (no database,
+`pubsub`, Kafka) and `service-sqs` (Postgres, `redis,pubsub`, SQS).
 
 | Path | What |
 |---|---|
 | `proto/<name>/v1/item_service.proto` | The API: an AIP CRUD example (Get, List, Create, Delete), protovalidate rules, REST mapping |
 | `gen/` | Generated by `make generate` (pb, grpc, gateway, OpenAPI in `gen/openapi/`); committed |
-| `cmd/server/main.go` | `log.Setup`, config, `serve` or `migrate up\|down\|status` |
-| `internal/config/` | Environment config (caarlos0/env); `ValidateServer` enforces auth |
-| `internal/app/app.go` | Wiring: telemetry, database, i18n + errs, rate limits, auth, admin port, server |
+| `cmd/server/main.go` | `log.Setup`, config, then `serve`, `worker` (with `pubsub` or `lease`) or `migrate up\|down\|status` |
+| `internal/config/` | Environment config (caarlos0/env); `ValidateServer` enforces auth and the settings of each dependency |
+| `internal/app/deps.go` | Opens and closes what the server and the worker share: telemetry, database, Redis, broker; readiness checks |
+| `internal/app/app.go` | Wiring of `serve`: i18n + errs, rate limits, auth, admin port, server |
+| `internal/app/worker.go` | Wiring of `worker`: consumers, outbox relay, jobs, admin port (with `pubsub` or `lease`) |
+| `internal/app/redis.go`, `broker.go` | `redisx.Open`; the broker client handed to the kitchen adapter (with `redis`, `pubsub`) |
+| `internal/events/`, `internal/consumer/`, `internal/job/` | Events and their handlers (`pubsub`), periodic jobs (`lease`) |
 | `internal/app/migrate.go` | goose migrations through kitchen `migrate`, with an advisory lock |
 | `internal/app/app_test.go` | Integration test of the whole service on random ports (Postgres via testcontainers) |
 | `internal/service/` | `ItemService` over `store.Store`, with opaque page tokens; unit tests |
 | `internal/store/` | `Store` interface, `memstore`, and `pgstore` with `queries.sql` and sqlc output (`sqlcdb`, committed) |
-| `migrations/` | goose SQL, embedded in the binary |
+| `migrations/` | goose SQL, embedded in the binary; `00002_create_outbox.sql` with `outbox` |
+| `compose.yaml` | Local Postgres, Redis and broker (emulator) for `make up` |
+| `docs/ENV.md` | Every environment variable and what production needs |
 | `buf.yaml`, `buf.lock`, `buf.gen.yaml`, `sqlc.yaml` | Code generation; protoc plugins are `tool` deps in `go.mod` |
 | `Dockerfile`, `Makefile`, `.golangci.yml`, `.github/` | Build, tasks, lint rules, CI and a PR template |
 
-The generated `README.md` lists every environment variable with its
+The generated `docs/ENV.md` lists every environment variable with its
 default. Read it first; this file does not repeat it.
 
 ### `kitchen new mcp`
@@ -188,6 +227,19 @@ files rather than copies here:
 - **Database.** The service opens Postgres with `pg.Open` (TLS required
   unless the URL sets `sslmode`, UTC session time zone) and maps errors
   with `pg.MapError`.
+- **Redis.** `redisx.Open` with TLS unless `REDIS_TLS=false`; the client
+  backs the shared rate limits (`ratelimit/redis`) and the job leases
+  (`lease/redis`). See [redisx](../../redisx) and [lease](../../lease).
+- **Events.** The service publishes through a `pubsub.Publisher` from the
+  broker adapter (`pubsub/gcp`, `pubsub/kafka`, `pubsub/sqs`). Without
+  `outbox` it publishes after the item is stored and logs a failed publish;
+  with `outbox` it writes the event in the item's transaction
+  (`outboxpgx.Store.Enqueue`) and the worker relays it. The worker consumes
+  with `pubsub.NewSubscriber` and a `pubsub.JSON` handler; on Kafka a poison
+  message goes to a dead-letter topic after `PUBSUB_MAX_DELIVERY_ATTEMPTS`.
+  See [pubsub/USAGE.md](../../pubsub/USAGE.md).
+- **Jobs.** Each job runs under its own `lease.Elector`, so one replica
+  runs it at a time; a run is cancelled when the lease is lost.
 - **Lint.** `.golangci.yml` mirrors the repo's D5/D7 rules with depguard,
   forbidigo and sloglint. It denies `log/slog`, raw Redis, SQL and HTTP
   clients, `http.Server`, `status.New`, OTel SDK setup and so on. Tests may
@@ -213,6 +265,27 @@ they are stale. A new gRPC service type is registered in
 ```go
 server.WithServices(service.New(st)),
 ```
+
+### Add a consumer or a job
+
+A consumer is a `pubsub.Handler`, usually `pubsub.JSON` over an event type
+from `internal/events`. Subscribe it in `RunWorker` like the `ItemCreated`
+one, with its own topic and subscription settings in `config.PubSub`.
+Handlers must be idempotent: return `nil` to ack, an error to retry and
+`pubsub.Permanent(err)` to dead-letter.
+
+A job is a `job.Job{Name, Every, Run}` in `jobs` in
+`internal/app/worker.go`. Keep `Name` stable (it names the lease) and stop
+the run when its context is cancelled.
+
+### Run the dependencies locally
+
+`make up` starts `compose.yaml` and waits for it: Postgres, Redis and the
+broker of `-pubsub` (Pub/Sub emulator, Kafka, or an SQS-compatible queue
+server). It also creates the topic and subscription (Pub/Sub), the topics
+(Kafka) or the queue (SQS). `make run` and `make run-worker` point the
+service at them; `make down` stops them. Production creates topics,
+subscriptions and queues with its infrastructure tool, never the service.
 
 ### Add a tool to an MCP server
 
@@ -241,7 +314,8 @@ make migrate-status
 ```
 
 `make run` sets `DB_MIGRATE_ON_START=true`. In production keep it `false`
-and run `server migrate up` as a separate step. Add a migration with
+and run `server migrate up` as a separate step. The worker never migrates:
+start it after the migrations. Add a migration with
 `goose create <name> sql` or by hand as `NNNNN_name.sql` in `migrations/`.
 
 ### Add a database to a `-db none` service
@@ -313,6 +387,9 @@ The generated projects:
 - `make test` runs `go test -race -count=1 ./...`.
 - The service's integration test starts the whole service on random ports
   and, with Postgres, a database through testcontainers. It needs Docker.
+  With a worker it also runs the worker; Redis is miniredis and the broker
+  is the in-memory `pubsub/memory`, so it checks that creating an item
+  publishes its event (through the outbox with `outbox`).
 - `memstore` is the fake for `store.Store`; there are no mocks to generate.
 - Config tests cover the environment parsing and validation.
 - Lint: `make lint` runs golangci-lint v2.15.0 with `go run` in both
@@ -326,9 +403,10 @@ go test -short ./...     # skip the builds of generated projects (no network)
 go test ./... -update    # rewrite testdata/golden after a template change
 ```
 
-The build tests generate every variant, build, vet, test and lint them.
-They need the network and, for the service, Docker. Review a golden diff
-the way you would review real code.
+The build tests generate every golden variant, build, vet, test and lint
+them. They need the network and, for the service, Docker. A matrix test
+renders every valid combination of `-db`, `-with` and `-pubsub` and checks
+the file set. Review a golden diff the way you would review real code.
 
 ## Production checklist
 
@@ -339,8 +417,14 @@ the way you would review real code.
 - Use a TLS `DB_URL`; `sslmode=disable` is for the local database only.
 - Run `server migrate up` as a deploy step; keep `DB_MIGRATE_ON_START=false`.
 - Set `TRUSTED_PROXIES` to the CIDRs of your load balancer, so rate limits
-  see the real client IP. For several instances, pass a Redis store
-  (`ratelimit/redis`) as `ratelimit.Config.Store`.
+  see the real client IP. For several instances, generate with
+  `-with redis` (or pass a `ratelimit/redis` store as
+  `ratelimit.Config.Store`).
+- Deploy `server worker` as its own Deployment with `ADMIN_ADDR` set, and
+  point its probes at the admin port.
+- Create topics, subscriptions and queues (with their dead-letter
+  policies) with your infrastructure tool; follow the Production section of
+  the generated `docs/ENV.md`.
 - Keep `ADMIN_ADDR` private, and point the probes at `/livez` and `/readyz`.
 - For an MCP server over HTTP, set `MCP_RESOURCE_URL` and
   `MCP_AUTH_SERVERS`, and list browser origins in `MCP_ALLOWED_ORIGINS`.

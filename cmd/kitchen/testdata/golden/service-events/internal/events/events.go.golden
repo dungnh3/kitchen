@@ -1,0 +1,29 @@
+// Package events defines the events that the service publishes and the
+// worker consumes.
+package events
+
+import (
+	"time"
+
+	"github.com/dungnh3/kitchen/pubsub"
+
+	"github.com/acme/billing/internal/store"
+)
+
+// ItemCreated is published when an item is created.
+type ItemCreated struct {
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	CreateTime time.Time `json:"create_time"`
+}
+
+// NewItemCreated returns the message of an ItemCreated event. Its key is the
+// item ID, so the events of one item are handled in order.
+func NewItemCreated(it store.Item) (*pubsub.Message, error) {
+	m, err := pubsub.NewJSON(ItemCreated{ID: it.ID, Title: it.Title, CreateTime: it.CreateTime})
+	if err != nil {
+		return nil, err
+	}
+	m.Key = it.ID
+	return m, nil
+}

@@ -1,0 +1,42 @@
+# Local dependencies for "make run"{% if .Worker %} and "make run-worker"{% end %}. Start them with
+# "make up" and stop them with "make down". Not for production.
+services:
+{%- if .Postgres %}
+  postgres:
+    image: {% .Images.Postgres %}
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "app"]
+      interval: 2s
+      retries: 30
+{%- end %}
+{%- if .Redis %}
+  redis:
+    image: {% .Images.Redis %}
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+{%- end %}
+{%- if .GCP %}
+  pubsub:
+    image: {% .Images.PubSubEmulator %}
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=local
+    ports: ["8085:8085"]
+{%- else if .Kafka %}
+  kafka:
+    # One KRaft node that advertises localhost:9092; "make up" creates the
+    # topics.
+    image: {% .Images.Kafka %}
+    ports: ["9092:9092"]
+{%- else if .SQS %}
+  sqs:
+    # An SQS-compatible queue server.
+    image: {% .Images.SQS %}
+    ports: ["9324:9324"]
+{%- end %}

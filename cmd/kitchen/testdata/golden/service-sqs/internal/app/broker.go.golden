@@ -1,0 +1,47 @@
+package app
+
+import (
+	"context"
+
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+	"github.com/dungnh3/kitchen/pubsub/sqs"
+
+	"github.com/acme/catalog/internal/config"
+)
+
+// Broker publishes events and opens the sources that the worker consumes.
+type Broker interface {
+	pubsub.Publisher
+	// Source returns the source of a subscription to topic.
+	Source(topic, subscription string) (pubsub.Source, error)
+}
+
+// sqsBroker is a Broker on Amazon SQS. Topics are queue URLs.
+type sqsBroker struct {
+	*sqs.Publisher
+	client *awssqs.Client
+	logger *log.Logger
+}
+
+// openBroker creates an SQS client from the standard AWS configuration
+// (AWS_REGION, credentials, AWS_ENDPOINT_URL_SQS for a local queue).
+func openBroker(ctx context.Context, _ config.PubSub, logger *log.Logger) (Broker, error) {
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	client := awssqs.NewFromConfig(awsCfg)
+	pub, err := sqs.NewPublisher(client)
+	if err != nil {
+		return nil, err
+	}
+	return &sqsBroker{Publisher: pub, client: client, logger: logger}, nil
+}
+
+// Source implements Broker: the worker reads the queue topic itself.
+func (b *sqsBroker) Source(topic, _ string) (pubsub.Source, error) {
+	return sqs.NewSource(b.client, topic, sqs.WithSourceLogger(b.logger))
+}

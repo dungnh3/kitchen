@@ -1,0 +1,38 @@
+// Package consumer handles the events that the worker consumes.
+//
+// Every broker delivers at least once, so handlers must be idempotent. The
+// handler's result settles the message: nil acks it, an error retries it,
+// and pubsub.Permanent(err) dead-letters a message that can never succeed.
+package consumer
+
+import (
+	"context"
+	"errors"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+
+	"github.com/acme/catalog/internal/events"
+)
+
+// Items handles ItemCreated events.
+type Items struct {
+	logger *log.Logger
+}
+
+// NewItems returns an Items handler. logger nil means log.Default().
+func NewItems(logger *log.Logger) *Items {
+	return &Items{logger: log.OrDefault(logger)}
+}
+
+// Handler returns the handler to subscribe. A message that is not an
+// ItemCreated JSON document is dead-lettered.
+func (h *Items) Handler() pubsub.Handler { return pubsub.JSON(h.created) }
+
+func (h *Items) created(ctx context.Context, ev events.ItemCreated, _ *pubsub.Message) error {
+	if ev.ID == "" {
+		return pubsub.Permanent(errors.New("ItemCreated event without id"))
+	}
+	h.logger.InfoContext(ctx, "item created", log.String("item_id", ev.ID))
+	return nil
+}

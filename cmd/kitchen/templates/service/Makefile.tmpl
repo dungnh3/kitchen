@@ -12,10 +12,22 @@ GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{
 
 DB_URL ?= postgres://app:app@localhost:5432/app?sslmode=disable
 {%- end %}
-# Local runs: no auth, readable logs.
+# Local runs: no auth, readable logs{% if .Compose %}, the dependencies of compose.yaml{% end %}.
 LOCAL_ENV := AUTH_DISABLED=true LOG_FORMAT=text{% if .Postgres %} DB_URL="$(DB_URL)"{% end %}
+{%- if .Redis %}
+LOCAL_ENV += REDIS_ADDRS=localhost:6379 REDIS_TLS=false
+{%- end %}
+{%- if .GCP %}
+LOCAL_ENV += PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT=local PUBSUB_MAX_DELIVERY_ATTEMPTS=0
+{%- else if .Kafka %}
+LOCAL_ENV += PUBSUB_BROKERS=localhost:9092 PUBSUB_TLS=false
+{%- else if .SQS %}
+SQS_QUEUE ?= {% .Name %}-items
+LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
+	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=http://localhost:9324/000000000000/$(SQS_QUEUE)
+{%- end %}
 
-.PHONY: generate build test lint breaking run tidy docker{% if .Postgres %} migrate-up migrate-down migrate-status db-up db-down{% end %}
+.PHONY: generate build test lint breaking run tidy docker{% if .Worker %} run-worker{% end %}{% if .Compose %} up down{% end %}{% if .Postgres %} migrate-up migrate-down migrate-status{% end %}
 
 # Regenerate gen/ from proto/{% if .Postgres %} and internal/store/pgstore/sqlcdb from the SQL{% end %}.
 # The generated code is committed; CI fails if it is stale.
@@ -46,19 +58,41 @@ tidy:
 	go mod tidy
 
 run:
-	$(LOCAL_ENV){% if .Postgres %} DB_MIGRATE_ON_START=true{% end %} go run ./cmd/server
+	$(LOCAL_ENV){% if .Postgres %} DB_MIGRATE_ON_START=true{% end %} go run ./cmd/server serve
+{%- if .Worker %}
+
+run-worker:
+	$(LOCAL_ENV) go run ./cmd/server worker
+{%- end %}
 {%- if .Postgres %}
 
 migrate-up migrate-down migrate-status:
 	$(LOCAL_ENV) go run ./cmd/server migrate $(@:migrate-%=%)
+{%- end %}
+{%- if .Compose %}
 
-# A disposable local Postgres matching DB_URL.
-db-up:
-	docker run --rm -d --name $(IMAGE)-postgres -p 5432:5432 \
-		-e POSTGRES_USER=app -e POSTGRES_PASSWORD=app -e POSTGRES_DB=app {% .PostgresImage %}
+# Start the local dependencies of compose.yaml{% if .GCP %} and create the topic and
+# subscription in the emulator{% else if .Kafka %} and create the topics{% else if .SQS %} and create the queue{% end %}.
+up:
+	docker compose up -d --wait
+{%- if .GCP %}
+	curl -sf --retry 30 --retry-connrefused --retry-delay 1 -X PUT \
+		http://localhost:8085/v1/projects/local/topics/{% .Name %}-items >/dev/null
+	curl -sf -X PUT -H 'Content-Type: application/json' \
+		-d '{"topic":"projects/local/topics/{% .Name %}-items","enableMessageOrdering":true}' \
+		http://localhost:8085/v1/projects/local/subscriptions/{% .Name %}-items-worker >/dev/null
+{%- else if .Kafka %}
+	for t in {% .Name %}-items {% .Name %}-items.dlq; do \
+		docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+			--create --if-not-exists --topic $$t >/dev/null || exit 1; \
+	done
+{%- else if .SQS %}
+	curl -sf --retry 30 --retry-connrefused --retry-delay 1 \
+		'http://localhost:9324/?Action=CreateQueue&QueueName=$(SQS_QUEUE)' >/dev/null
+{%- end %}
 
-db-down:
-	docker stop $(IMAGE)-postgres
+down:
+	docker compose down
 {%- end %}
 
 docker:

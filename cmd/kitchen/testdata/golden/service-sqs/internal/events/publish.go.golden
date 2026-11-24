@@ -1,0 +1,48 @@
+package events
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+
+	"github.com/acme/catalog/internal/store"
+)
+
+// Store is a store.Store that publishes an ItemCreated event after each
+// item it creates.
+//
+// The event is published after the item is stored, outside any
+// transaction. If publishing fails, the item exists but the event is lost
+// and only logged. When every event must be delivered, write it in the
+// same transaction as the data with the transactional outbox
+// (github.com/dungnh3/kitchen/pubsub/outbox/pgx).
+type Store struct {
+	store.Store
+	pub    pubsub.Publisher
+	topic  string
+	logger *log.Logger
+}
+
+// NewStore returns a Store that keeps items in s and publishes events to
+// topic. logger nil means log.Default().
+func NewStore(s store.Store, pub pubsub.Publisher, topic string, logger *log.Logger) *Store {
+	return &Store{Store: s, pub: pub, topic: topic, logger: log.OrDefault(logger)}
+}
+
+// CreateItem implements store.Store.
+func (s *Store) CreateItem(ctx context.Context, title string) (store.Item, error) {
+	it, err := s.Store.CreateItem(ctx, title)
+	if err != nil {
+		return it, err
+	}
+	m, err := NewItemCreated(it)
+	if err == nil {
+		_, err = s.pub.Publish(ctx, s.topic, m)
+	}
+	if err != nil {
+		s.logger.WarnContext(ctx, "ItemCreated event not published",
+			log.String("item_id", it.ID), log.String("topic", s.topic), log.Err(err))
+	}
+	return it, nil
+}

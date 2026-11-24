@@ -6,6 +6,10 @@ package sqlcdb
 
 import (
 	"time"
+{%- if .Outbox %}
+
+	"github.com/jackc/pgx/v5/pgtype"
+{%- end %}
 )
 
 type Item struct {
@@ -13,3 +17,20 @@ type Item struct {
 	Title      string
 	CreateTime time.Time
 }
+{%- if .Outbox %}
+
+type KitchenOutbox struct {
+	ID           int64
+	Topic        string
+	OrderingKey  string
+	Payload      []byte
+	Attributes   []byte
+	Attempts     int32
+	AvailableAt  time.Time
+	ClaimedUntil pgtype.Timestamptz
+	LastError    pgtype.Text
+	DeadAt       pgtype.Timestamptz
+	CreatedAt    time.Time
+	ClaimToken   int64
+}
+{%- end %}

@@ -33,7 +33,7 @@ tidy:
 	go mod tidy
 
 run:
-	$(LOCAL_ENV) go run ./cmd/server
+	$(LOCAL_ENV) go run ./cmd/server serve
 
 docker:
 	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .

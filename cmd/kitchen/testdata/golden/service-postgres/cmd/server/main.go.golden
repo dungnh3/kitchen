@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	server                   serve gRPC and REST until SIGINT or SIGTERM
+//	server [serve]           serve gRPC and REST until SIGINT or SIGTERM
 //	server migrate up        apply pending database migrations
 //	server migrate down      roll back the last migration
 //	server migrate status    print the state of each migration
@@ -56,11 +56,11 @@ func run(args []string) error {
 		return err
 	}
 	switch {
-	case len(args) == 0:
+	case len(args) == 0 || len(args) == 1 && args[0] == "serve":
 		return app.Run(ctx, cfg, logger, version)
 	case len(args) == 2 && args[0] == "migrate":
 		return app.Migrate(ctx, cfg, logger, args[1], os.Stdout)
 	default:
-		return errors.New("usage: server [migrate up|down|status]")
+		return errors.New("usage: server [serve | migrate up|down|status]")
 	}
 }

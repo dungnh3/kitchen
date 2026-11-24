@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +24,24 @@ var serviceGoldenCases = map[string]serviceParams{
 			CI: ciReusable, CIWorkflow: testWorkflow, KitchenVersion: defaultKitchenVersion,
 		},
 		DB: dbNone,
+	},
+	"service-events": {
+		projectParams: projectParams{Module: "github.com/acme/billing", Description: "Billing.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
+		DB:            dbPostgres,
+		With:          []string{withLease, withPubSub, withOutbox},
+		Broker:        brokerGCP,
+	},
+	"service-kafka": {
+		projectParams: projectParams{Module: "github.com/acme/notify", Description: "Notifications.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
+		DB:            dbNone,
+		With:          []string{withPubSub},
+		Broker:        brokerKafka,
+	},
+	"service-sqs": {
+		projectParams: projectParams{Module: "github.com/acme/catalog", Description: "Catalog.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
+		DB:            dbPostgres,
+		With:          []string{withRedis, withPubSub},
+		Broker:        brokerSQS,
 	},
 }
 
@@ -106,11 +125,17 @@ func TestGeneratedServiceBuilds(t *testing.T) {
 		t.Skipf("kitchen checkout not found next to cmd/kitchen: %v", err)
 	}
 	local := map[string]string{
-		"github.com/dungnh3/kitchen":                  root,
-		"github.com/dungnh3/kitchen/auth":             filepath.Join(root, "auth"),
-		"github.com/dungnh3/kitchen/migrate":          filepath.Join(root, "migrate"),
-		"github.com/dungnh3/kitchen/otelx/sdk":        filepath.Join(root, "otelx", "sdk"),
-		"github.com/dungnh3/kitchen/otelx/prometheus": filepath.Join(root, "otelx", "prometheus"),
+		"github.com/dungnh3/kitchen":                   root,
+		"github.com/dungnh3/kitchen/auth":              filepath.Join(root, "auth"),
+		"github.com/dungnh3/kitchen/migrate":           filepath.Join(root, "migrate"),
+		"github.com/dungnh3/kitchen/otelx/sdk":         filepath.Join(root, "otelx", "sdk"),
+		"github.com/dungnh3/kitchen/otelx/prometheus":  filepath.Join(root, "otelx", "prometheus"),
+		"github.com/dungnh3/kitchen/lease/redis":       filepath.Join(root, "lease", "redis"),
+		"github.com/dungnh3/kitchen/ratelimit/redis":   filepath.Join(root, "ratelimit", "redis"),
+		"github.com/dungnh3/kitchen/pubsub/gcp":        filepath.Join(root, "pubsub", "gcp"),
+		"github.com/dungnh3/kitchen/pubsub/kafka":      filepath.Join(root, "pubsub", "kafka"),
+		"github.com/dungnh3/kitchen/pubsub/sqs":        filepath.Join(root, "pubsub", "sqs"),
+		"github.com/dungnh3/kitchen/pubsub/outbox/pgx": filepath.Join(root, "pubsub", "outbox", "pgx"),
 	}
 
 	for name, p := range serviceGoldenCases {
@@ -177,6 +202,14 @@ func TestServiceValidate(t *testing.T) {
 		{"missing module", func(p *serviceParams) { p.Module = "" }, "-module is required"},
 		{"bad name", func(p *serviceParams) { p.Name = "Orders" }, "-name"},
 		{"bad kitchen version", func(p *serviceParams) { p.KitchenVersion = "main" }, "-kitchen-version"},
+		{"events", func(p *serviceParams) { p.With = []string{withPubSub, withOutbox, withLease} }, ""},
+		{"unknown feature", func(p *serviceParams) { p.With = []string{"cache"} }, "-with \"cache\""},
+		{"outbox without pubsub", func(p *serviceParams) { p.With = []string{withOutbox} }, "-with outbox needs"},
+		{"outbox without postgres", func(p *serviceParams) {
+			p.DB, p.With = dbNone, []string{withPubSub, withOutbox}
+		}, "-with outbox needs"},
+		{"bad broker", func(p *serviceParams) { p.With, p.Broker = []string{withPubSub}, "nats" }, "-pubsub"},
+		{"broker without pubsub", func(p *serviceParams) { p.Broker, p.brokerSet = brokerKafka, true }, "-pubsub needs"},
 		{"reusable with tag", func(p *serviceParams) {
 			p.CI, p.CIWorkflow = ciReusable, "acme/wf/.github/workflows/go.yml@v1"
 		}, "40-char commit SHA"},
@@ -212,6 +245,7 @@ func TestRunServiceCLI(t *testing.T) {
 		{"create", newArgs, 0, "make generate"},
 		{"refuse non-empty dir", newArgs, 1, "not empty"},
 		{"bad db", []string{"new", "service", "-module", "github.com/acme/x", "-db", "mysql", "-yes"}, 1, "-db"},
+		{"outbox without db", []string{"new", "service", "-module", "github.com/acme/x", "-db", "none", "-with", "pubsub,outbox", "-yes"}, 1, "-with outbox needs"},
 		{"bad flag", []string{"new", "service", "-nope"}, 2, ""},
 		{"help flag", []string{"new", "service", "-h"}, 0, "-no-generate"},
 	}
@@ -227,5 +261,58 @@ func TestRunServiceCLI(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "proto", "orders", "v1", "item_service.proto")); err != nil {
 		t.Errorf("proto not generated: %v", err)
+	}
+}
+
+// TestServiceFeatureMatrix renders every valid combination of database,
+// features and broker: each must render and gofmt, and keep only its files.
+func TestServiceFeatureMatrix(t *testing.T) {
+	names := []string{withRedis, withLease, withPubSub, withOutbox}
+	for _, db := range []string{dbPostgres, dbNone} {
+		for mask := range 1 << len(names) {
+			var with []string
+			for i, n := range names {
+				if mask&(1<<i) != 0 {
+					with = append(with, n)
+				}
+			}
+			for _, broker := range []string{brokerGCP, brokerKafka, brokerSQS} {
+				p := serviceParams{
+					projectParams: projectParams{Module: "example.com/x/svc", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
+					DB:            db, With: with, Broker: broker,
+				}
+				p.applyDefaults()
+				if p.validate() != nil {
+					continue
+				}
+				files, err := renderService(p)
+				if err != nil {
+					t.Fatalf("%s %v %s: %v", db, with, broker, err)
+				}
+				for rel := range files {
+					if !keepFile(p, rel) {
+						t.Errorf("%s %v %s: %s should not be generated", db, with, broker, rel)
+					}
+				}
+				_, hasWorker := files["internal/app/worker.go"]
+				_, hasBroker := files["internal/app/broker.go"]
+				if hasWorker != p.Worker() || hasBroker != p.PubSub() {
+					t.Errorf("%s %v %s: worker.go %v, broker.go %v", db, with, broker, hasWorker, hasBroker)
+				}
+				for rel, b := range files {
+					if bytes.Contains(b, []byte("{%")) || bytes.Contains(b, []byte("%}")) {
+						t.Errorf("%s %v %s: %s has template delimiters", db, with, broker, rel)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestLeaseAddsRedis(t *testing.T) {
+	p := serviceParams{With: []string{withLease, withLease}}
+	p.applyDefaults()
+	if want := []string{withLease, withRedis}; !slices.Equal(p.With, want) {
+		t.Errorf("With = %v, want %v", p.With, want)
 	}
 }

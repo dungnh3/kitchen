@@ -1,0 +1,41 @@
+package consumer
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+	"go.uber.org/goleak"
+
+	"github.com/acme/catalog/internal/events"
+	"github.com/acme/catalog/internal/store"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+func TestItems(t *testing.T) {
+	created, err := events.NewItemCreated(store.Item{ID: "1", Title: "first", CreateTime: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name      string
+		msg       *pubsub.Message
+		permanent bool
+	}{
+		{"created", created, false},
+		{"not json", &pubsub.Message{Data: []byte("x")}, true},
+		{"no id", &pubsub.Message{Data: []byte(`{"title":"first"}`)}, true},
+	}
+	h := NewItems(log.Discard()).Handler()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := h(t.Context(), tt.msg)
+			if got := errors.Is(err, pubsub.ErrPermanent); got != tt.permanent || !tt.permanent && err != nil {
+				t.Errorf("err = %v, want permanent %v", err, tt.permanent)
+			}
+		})
+	}
+}

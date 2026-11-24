@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	server                   serve gRPC and REST until SIGINT or SIGTERM
+//	server [serve]           serve gRPC and REST until SIGINT or SIGTERM
 //
 // The configuration comes from environment variables; see internal/config.
 package main
@@ -53,9 +53,9 @@ func run(args []string) error {
 		return err
 	}
 	switch {
-	case len(args) == 0:
+	case len(args) == 0 || len(args) == 1 && args[0] == "serve":
 		return app.Run(ctx, cfg, logger, version)
 	default:
-		return errors.New("usage: server")
+		return errors.New("usage: server [serve]")
 	}
 }

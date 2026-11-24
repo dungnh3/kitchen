@@ -231,6 +231,35 @@ Tests (`cmd/kitchen`):
   and `sqlc diff` (the shipped sqlc output must match the queries). Skipped
   with `-short` or offline.
 
+## 3b. Service features and the worker (owner, popups 2026-11-24)
+
+```
+kitchen new service ... [-with redis,lease,pubsub,outbox] [-pubsub gcp|kafka|sqs]
+```
+
+| # | Decision (owner) | Alternatives | Why |
+|---|---|---|---|
+| F1 | Optional features with `-with`; each one wires one canonical package (`redis` → `redisx` + `ratelimit/redis`, `lease` → `lease/redis`, `pubsub` → `pubsub` + adapter, `outbox` → `pubsub/outbox/pgx`). `lease` adds `redis`; `outbox` without `-db postgres` and `pubsub` is refused | fixed presets; generate everything and switch by env | Only what the service needs is generated and required in go.mod; matches D7 |
+| F2 | One binary with commands `serve` (default), `worker`, `migrate`; the worker exists with `pubsub` or `lease` | one `cmd/*` per process; consumers inside the server process | One image and one wiring; the worker scales and deploys apart from the API |
+| F3 | Periodic jobs run in the worker under `lease.Elector` (one replica per job), interval only | a new `cron` package; Kubernetes CronJob only | No new concern or dependency |
+| F4 | Local dependencies in `compose.yaml` (`make up`/`down`, creates topics, subscriptions, queues) and every variable in `docs/ENV.md`; no Kubernetes or Helm files | kustomize; Helm | Manifests live with the platform; the env contract is what a deploy needs |
+| F5 | Upgrades of generated projects: a manifest plus a drift check first, a three-way `kitchen upgrade` later | upgrade now; none | Cheap and safe while templates still change |
+| F6 | Add-on generators planned: `kitchen add domain`, `add consumer`, `add job`; no `add rpc` or `add migration` (buf and goose do that) | – | – |
+| F7 | Internal APIs: a per-method policy, deny by default | a second gRPC port | One mechanism, fail-closed |
+| F8 | MySQL template later; MongoDB documented only | both; Postgres only | – |
+
+Defaults chosen without a popup: broker default `gcp`; Redis and Kafka use
+TLS unless `REDIS_TLS` / `PUBSUB_TLS` is `false` (local only); without
+`outbox` an event is published after the item is stored and a failed
+publish is logged (the README says to use the outbox for guaranteed
+delivery); the broker client is created only in `internal/app/broker.go`,
+the one file where the template's lint config allows the broker SDK;
+Pub/Sub sources take the subscription's ordering and dead-letter settings
+from configuration; Kafka sends poison messages to a dead-letter topic
+after `PUBSUB_MAX_DELIVERY_ATTEMPTS`; the worker serves its probes on
+`ADMIN_ADDR`. The integration test uses miniredis and the in-memory broker.
+`cache` and `sse` features wait for the reviews of those packages.
+
 ## 4. Sequencing
 
 1. **This PR:** mcpkit, jwtauth, mcpkittest, the CLI framework and `new mcp`

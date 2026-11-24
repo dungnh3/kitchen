@@ -16,6 +16,16 @@ func environ(kv ...string) env.Options {
 {%- if .Postgres %}
 		"DB_URL": "postgres://app@localhost:5432/app?sslmode=disable",
 {%- end %}
+{%- if .Redis %}
+		"REDIS_ADDRS": "localhost:6379",
+{%- end %}
+{%- if .GCP %}
+		"PUBSUB_PROJECT": "local",
+{%- else if .Kafka %}
+		"PUBSUB_BROKERS": "localhost:9092",
+{%- else if .SQS %}
+		"PUBSUB_ITEMS_TOPIC": "http://localhost:9324/000000000000/items",
+{%- end %}
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
@@ -72,6 +82,19 @@ func TestValidateServer(t *testing.T) {
 		{"http localhost jwks", append(append([]string{}, jwt...), "AUTH_JWKS_URL", "http://localhost:8081/jwks"), ""},
 		{"disabled in development", []string{"AUTH_DISABLED", "true"}, ""},
 		{"disabled in production", []string{"AUTH_DISABLED", "true", "APP_ENV", EnvProduction}, "not allowed"},
+{%- if .Redis %}
+		{"redis required", append(append([]string{}, jwt...), "REDIS_ADDRS", ""), "REDIS_ADDRS"},
+{%- end %}
+{%- if .GCP %}
+		{"project required", append(append([]string{}, jwt...), "PUBSUB_PROJECT", ""), "PUBSUB_PROJECT"},
+{%- else if .Kafka %}
+		{"brokers required", append(append([]string{}, jwt...), "PUBSUB_BROKERS", ""), "PUBSUB_BROKERS"},
+{%- else if .SQS %}
+		{"queue required", append(append([]string{}, jwt...), "PUBSUB_ITEMS_TOPIC", ""), "PUBSUB_ITEMS_TOPIC"},
+{%- end %}
+{%- if .PubSub %}
+		{"concurrency", append(append([]string{}, jwt...), "PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
+{%- end %}
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

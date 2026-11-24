@@ -1,0 +1,36 @@
+package app
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+
+	"github.com/dungnh3/kitchen/otelx/sdk"
+	"github.com/dungnh3/kitchen/redisx"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/acme/catalog/internal/config"
+)
+
+// openRedis connects to Redis and pings it, so a wrong address stops
+// startup.
+func openRedis(ctx context.Context, cfg config.Redis, tel *sdk.Telemetry) (redis.UniversalClient, error) {
+	rc := redisx.Config{
+		Addrs:      cfg.Addrs,
+		MasterName: cfg.MasterName,
+		Username:   cfg.Username,
+		Password:   cfg.Password,
+		DB:         cfg.DB,
+	}
+	if cfg.TLS {
+		rc.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	rdb, err := redisx.Open(ctx, rc,
+		redisx.WithTracerProvider(tel.TracerProvider()),
+		redisx.WithMeterProvider(tel.MeterProvider()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("redis: %w", err)
+	}
+	return rdb, nil
+}

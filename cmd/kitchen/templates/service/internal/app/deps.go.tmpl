@@ -1,0 +1,191 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"slices"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+	kprom "github.com/dungnh3/kitchen/otelx/prometheus"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+{%- if .Postgres %}
+	"github.com/dungnh3/kitchen/pg"
+{%- end %}
+	"github.com/dungnh3/kitchen/server"
+{%- if .Postgres %}
+	"github.com/jackc/pgx/v5/pgxpool"
+{%- end %}
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+{%- if .Redis %}
+	"github.com/redis/go-redis/v9"
+{%- end %}
+
+	"{% .Module %}/internal/config"
+)
+
+// Option changes how Run{% if .Worker %} and RunWorker build{% else %} builds{% end %} the service. Tests use
+// options to listen on random ports{% if .PubSub %} and to replace the broker{% end %}.
+type Option func(*options)
+
+type options struct {
+	server []server.Option
+{%- if .PubSub %}
+	broker Broker
+{%- end %}
+}
+
+// WithServerOptions appends options to the server.
+func WithServerOptions(o ...server.Option) Option {
+	return func(c *options) { c.server = append(c.server, o...) }
+}
+{%- if .PubSub %}
+
+// WithBroker uses b instead of the configured broker. The caller keeps
+// ownership: b is not closed.
+func WithBroker(b Broker) Option { return func(c *options) { c.broker = b } }
+{%- end %}
+
+// deps are the resources that the server{% if .Worker %} and the worker{% end %} share. close releases
+// them in reverse order.
+type deps struct {
+	tel      *sdk.Telemetry
+	registry *prometheus.Registry
+{%- if .Postgres %}
+	pool     *pgxpool.Pool
+{%- end %}
+{%- if .Redis %}
+	redis    redis.UniversalClient
+{%- end %}
+{%- if .PubSub %}
+	broker   Broker
+{%- end %}
+	closers  []func(context.Context) error
+}
+
+func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, version string, o options) (d *deps, err error) {
+	d = &deps{registry: prometheus.NewRegistry()}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, d.close(ctx))
+		}
+	}()
+
+	// Traces (and metrics, logs) go over OTLP when an endpoint is set with
+	// OTEL_EXPORTER_OTLP_ENDPOINT and the other OTEL_* variables. Metrics are
+	// also served in Prometheus format on the admin port.
+	otlp := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" || os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != ""
+	telCfg := sdk.Config{
+		Disabled:       !otlp && cfg.AdminAddr == "",
+		Logger:         logger,
+		ServiceName:    Name,
+		ServiceVersion: version,
+		Environment:    cfg.Env,
+		// Clients on the internet must not decide what is sampled.
+		IgnoreRemoteSampled: true,
+	}
+	if !otlp {
+		telCfg.Traces.Exporter = sdk.ExporterNone
+	}
+	if cfg.AdminAddr != "" {
+		r, err := kprom.NewReader(kprom.Options{Registerer: d.registry})
+		if err != nil {
+			return d, fmt.Errorf("prometheus: %w", err)
+		}
+		telCfg.MetricReaders = append(telCfg.MetricReaders, r)
+	}
+	d.tel, err = sdk.Setup(ctx, telCfg)
+	if err != nil {
+		return d, fmt.Errorf("telemetry: %w", err)
+	}
+	d.onClose(d.tel.Shutdown)
+{%- if .Postgres %}
+
+	d.pool, err = openDB(ctx, cfg, logger, d.tel)
+	if err != nil {
+		return d, err
+	}
+	d.onClose(func(context.Context) error { d.pool.Close(); return nil })
+{%- end %}
+{%- if .Redis %}
+
+	d.redis, err = openRedis(ctx, cfg.Redis, d.tel)
+	if err != nil {
+		return d, err
+	}
+	d.onClose(func(context.Context) error { return d.redis.Close() })
+{%- end %}
+{%- if .PubSub %}
+
+	d.broker = o.broker
+	if d.broker == nil {
+		b, err := openBroker(ctx, cfg.PubSub, logger)
+		if err != nil {
+			return d, fmt.Errorf("broker: %w", err)
+		}
+		d.broker = b
+		d.onClose(b.Close)
+	}
+{%- end %}
+	return d, nil
+}
+
+func (d *deps) onClose(f func(context.Context) error) { d.closers = append(d.closers, f) }
+
+// close releases the resources in reverse order of opening, within 10s
+// even when ctx is already cancelled.
+func (d *deps) close(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	var err error
+	for _, f := range slices.Backward(d.closers) {
+		err = errors.Join(err, f(ctx))
+	}
+	return err
+}
+
+// checks are the readiness checks of the external services.
+func (d *deps) checks() []server.Check {
+	var checks []server.Check
+{%- if .Postgres %}
+	checks = append(checks, server.Check{Name: "postgres", Func: d.pool.Ping})
+{%- end %}
+{%- if .Redis %}
+	checks = append(checks, server.Check{Name: "redis", Func: func(ctx context.Context) error { return d.redis.Ping(ctx).Err() }})
+{%- end %}
+	return checks
+}
+
+// adminOptions configure the private admin port: probes with details,
+// pprof and Prometheus metrics.
+func (d *deps) adminOptions() []server.AdminOption {
+	return []server.AdminOption{
+		server.WithPprof(),
+		server.WithAdminHandler("GET /metrics", promhttp.HandlerFor(d.registry, promhttp.HandlerOpts{})),
+	}
+}
+{%- if .Postgres %}
+
+func openDB(ctx context.Context, cfg config.Config, logger *log.Logger, tel *sdk.Telemetry) (*pgxpool.Pool, error) {
+	pool, err := pg.Open(ctx, pg.Config{
+		URL:              cfg.Database.URL,
+		MaxConns:         cfg.Database.MaxConns,
+		StatementTimeout: cfg.Database.StatementTimeout,
+		ApplicationName:  Name,
+		// pg sets no time zone; sessions use UTC so now() and casts of
+		// timestamptz to text do not depend on the server's setting.
+		RuntimeParams: map[string]string{"timezone": "UTC"},
+	},
+		pg.WithLogger(logger),
+		pg.WithTracerProvider(tel.TracerProvider()),
+		pg.WithMeterProvider(tel.MeterProvider()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: %w", err)
+	}
+	return pool, nil
+}
+{%- end %}

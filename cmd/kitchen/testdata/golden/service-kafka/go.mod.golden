@@ -1,0 +1,30 @@
+module github.com/acme/notify
+
+go 1.26.0
+
+tool (
+	github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway
+	github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc
+	google.golang.org/protobuf/cmd/protoc-gen-go
+)
+
+require (
+	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
+	github.com/caarlos0/env/v11 v11.4.2
+	github.com/dungnh3/kitchen v0.1.0
+	github.com/dungnh3/kitchen/auth v0.1.0
+	github.com/dungnh3/kitchen/otelx/prometheus v0.1.0
+	github.com/dungnh3/kitchen/otelx/sdk v0.1.0
+	github.com/dungnh3/kitchen/pubsub/kafka v0.1.0
+	github.com/google/uuid v1.6.0
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.34.0
+	github.com/prometheus/client_golang v1.25.0
+	github.com/twmb/franz-go v1.22.3
+	go.uber.org/goleak v1.3.0
+	golang.org/x/text v0.44.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20261110000943-09e21b237f2c
+	google.golang.org/grpc v1.85.0
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.6.2
+	google.golang.org/protobuf v1.36.12
+)

@@ -36,11 +36,12 @@ func TestApp(t *testing.T) {
 		ShutdownTimeout: 5 * time.Second,
 		ErrorDomain:     Name,
 	}
+	var opts []Option
 
 	t.Run("crud", func(t *testing.T) {
 		cfg := base
 		cfg.Auth.Disabled = true
-		url := start(t, cfg)
+		url := start(t, cfg, opts...)
 
 		var item map[string]any
 		call(t, http.MethodPost, url+"/v1/items", `{"title":"first"}`, http.StatusOK, &item)
@@ -75,7 +76,7 @@ func TestApp(t *testing.T) {
 		defer jwks.Close()
 		cfg := base
 		cfg.Auth = config.Auth{Issuer: "https://issuer.example.com", JWKSURL: jwks.URL, Audience: Name}
-		url := start(t, cfg)
+		url := start(t, cfg, opts...)
 
 		var e apiError
 		call(t, http.MethodGet, url+"/v1/items", "", http.StatusUnauthorized, &e)
@@ -100,7 +101,7 @@ type apiError struct {
 }
 
 // start runs the service until the test ends and returns its REST base URL.
-func start(t *testing.T, cfg config.Config) string {
+func start(t *testing.T, cfg config.Config, opts ...Option) string {
 	t.Helper()
 	var lc net.ListenConfig
 	grpcLis, err := lc.Listen(t.Context(), "tcp", cfg.GRPCAddr)
@@ -114,7 +115,7 @@ func start(t *testing.T, cfg config.Config) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, cfg, log.Discard(), "test", server.WithGRPCListener(grpcLis), server.WithHTTPListener(httpLis))
+		done <- Run(ctx, cfg, log.Discard(), "test", append(opts, WithServerOptions(server.WithGRPCListener(grpcLis), server.WithHTTPListener(httpLis)))...)
 	}()
 	t.Cleanup(func() {
 		cancel()

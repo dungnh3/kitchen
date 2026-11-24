@@ -1,0 +1,28 @@
+// Package store defines how the service persists items. The service depends
+// on the Store interface only; memstore keeps items in memory (tests, local
+// runs) and pgstore keeps them in PostgreSQL.
+package store
+
+import (
+	"context"
+	"time"
+)
+
+// Item is a stored item.
+type Item struct {
+	ID         string
+	Title      string
+	CreateTime time.Time
+}
+
+// Store persists items. Implementations return errs errors, such as
+// errs.ErrNotFound for a missing item, so the server maps them to the right
+// gRPC and HTTP status.
+type Store interface {
+	GetItem(ctx context.Context, id string) (Item, error)
+	// ListItems returns at most limit items with an id greater than after
+	// ("" for the first page), ordered by id.
+	ListItems(ctx context.Context, after string, limit int32) ([]Item, error)
+	CreateItem(ctx context.Context, title string) (Item, error)
+	DeleteItem(ctx context.Context, id string) error
+}

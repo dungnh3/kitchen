@@ -1,0 +1,8 @@
+# Local dependencies for "make run" and "make run-worker". Start them with
+# "make up" and stop them with "make down". Not for production.
+services:
+  kafka:
+    # One KRaft node that advertises localhost:9092; "make up" creates the
+    # topics.
+    image: apache/kafka:4.2.0
+    ports: ["9092:9092"]

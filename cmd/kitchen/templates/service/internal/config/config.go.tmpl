@@ -44,6 +44,12 @@ type Config struct {
 
 	Database Database `envPrefix:"DB_"`
 {%- end %}
+{%- if .Redis %}
+	Redis Redis `envPrefix:"REDIS_"`
+{%- end %}
+{%- if .PubSub %}
+	PubSub PubSub `envPrefix:"PUBSUB_"`
+{%- end %}
 	Auth      Auth      `envPrefix:"AUTH_"`
 	RateLimit RateLimit `envPrefix:"RATE_LIMIT_"`
 }
@@ -65,6 +71,63 @@ type Database struct {
 }
 {%- end %}
 
+{%- if .Redis %}
+// Redis configures the Redis client (see github.com/dungnh3/kitchen/redisx).
+type Redis struct {
+	// Addrs are host:port addresses. Several addresses select Cluster mode,
+	// or Sentinel mode with MasterName.
+	Addrs      []string `env:"ADDRS"`
+	MasterName string   `env:"MASTER_NAME"`
+	Username   string   `env:"USERNAME"`
+	Password   string   `env:"PASSWORD"`
+	DB         int      `env:"DB"`
+	// TLS encrypts the connections. Turn it off only for a local Redis.
+	TLS bool `env:"TLS" envDefault:"true"`
+}
+
+{% end -%}
+{%- if .PubSub %}
+// PubSub configures the message broker{% if .GCP %} (Google Cloud Pub/Sub){% else if .Kafka %} (Kafka){% else %} (Amazon SQS){% end %}.
+type PubSub struct {
+{%- if .GCP %}
+	// Project is the Google Cloud project of the topics and subscriptions.
+	// The client also reads PUBSUB_EMULATOR_HOST, which points it at a
+	// local emulator.
+	Project string `env:"PROJECT"`
+	// Ordered and MaxDeliveryAttempts must match the subscription's
+	// enable_message_ordering and dead-letter policy (0 without one): the
+	// subscriber's ordering guarantees depend on them.
+	Ordered             bool `env:"ORDERED" envDefault:"true"`
+	MaxDeliveryAttempts int  `env:"MAX_DELIVERY_ATTEMPTS" envDefault:"5"`
+	// ItemsTopic receives an ItemCreated event for every new item.
+	ItemsTopic string `env:"ITEMS_TOPIC" envDefault:"{% .Name %}-items"`
+	// ItemsSubscription is the subscription to ItemsTopic that the worker
+	// consumes.
+	ItemsSubscription string `env:"ITEMS_SUBSCRIPTION" envDefault:"{% .Name %}-items-worker"`
+{%- else if .Kafka %}
+	// Brokers are the seed brokers, host:port.
+	Brokers []string `env:"BROKERS"`
+	// TLS encrypts the connections. Turn it off only for a local broker.
+	TLS bool `env:"TLS" envDefault:"true"`
+	// ItemsTopic receives an ItemCreated event for every new item.
+	ItemsTopic string `env:"ITEMS_TOPIC" envDefault:"{% .Name %}-items"`
+	// ItemsSubscription is the consumer group of the worker.
+	ItemsSubscription string `env:"ITEMS_SUBSCRIPTION" envDefault:"{% .Name %}-items-worker"`
+	// Kafka has no dead-letter queue: after MaxDeliveryAttempts deliveries
+	// the worker publishes a message to ItemsDeadLetterTopic and moves on.
+	MaxDeliveryAttempts  int    `env:"MAX_DELIVERY_ATTEMPTS" envDefault:"5"`
+	ItemsDeadLetterTopic string `env:"ITEMS_DEAD_LETTER_TOPIC" envDefault:"{% .Name %}-items.dlq"`
+{%- else %}
+	// ItemsTopic is the URL of the queue that receives an ItemCreated event
+	// for every new item; the worker consumes it. Credentials, region and
+	// endpoint come from the standard AWS_* variables.
+	ItemsTopic string `env:"ITEMS_TOPIC"`
+{%- end %}
+	// Concurrency is the number of messages the worker handles at once.
+	Concurrency int `env:"CONCURRENCY" envDefault:"10"`
+}
+
+{% end -%}
 // Auth configures bearer-token authentication. Every method needs a valid
 // JWT signed by Issuer for Audience, except the health service.
 type Auth struct {
@@ -117,6 +180,50 @@ func (c Config) validate() error {
 // ValidateServer checks the settings needed to serve requests. It is not
 // part of Load so that commands such as "migrate" run without them.
 func (c Config) ValidateServer() error {
+	return errors.Join(c.validateAuth(), c.validateDeps())
+}
+{%- if .Worker %}
+
+// ValidateWorker checks the settings needed by the worker.
+func (c Config) ValidateWorker() error { return c.validateDeps() }
+{%- end %}
+
+// validateDeps checks the settings of the external services that the
+// server and the worker connect to.
+func (c Config) validateDeps() error {
+	var errs []error
+{%- if .Redis %}
+	if len(c.Redis.Addrs) == 0 {
+		errs = append(errs, errors.New("REDIS_ADDRS is required"))
+	}
+{%- end %}
+{%- if .PubSub %}
+{%- if .GCP %}
+	if c.PubSub.Project == "" {
+		errs = append(errs, errors.New("PUBSUB_PROJECT is required"))
+	}
+	if c.PubSub.MaxDeliveryAttempts < 0 {
+		errs = append(errs, errors.New("PUBSUB_MAX_DELIVERY_ATTEMPTS must not be negative"))
+	}
+{%- else if .Kafka %}
+	if len(c.PubSub.Brokers) == 0 {
+		errs = append(errs, errors.New("PUBSUB_BROKERS is required"))
+	}
+	if c.PubSub.MaxDeliveryAttempts < 1 {
+		errs = append(errs, errors.New("PUBSUB_MAX_DELIVERY_ATTEMPTS must be at least 1"))
+	}
+{%- end %}
+	if c.PubSub.ItemsTopic == "" {
+		errs = append(errs, errors.New("PUBSUB_ITEMS_TOPIC is required"))
+	}
+	if c.PubSub.Concurrency < 1 {
+		errs = append(errs, errors.New("PUBSUB_CONCURRENCY must be at least 1"))
+	}
+{%- end %}
+	return errors.Join(errs...)
+}
+
+func (c Config) validateAuth() error {
 	a := c.Auth
 	if a.Disabled {
 		if c.Env == EnvProduction {

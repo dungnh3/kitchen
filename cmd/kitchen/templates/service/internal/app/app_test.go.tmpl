@@ -15,7 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dungnh3/kitchen/log"
+{% if .Redis %}	"github.com/alicebob/miniredis/v2"
+{% end %}	"github.com/dungnh3/kitchen/log"
+{%- if .PubSub %}
+	"github.com/dungnh3/kitchen/pubsub"
+	"github.com/dungnh3/kitchen/pubsub/memory"
+{%- end %}
 	"github.com/dungnh3/kitchen/server"
 {%- if .Postgres %}
 	"github.com/testcontainers/testcontainers-go"
@@ -26,7 +31,16 @@ import (
 	"{% .Module %}/internal/config"
 )
 
+{%- if .GCP %}
+
+func TestMain(m *testing.M) {
+	// The Pub/Sub client library starts this goroutine when it is imported.
+	goleak.VerifyTestMain(m, goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"))
+}
+{%- else %}
+
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+{%- end %}
 
 // TestApp starts the whole service on random ports{% if .Postgres %} against a Postgres
 // container{% end %} and calls it over REST.
@@ -43,12 +57,52 @@ func TestApp(t *testing.T) {
 {%- if .Postgres %}
 		Database:        config.Database{URL: startPostgres(t), MigrateOnStart: true},
 {%- end %}
+{%- if .Redis %}
+		Redis:           config.Redis{Addrs: []string{miniredis.RunT(t).Addr()}},
+{%- end %}
+{%- if .PubSub %}
+		PubSub: config.PubSub{
+{%- if .GCP %}
+			Project:             "test",
+			MaxDeliveryAttempts: 5,
+			ItemsSubscription:   "items-worker",
+{%- else if .Kafka %}
+			Brokers:              []string{"localhost:9092"},
+			MaxDeliveryAttempts:  5,
+			ItemsSubscription:    "items-worker",
+			ItemsDeadLetterTopic: "items.dlq",
+{%- end %}
+			ItemsTopic:  "items",
+			Concurrency: 2,
+		},
+{%- end %}
 	}
+{%- if .PubSub %}
+	// The broker is in process; the test reads the topic through its own
+	// subscription.
+	broker := memBroker{memory.New()}
+	t.Cleanup(func() { _ = broker.Close(context.Background()) })
+	events, err := broker.Subscribe(base.PubSub.ItemsTopic, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := []Option{WithBroker(broker)}
+{%- else %}
+	var opts []Option
+{%- end %}
+{%- if .Worker %}
+{%- if .Postgres %}
+	if err := Migrate(t.Context(), base, log.Discard(), "up", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+{%- end %}
+	startWorker(t, base, opts...)
+{%- end %}
 
 	t.Run("crud", func(t *testing.T) {
 		cfg := base
 		cfg.Auth.Disabled = true
-		url := start(t, cfg)
+		url := start(t, cfg, opts...)
 
 		var item map[string]any
 		call(t, http.MethodPost, url+"/v1/items", `{"title":"first"}`, http.StatusOK, &item)
@@ -56,6 +110,11 @@ func TestApp(t *testing.T) {
 		if id == "" || item["title"] != "first" {
 			t.Fatalf("created item = %v", item)
 		}
+{%- if .PubSub %}
+		if m := receive(t, events); m.Key != id {
+			t.Errorf("ItemCreated event key = %q, want the item id %q", m.Key, id)
+		}
+{%- end %}
 		call(t, http.MethodGet, url+"/v1/items/"+id, "", http.StatusOK, &item)
 
 		var list struct {
@@ -83,7 +142,7 @@ func TestApp(t *testing.T) {
 		defer jwks.Close()
 		cfg := base
 		cfg.Auth = config.Auth{Issuer: "https://issuer.example.com", JWKSURL: jwks.URL, Audience: Name}
-		url := start(t, cfg)
+		url := start(t, cfg, opts...)
 
 		var e apiError
 		call(t, http.MethodGet, url+"/v1/items", "", http.StatusUnauthorized, &e)
@@ -108,7 +167,7 @@ type apiError struct {
 }
 
 // start runs the service until the test ends and returns its REST base URL.
-func start(t *testing.T, cfg config.Config) string {
+func start(t *testing.T, cfg config.Config, opts ...Option) string {
 	t.Helper()
 	var lc net.ListenConfig
 	grpcLis, err := lc.Listen(t.Context(), "tcp", cfg.GRPCAddr)
@@ -122,7 +181,7 @@ func start(t *testing.T, cfg config.Config) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, cfg, log.Discard(), "test", server.WithGRPCListener(grpcLis), server.WithHTTPListener(httpLis))
+		done <- Run(ctx, cfg, log.Discard(), "test", append(opts, WithServerOptions(server.WithGRPCListener(grpcLis), server.WithHTTPListener(httpLis)))...)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -154,6 +213,54 @@ func start(t *testing.T, cfg config.Config) string {
 		}
 	}
 }
+
+{%- if .Worker %}
+
+// startWorker runs the worker until the test ends.
+func startWorker(t *testing.T, cfg config.Config, opts ...Option) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- RunWorker(ctx, cfg, log.Discard(), "test", opts...) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("RunWorker: %v", err)
+		}
+	})
+}
+{%- end %}
+{%- if .PubSub %}
+
+// memBroker is an in-process Broker.
+type memBroker struct{ *memory.Broker }
+
+func (b memBroker) Source(topic, subscription string) (pubsub.Source, error) {
+	if subscription == "" {
+		subscription = "worker"
+	}
+	return b.Subscribe(topic, subscription)
+}
+
+// receive returns the next message of sub, waiting at most 30s.
+func receive(t *testing.T, sub *memory.Subscription) *pubsub.Message {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	var m *pubsub.Message
+	if err := sub.Receive(ctx, func(_ context.Context, d pubsub.Delivery) {
+		d.Ack()
+		m = d.Message()
+		cancel()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if m == nil {
+		t.Fatal("no message after 30s")
+	}
+	return m
+}
+{%- end %}
 
 func call(t *testing.T, method, url, body string, wantStatus int, out any) {
 	t.Helper()

@@ -1,0 +1,56 @@
+package app
+
+import (
+	"context"
+	"errors"
+
+	gpubsub "cloud.google.com/go/pubsub/v2"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+	"github.com/dungnh3/kitchen/pubsub/gcp"
+
+	"{% .Module %}/internal/config"
+)
+
+// Broker publishes events and opens the sources that the worker consumes.
+type Broker interface {
+	pubsub.Publisher
+	// Source returns the source of a subscription to topic.
+	Source(topic, subscription string) (pubsub.Source, error)
+}
+
+// gcpBroker is a Broker on Google Cloud Pub/Sub.
+type gcpBroker struct {
+	*gcp.Publisher
+	client *gpubsub.Client
+	cfg    config.PubSub
+	logger *log.Logger
+}
+
+// openBroker connects to Google Cloud Pub/Sub. The client finds credentials
+// with Application Default Credentials, or uses the emulator at
+// PUBSUB_EMULATOR_HOST.
+func openBroker(ctx context.Context, cfg config.PubSub, logger *log.Logger) (Broker, error) {
+	client, err := gpubsub.NewClient(ctx, cfg.Project)
+	if err != nil {
+		return nil, err
+	}
+	pub, err := gcp.NewPublisher(client)
+	if err != nil {
+		return nil, errors.Join(err, client.Close())
+	}
+	return &gcpBroker{Publisher: pub, client: client, cfg: cfg, logger: logger}, nil
+}
+
+// Source implements Broker. The subscription settings come from the
+// configuration because the subscriber role cannot read them.
+func (b *gcpBroker) Source(_, subscription string) (pubsub.Source, error) {
+	return gcp.NewSource(b.client, subscription,
+		gcp.WithSubscriptionConfig(b.cfg.Ordered, b.cfg.MaxDeliveryAttempts),
+		gcp.WithSourceLogger(b.logger))
+}
+
+// Close flushes pending messages and closes the client.
+func (b *gcpBroker) Close(ctx context.Context) error {
+	return errors.Join(b.Publisher.Close(ctx), b.client.Close())
+}

@@ -7,23 +7,42 @@ import (
 
 	"github.com/dungnh3/kitchen/errs"
 	"github.com/dungnh3/kitchen/pg"
+{%- if .Outbox %}
+	outboxpgx "github.com/dungnh3/kitchen/pubsub/outbox/pgx"
+	"github.com/jackc/pgx/v5"
+{%- end %}
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"{% .Module %}/internal/store"
+{% if .Outbox %}	"{% .Module %}/internal/events"
+{% end %}	"{% .Module %}/internal/store"
 	"{% .Module %}/internal/store/pgstore/sqlcdb"
 )
 
 // Store is a store.Store on a pgx pool.
 type Store struct {
 	q *sqlcdb.Queries
+{%- if .Outbox %}
+	pool   *pgxpool.Pool
+	outbox *outboxpgx.Store
+	topic  string
+{%- end %}
 }
 
 var _ store.Store = (*Store)(nil)
+{%- if .Outbox %}
+
+// New returns a Store on pool, which the caller owns. Events are written to
+// outbox, for topic, in the transaction of the change.
+func New(pool *pgxpool.Pool, outbox *outboxpgx.Store, topic string) *Store {
+	return &Store{q: sqlcdb.New(pool), pool: pool, outbox: outbox, topic: topic}
+}
+{%- else %}
 
 // New returns a Store on pool, which the caller owns.
 func New(pool *pgxpool.Pool) *Store {
 	return &Store{q: sqlcdb.New(pool)}
 }
+{%- end %}
 
 // firstID sorts before every UUID, so it starts the first page.
 const firstID = "00000000-0000-0000-0000-000000000000"
@@ -55,6 +74,30 @@ func (s *Store) ListItems(ctx context.Context, after string, limit int32) ([]sto
 	return out, nil
 }
 
+{%- if .Outbox %}
+// CreateItem implements store.Store. The item and its ItemCreated event are
+// written in one transaction, so the event is published if and only if the
+// item is stored.
+func (s *Store) CreateItem(ctx context.Context, title string) (store.Item, error) {
+	var it store.Item
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		row, err := s.q.WithTx(tx).CreateItem(ctx, title)
+		if err != nil {
+			return err
+		}
+		it = item(row)
+		m, err := events.NewItemCreated(it)
+		if err != nil {
+			return err
+		}
+		return s.outbox.Enqueue(ctx, tx, s.topic, m)
+	})
+	if err != nil {
+		return store.Item{}, pg.MapError(err)
+	}
+	return it, nil
+}
+{%- else %}
 // CreateItem implements store.Store.
 func (s *Store) CreateItem(ctx context.Context, title string) (store.Item, error) {
 	row, err := s.q.CreateItem(ctx, title)
@@ -63,6 +106,7 @@ func (s *Store) CreateItem(ctx context.Context, title string) (store.Item, error
 	}
 	return item(row), nil
 }
+{%- end %}
 
 // DeleteItem implements store.Store.
 func (s *Store) DeleteItem(ctx context.Context, id string) error {

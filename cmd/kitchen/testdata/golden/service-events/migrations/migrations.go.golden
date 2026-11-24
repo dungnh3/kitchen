@@ -1,0 +1,11 @@
+// Package migrations embeds the SQL migrations (goose format). They are
+// applied by "server migrate up" or at startup with DB_MIGRATE_ON_START=true.
+// Add a file with "goose create <name> sql" or by hand: NNNNN_name.sql.
+package migrations
+
+import "embed"
+
+// FS holds the migration files.
+//
+//go:embed *.sql
+var FS embed.FS

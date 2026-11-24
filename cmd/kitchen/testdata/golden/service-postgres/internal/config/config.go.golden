@@ -59,9 +59,7 @@ type Database struct {
 	// MigrateOnStart applies pending migrations before serving. Prefer
 	// running "server migrate up" as a separate deployment step.
 	MigrateOnStart bool `env:"MIGRATE_ON_START"`
-}
-
-// Auth configures bearer-token authentication. Every method needs a valid
+} // Auth configures bearer-token authentication. Every method needs a valid
 // JWT signed by Issuer for Audience, except the health service.
 type Auth struct {
 	// Disabled turns authentication off. It is refused in production.
@@ -111,6 +109,17 @@ func (c Config) validate() error {
 // ValidateServer checks the settings needed to serve requests. It is not
 // part of Load so that commands such as "migrate" run without them.
 func (c Config) ValidateServer() error {
+	return errors.Join(c.validateAuth(), c.validateDeps())
+}
+
+// validateDeps checks the settings of the external services that the
+// server and the worker connect to.
+func (c Config) validateDeps() error {
+	var errs []error
+	return errors.Join(errs...)
+}
+
+func (c Config) validateAuth() error {
 	a := c.Auth
 	if a.Disabled {
 		if c.Env == EnvProduction {

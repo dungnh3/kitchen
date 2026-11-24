@@ -2,7 +2,10 @@
 //
 // Usage:
 //
-//	server                   serve gRPC and REST until SIGINT or SIGTERM
+//	server [serve]           serve gRPC and REST until SIGINT or SIGTERM
+{%- if .Worker %}
+//	server worker            do the background work until SIGINT or SIGTERM
+{%- end %}
 {%- if .Postgres %}
 //	server migrate up        apply pending database migrations
 //	server migrate down      roll back the last migration
@@ -58,16 +61,17 @@ func run(args []string) error {
 		return err
 	}
 	switch {
-	case len(args) == 0:
+	case len(args) == 0 || len(args) == 1 && args[0] == "serve":
 		return app.Run(ctx, cfg, logger, version)
+{%- if .Worker %}
+	case len(args) == 1 && args[0] == "worker":
+		return app.RunWorker(ctx, cfg, logger, version)
+{%- end %}
 {%- if .Postgres %}
 	case len(args) == 2 && args[0] == "migrate":
 		return app.Migrate(ctx, cfg, logger, args[1], os.Stdout)
-	default:
-		return errors.New("usage: server [migrate up|down|status]")
-{%- else %}
-	default:
-		return errors.New("usage: server")
 {%- end %}
+	default:
+		return errors.New("usage: server [{% .Commands %}]")
 	}
 }

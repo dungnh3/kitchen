@@ -1,0 +1,83 @@
+// Package job runs periodic jobs in the worker.
+//
+// Each job runs on one worker replica at a time: the replica that holds the
+// job's lease runs it every interval, and another replica takes over when
+// that one stops or loses the lease. A run is cancelled when the lease is
+// lost, so a run must stop promptly once its context is done.
+package job
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/dungnh3/kitchen/lease"
+	"github.com/dungnh3/kitchen/log"
+)
+
+// Job is a periodic job.
+type Job struct {
+	// Name identifies the job and its lease; keep it stable across releases.
+	Name string
+	// Every is the time between the starts of two runs. The first run
+	// starts Every after a replica takes the lease.
+	Every time.Duration
+	// Run does one run.
+	Run func(ctx context.Context) error
+}
+
+// Run runs jobs under leases taken from locker until ctx is cancelled.
+// logger nil means log.Default().
+func Run(ctx context.Context, locker lease.Locker, logger *log.Logger, jobs ...Job) error {
+	logger = log.OrDefault(logger)
+	electors := make([]*lease.Elector, len(jobs))
+	for i, j := range jobs {
+		if j.Name == "" || j.Every <= 0 || j.Run == nil {
+			return fmt.Errorf("job %q: want a name, a positive interval and a Run function", j.Name)
+		}
+		e, err := lease.NewElector(locker, "job:"+j.Name, lease.WithLogger(logger))
+		if err != nil {
+			return fmt.Errorf("job %q: %w", j.Name, err)
+		}
+		electors[i] = e
+	}
+	var wg sync.WaitGroup
+	for i, j := range jobs {
+		wg.Go(func() {
+			_ = electors[i].Run(ctx, func(ctx context.Context, _ lease.Lease) error {
+				return loop(ctx, j, logger)
+			})
+		})
+	}
+	wg.Wait()
+	return nil
+}
+
+// loop runs j every interval while ctx is not done.
+func loop(ctx context.Context, j Job, logger *log.Logger) error {
+	t := time.NewTicker(j.Every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+		if err := runOnce(ctx, j); err != nil && ctx.Err() == nil {
+			logger.ErrorContext(ctx, "job failed", log.String("job", j.Name), log.Err(err))
+		}
+	}
+}
+
+// runOnce runs j and turns a panic into an error, so one bad run does not
+// stop the worker.
+func runOnce(ctx context.Context, j Job) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Join(err, fmt.Errorf("panic: %v", r))
+		}
+	}()
+	return j.Run(ctx)
+}

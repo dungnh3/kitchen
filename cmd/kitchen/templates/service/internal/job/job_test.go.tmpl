@@ -1,0 +1,71 @@
+package job
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/dungnh3/kitchen/log"
+	leaseredis "github.com/dungnh3/kitchen/lease/redis"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+func newLocker(t *testing.T) *leaseredis.Locker {
+	t.Helper()
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	l, err := leaseredis.New(rdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+func TestRunRepeatsAndSurvivesFailures(t *testing.T) {
+	ran := make(chan struct{}, 10)
+	calls := 0
+	j := Job{Name: "test", Every: 10 * time.Millisecond, Run: func(context.Context) error {
+		calls++
+		ran <- struct{}{}
+		if calls == 1 {
+			return errors.New("first run fails")
+		}
+		if calls == 2 {
+			panic("second run panics")
+		}
+		return nil
+	}}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, newLocker(t), log.Discard(), j) }()
+	for range 3 {
+		<-ran
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunRejectsInvalidJobs(t *testing.T) {
+	tests := []struct {
+		name string
+		job  Job
+	}{
+		{"no name", Job{Every: time.Second, Run: func(context.Context) error { return nil }}},
+		{"no interval", Job{Name: "x", Run: func(context.Context) error { return nil }}},
+		{"no run", Job{Name: "x", Every: time.Second}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := Run(t.Context(), newLocker(t), log.Discard(), tt.job); err == nil {
+				t.Fatal("want an error")
+			}
+		})
+	}
+}

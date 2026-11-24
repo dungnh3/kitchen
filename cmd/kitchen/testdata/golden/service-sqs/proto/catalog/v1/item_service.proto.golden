@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package catalog.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// ItemService manages items. It is an example of a resource-oriented API
+// (https://google.aip.dev/121): replace it with your own.
+service ItemService {
+  // GetItem returns one item.
+  rpc GetItem(GetItemRequest) returns (Item) {
+    option (google.api.http) = {get: "/v1/items/{id}"};
+  }
+
+  // ListItems returns items ordered by id, one page at a time.
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse) {
+    option (google.api.http) = {get: "/v1/items"};
+  }
+
+  // CreateItem creates an item.
+  rpc CreateItem(CreateItemRequest) returns (Item) {
+    option (google.api.http) = {
+      post: "/v1/items"
+      body: "item"
+    };
+  }
+
+  // DeleteItem deletes an item.
+  rpc DeleteItem(DeleteItemRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/items/{id}"};
+  }
+}
+
+// Item is an example resource.
+message Item {
+  // The item id, assigned by the server.
+  string id = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // A short title.
+  string title = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 200
+    }
+  ];
+  // When the item was created.
+  google.protobuf.Timestamp create_time = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// GetItemRequest is the request of GetItem.
+message GetItemRequest {
+  // The item id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListItemsRequest is the request of ListItems.
+message ListItemsRequest {
+  // The maximum number of items to return; 0 means the server default (50).
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // The next_page_token of the previous response, to get the next page.
+  string page_token = 2 [(buf.validate.field).string.max_len = 512];
+}
+
+// ListItemsResponse is the response of ListItems.
+message ListItemsResponse {
+  // The items of this page.
+  repeated Item items = 1;
+  // A token to get the next page; empty on the last page.
+  string next_page_token = 2;
+}
+
+// CreateItemRequest is the request of CreateItem.
+message CreateItemRequest {
+  // The item to create; output-only fields are ignored.
+  Item item = 1 [(buf.validate.field).required = true];
+}
+
+// DeleteItemRequest is the request of DeleteItem.
+message DeleteItemRequest {
+  // The item id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}

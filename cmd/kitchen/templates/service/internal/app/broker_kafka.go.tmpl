@@ -1,0 +1,61 @@
+package app
+
+import (
+	"context"
+	"crypto/tls"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+	"github.com/dungnh3/kitchen/pubsub/kafka"
+	"github.com/twmb/franz-go/pkg/kgo"
+
+	"{% .Module %}/internal/config"
+)
+
+// Broker publishes events and opens the sources that the worker consumes.
+type Broker interface {
+	pubsub.Publisher
+	// Source returns the source of a subscription to topic.
+	Source(topic, subscription string) (pubsub.Source, error)
+}
+
+// kafkaBroker is a Broker on Kafka.
+type kafkaBroker struct {
+	*kafka.Publisher
+	client *kgo.Client
+	opts   []kgo.Opt
+	logger *log.Logger
+}
+
+// openBroker creates a Kafka producer client.
+func openBroker(_ context.Context, cfg config.PubSub, logger *log.Logger) (Broker, error) {
+	opts := []kgo.Opt{kgo.SeedBrokers(cfg.Brokers...)}
+	if cfg.TLS {
+		opts = append(opts, kgo.DialTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}))
+	}
+	client, err := kgo.NewClient(opts...)
+	if err != nil {
+		return nil, err
+	}
+	pub, err := kafka.NewPublisher(client)
+	if err != nil {
+		client.Close()
+		return nil, err
+	}
+	return &kafkaBroker{Publisher: pub, client: client, opts: opts, logger: logger}, nil
+}
+
+// Source implements Broker: subscription is the consumer group. Each source
+// creates its own client.
+func (b *kafkaBroker) Source(topic, subscription string) (pubsub.Source, error) {
+	return kafka.NewSource(subscription, []string{topic},
+		kafka.WithClientOptions(b.opts...),
+		kafka.WithLogger(b.logger))
+}
+
+// Close flushes buffered records and closes the client.
+func (b *kafkaBroker) Close(ctx context.Context) error {
+	err := b.Publisher.Close(ctx)
+	b.client.Close()
+	return err
+}
