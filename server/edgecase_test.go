@@ -20,8 +20,8 @@ import (
 	"github.com/dungnh3/kitchen/errs"
 )
 
-// Review 2026-11-21: an open health Watch stream ends when draining starts,
-// so shutdown is fast and Closers get a live context.
+// An open health Watch stream ends when draining starts, so shutdown is fast
+// and Closers get a live context.
 func TestWatchEndsOnDrain(t *testing.T) {
 	var closed closer
 	r := start(t, WithServices(&closed), WithShutdownTimeout(5*time.Second))
@@ -79,7 +79,7 @@ func TestReadinessPanicAndHang(t *testing.T) {
 }
 
 // The user id set on the HTTP side reaches the gRPC handler behind the REST
-// gateway (it used to be dropped on the in-process hop).
+// gateway, across the in-process hop.
 func TestGatewayForwardsUserID(t *testing.T) {
 	type subjectKey struct{}
 	var user atomic.Value

@@ -68,7 +68,8 @@ func TestRESTAndGRPC(t *testing.T) {
 		t.Error("no X-Request-Id in response")
 	}
 
-	// Public probes; the old library's paths and the version are not public.
+	// Public probes: only /livez and /readyz; other health paths and the
+	// version are not served on the public port.
 	for path, want := range map[string]int{"/livez": 200, "/readyz": 200, "/health": 404, "/api/status": 404, "/ready": 404, "/version": 404} {
 		if resp, body := get(t, r.httpURL+path, nil); resp.StatusCode != want {
 			t.Errorf("GET %s = %d %s", path, resp.StatusCode, body)
@@ -432,8 +433,8 @@ func TestBodyLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
-	// PAYLOAD_TOO_LARGE is INVALID_ARGUMENT with HTTP 413 (errs rule E2's
-	// reason exception).
+	// PAYLOAD_TOO_LARGE is INVALID_ARGUMENT with HTTP 413 (an errs reason
+	// exception to the code-to-status mapping).
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}

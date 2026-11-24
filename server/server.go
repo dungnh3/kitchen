@@ -507,7 +507,8 @@ func (s *Server) shutdown(base context.Context) {
 	ctx, cancel := context.WithTimeout(base, s.cfg.shutdownTimeout)
 	defer cancel()
 	// Draining may use at most 80% of the budget, so Closers always get at
-	// least the last 20% (a stuck stream used to leave them an expired ctx).
+	// least the last 20%, even when a stuck stream holds the drain until its
+	// deadline.
 	drainCtx, drainCancel := context.WithTimeout(ctx, s.cfg.shutdownTimeout*4/5)
 	defer drainCancel()
 

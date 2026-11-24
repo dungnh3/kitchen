@@ -135,11 +135,10 @@ func (s *Server) gatewayError(ctx context.Context, mux *runtime.ServeMux, m runt
 	s.errs.GatewayErrorHandler(ctx, mux, m, w, r, err)
 }
 
-// routingError renders the gateway's routing failures through gatewayError
-// (so WithHTTPErrorHandler still applies) as kitchen errors, instead of
-// grpc-gateway's bare statuses: a bare UNIMPLEMENTED was sanitized and
-// logged at ERROR with a stack trace on every wrong-method request, and
-// answered 501.
+// routingError renders the gateway's routing failures as kitchen errors
+// through gatewayError (so WithHTTPErrorHandler still applies). They are
+// client errors: none is logged at ERROR, so scanners hitting wrong methods
+// do not flood the error log.
 //
 //   - 404: NOT_FOUND.
 //   - 405 (the path exists with another method): HTTP 405, UNIMPLEMENTED.
@@ -163,7 +162,7 @@ func (s *Server) routingError(ctx context.Context, mux *runtime.ServeMux, m runt
 // streamError converts an error that ends a REST stream. A status the errs
 // interceptor completed (it has an ErrorInfo) is kept; anything else, such as
 // a marshaling failure inside the gateway, is converted (sanitized and
-// logged) by the errs.Handler. grpc-gateway's default sent err's text as is.
+// logged) by the errs.Handler, so no internal error text reaches the client.
 func (s *Server) streamError(ctx context.Context, err error) *status.Status {
 	if _, ok := errs.Info(err); ok {
 		if st, ok := status.FromError(err); ok {

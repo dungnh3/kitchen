@@ -31,8 +31,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// TestRunCancelledBeforeServe: a ctx cancelled before the serve goroutines
-// reach Serve used to make Run return "grpc: the server has been stopped".
+// TestRunCancelledBeforeServe: Run returns nil when its ctx is cancelled
+// before the serve goroutines reach Serve.
 func TestRunCancelledBeforeServe(t *testing.T) {
 	for i := range 20 {
 		srv, err := New(WithLogger(quietLogger()), WithGRPCListener(listen(t)), WithHTTPListener(listen(t)), WithAdminListener(listen(t)))
@@ -47,8 +47,9 @@ func TestRunCancelledBeforeServe(t *testing.T) {
 	}
 }
 
-// TestGatewayMethodNotAllowed: a known path with the wrong method was 501
-// UNIMPLEMENTED and logged at ERROR with a stack trace on every request.
+// TestGatewayMethodNotAllowed: a known gateway path with the wrong method is
+// 405 UNIMPLEMENTED and an unknown path 404 NOT_FOUND, neither logged at
+// ERROR.
 func TestGatewayMethodNotAllowed(t *testing.T) {
 	var logs syncBuffer
 	logger := log.New(&logs, log.Options{Level: log.LevelWarn})
@@ -79,9 +80,8 @@ func TestGatewayMethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestStreamErrorEnvelope: an error in the middle of a REST stream is the
-// AIP-193 envelope in every streaming format (it was a bare
-// google.rpc.Status, and NDJSON could not tell it from a result).
+// TestStreamErrorEnvelope: the error that ends a REST stream is the AIP-193
+// envelope in SSE (event: error), NDJSON and JSON streams.
 func TestStreamErrorEnvelope(t *testing.T) {
 	for _, accept := range []string{"text/event-stream", "application/x-ndjson", "application/json"} {
 		t.Run(accept, func(t *testing.T) {
@@ -124,8 +124,8 @@ func TestStreamErrorEnvelope(t *testing.T) {
 	}
 }
 
-// TestStreamErrorSanitized: an error the gateway raises itself in a stream
-// (no ErrorInfo) is sanitized; a converted one is kept.
+// TestStreamErrorSanitized: a stream error without an ErrorInfo is
+// sanitized; one the errs interceptor converted is kept.
 func TestStreamErrorSanitized(t *testing.T) {
 	srv, err := New(WithLogger(quietLogger()), WithGRPCAddr(""), WithHTTPListener(listen(t)))
 	if err != nil {
@@ -142,8 +142,8 @@ func TestStreamErrorSanitized(t *testing.T) {
 	}
 }
 
-// TestGRPCServerOptionsPublicOnly: grpc.Creds in WithGRPCServerOptions also
-// reached the in-process server, so every REST call failed with 503.
+// TestGRPCServerOptionsPublicOnly: WithGRPCServerOptions configures the
+// public port only, so grpc.Creds there leaves REST working.
 func TestGRPCServerOptionsPublicOnly(t *testing.T) {
 	cert, pool := selfSigned(t)
 	gl, hl := listen(t), listen(t)
@@ -168,8 +168,9 @@ func TestGRPCServerOptionsPublicOnly(t *testing.T) {
 	}
 }
 
-// TestHTTPTLS: a TLSConfig set with WithHTTPServerConfig was ignored and the
-// port served plaintext.
+// TestHTTPTLS: a TLSConfig set with WithHTTPServerConfig makes the HTTP port
+// serve TLS (HTTP/1.1 and HTTP/2) and refuse plaintext; one without a
+// certificate fails in New.
 func TestHTTPTLS(t *testing.T) {
 	cert, pool := selfSigned(t)
 	hl := listen(t)
@@ -364,8 +365,8 @@ func (midPanicHTTP) RegisterHTTP(m *http.ServeMux) {
 	})
 }
 
-// TestPanicAfterWriteAborts: a panic after the response started used to end
-// the response cleanly, so the client took a truncated body as complete.
+// TestPanicAfterWriteAborts: a panic after the response started aborts the
+// connection, so the client sees a truncated body as an error.
 func TestPanicAfterWriteAborts(t *testing.T) {
 	r := start(t, WithServices(midPanicHTTP{}))
 	c, err := net.Dial("tcp", strings.TrimPrefix(r.httpURL, "http://"))
@@ -405,8 +406,8 @@ func (wrongImpl) RegisterGRPC(r grpc.ServiceRegistrar) {
 	r.RegisterService(&healthpb.Health_ServiceDesc, struct{}{})
 }
 
-// TestRegistrationErrors: conflicting registrations panicked in New (HTTP
-// patterns) or exited the process (grpc-go's Fatalf for gRPC services).
+// TestRegistrationErrors: New returns an error for conflicting HTTP patterns,
+// a gRPC service registered twice and an implementation of the wrong type.
 func TestRegistrationErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -427,8 +428,8 @@ func TestRegistrationErrors(t *testing.T) {
 	}
 }
 
-// TestGRPCHealthWaitsForChecks: grpc.health.v1 reported SERVING as soon as
-// Run started, before the first readiness run had finished.
+// TestGRPCHealthWaitsForChecks: grpc.health.v1 is NOT_SERVING until the
+// first readiness run passes.
 func TestGRPCHealthWaitsForChecks(t *testing.T) {
 	release := make(chan struct{})
 	r := start(t, WithReadiness(Check{Name: "db", Func: func(ctx context.Context) error {

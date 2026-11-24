@@ -293,7 +293,7 @@ revisited.
 ## Deep review of 2026-11-24 (`server`)
 
 Every line of the package was read; each finding has a regression test that
-failed before the fix (`server/deepreview_test.go`).
+failed before the fix (`server/hardening_test.go`).
 
 | # | Finding | Severity | Decision |
 |---|---|---|---|
