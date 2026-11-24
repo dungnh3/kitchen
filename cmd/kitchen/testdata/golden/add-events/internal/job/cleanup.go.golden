@@ -1,0 +1,22 @@
+package job
+
+import (
+	"context"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+)
+
+// Cleanup returns the cleanup job. It runs every 5m0s on one worker
+// replica at a time.
+func Cleanup(logger *log.Logger) Job {
+	logger = log.OrDefault(logger)
+	return Job{
+		Name:  "cleanup",
+		Every: 5 * time.Minute,
+		Run: func(ctx context.Context) error {
+			logger.InfoContext(ctx, "job ran", log.String("job", "cleanup"))
+			return nil
+		},
+	}
+}

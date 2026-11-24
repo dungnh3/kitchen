@@ -26,6 +26,9 @@ func environ(kv ...string) env.Options {
 {%- else if .SQS %}
 		"PUBSUB_ITEMS_TOPIC": "http://localhost:9324/000000000000/items",
 {%- end %}
+{%- if .PubSub %}
+		// kitchen:subscriptions-env
+{%- end %}
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]

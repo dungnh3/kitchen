@@ -1,0 +1,25 @@
+package store
+
+import (
+	"context"
+	"time"
+)
+
+// {% .E.Name %} is a stored {% .E.Words %}.
+type {% .E.Name %} struct {
+	ID         string
+	Title      string
+	CreateTime time.Time
+}
+
+// {% .E.Names %} persists {% .E.WordsPlural %}. Implementations return errs errors, such as
+// errs.ErrNotFound for a missing {% .E.Words %}, so the server maps them to the right
+// gRPC and HTTP status.
+type {% .E.Names %} interface {
+	Get{% .E.Name %}(ctx context.Context, id string) ({% .E.Name %}, error)
+	// List{% .E.Names %} returns at most limit {% .E.WordsPlural %} with an id greater than
+	// after ("" for the first page), ordered by id.
+	List{% .E.Names %}(ctx context.Context, after string, limit int32) ([]{% .E.Name %}, error)
+	Create{% .E.Name %}(ctx context.Context, title string) ({% .E.Name %}, error)
+	Delete{% .E.Name %}(ctx context.Context, id string) error
+}

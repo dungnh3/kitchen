@@ -1,0 +1,98 @@
+package service
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/server"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "github.com/acme/catalog/gen/catalog/v1"
+	"github.com/acme/catalog/internal/store"
+)
+
+// BoxService implements pb.BoxServiceServer.
+type BoxService struct {
+	pb.UnimplementedBoxServiceServer
+
+	store store.Boxes
+}
+
+var (
+	_ server.Service          = (*BoxService)(nil)
+	_ server.GatewayRegistrar = (*BoxService)(nil)
+)
+
+// NewBoxService returns a BoxService that keeps boxes in s.
+func NewBoxService(s store.Boxes) *BoxService {
+	return &BoxService{store: s}
+}
+
+// RegisterGRPC implements server.Service.
+func (s *BoxService) RegisterGRPC(r grpc.ServiceRegistrar) {
+	pb.RegisterBoxServiceServer(r, s)
+}
+
+// RegisterGateway implements server.GatewayRegistrar.
+func (s *BoxService) RegisterGateway(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
+	return pb.RegisterBoxServiceHandler(ctx, mux, conn)
+}
+
+// GetBox implements pb.BoxServiceServer.
+func (s *BoxService) GetBox(ctx context.Context, req *pb.GetBoxRequest) (*pb.Box, error) {
+	v, err := s.store.GetBox(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return boxToProto(v), nil
+}
+
+// ListBoxes implements pb.BoxServiceServer.
+func (s *BoxService) ListBoxes(ctx context.Context, req *pb.ListBoxesRequest) (*pb.ListBoxesResponse, error) {
+	size := req.GetPageSize()
+	if size == 0 {
+		size = defaultPageSize
+	}
+	after, err := decodePageToken(req.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	// Ask for one more to know whether there is a next page.
+	list, err := s.store.ListBoxes(ctx, after, size+1)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.ListBoxesResponse{}
+	if len(list) > int(size) {
+		list = list[:size]
+		resp.NextPageToken = encodePageToken(list[len(list)-1].ID)
+	}
+	resp.Boxes = make([]*pb.Box, len(list))
+	for i, v := range list {
+		resp.Boxes[i] = boxToProto(v)
+	}
+	return resp, nil
+}
+
+// CreateBox implements pb.BoxServiceServer.
+func (s *BoxService) CreateBox(ctx context.Context, req *pb.CreateBoxRequest) (*pb.Box, error) {
+	v, err := s.store.CreateBox(ctx, req.GetBox().GetTitle())
+	if err != nil {
+		return nil, err
+	}
+	return boxToProto(v), nil
+}
+
+// DeleteBox implements pb.BoxServiceServer.
+func (s *BoxService) DeleteBox(ctx context.Context, req *pb.DeleteBoxRequest) (*emptypb.Empty, error) {
+	if err := s.store.DeleteBox(ctx, req.GetId()); err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func boxToProto(v store.Box) *pb.Box {
+	return &pb.Box{Id: v.ID, Title: v.Title, CreateTime: timestamppb.New(v.CreateTime)}
+}

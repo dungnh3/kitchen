@@ -1,0 +1,98 @@
+package service
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/server"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "github.com/acme/notify/gen/notify/v1"
+	"github.com/acme/notify/internal/store"
+)
+
+// CategoryService implements pb.CategoryServiceServer.
+type CategoryService struct {
+	pb.UnimplementedCategoryServiceServer
+
+	store store.Categories
+}
+
+var (
+	_ server.Service          = (*CategoryService)(nil)
+	_ server.GatewayRegistrar = (*CategoryService)(nil)
+)
+
+// NewCategoryService returns a CategoryService that keeps categories in s.
+func NewCategoryService(s store.Categories) *CategoryService {
+	return &CategoryService{store: s}
+}
+
+// RegisterGRPC implements server.Service.
+func (s *CategoryService) RegisterGRPC(r grpc.ServiceRegistrar) {
+	pb.RegisterCategoryServiceServer(r, s)
+}
+
+// RegisterGateway implements server.GatewayRegistrar.
+func (s *CategoryService) RegisterGateway(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
+	return pb.RegisterCategoryServiceHandler(ctx, mux, conn)
+}
+
+// GetCategory implements pb.CategoryServiceServer.
+func (s *CategoryService) GetCategory(ctx context.Context, req *pb.GetCategoryRequest) (*pb.Category, error) {
+	v, err := s.store.GetCategory(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return categoryToProto(v), nil
+}
+
+// ListCategories implements pb.CategoryServiceServer.
+func (s *CategoryService) ListCategories(ctx context.Context, req *pb.ListCategoriesRequest) (*pb.ListCategoriesResponse, error) {
+	size := req.GetPageSize()
+	if size == 0 {
+		size = defaultPageSize
+	}
+	after, err := decodePageToken(req.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	// Ask for one more to know whether there is a next page.
+	list, err := s.store.ListCategories(ctx, after, size+1)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.ListCategoriesResponse{}
+	if len(list) > int(size) {
+		list = list[:size]
+		resp.NextPageToken = encodePageToken(list[len(list)-1].ID)
+	}
+	resp.Categories = make([]*pb.Category, len(list))
+	for i, v := range list {
+		resp.Categories[i] = categoryToProto(v)
+	}
+	return resp, nil
+}
+
+// CreateCategory implements pb.CategoryServiceServer.
+func (s *CategoryService) CreateCategory(ctx context.Context, req *pb.CreateCategoryRequest) (*pb.Category, error) {
+	v, err := s.store.CreateCategory(ctx, req.GetCategory().GetTitle())
+	if err != nil {
+		return nil, err
+	}
+	return categoryToProto(v), nil
+}
+
+// DeleteCategory implements pb.CategoryServiceServer.
+func (s *CategoryService) DeleteCategory(ctx context.Context, req *pb.DeleteCategoryRequest) (*emptypb.Empty, error) {
+	if err := s.store.DeleteCategory(ctx, req.GetId()); err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func categoryToProto(v store.Category) *pb.Category {
+	return &pb.Category{Id: v.ID, Title: v.Title, CreateTime: timestamppb.New(v.CreateTime)}
+}

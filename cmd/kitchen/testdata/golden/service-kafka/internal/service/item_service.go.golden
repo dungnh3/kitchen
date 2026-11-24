@@ -1,0 +1,98 @@
+package service
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/server"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "github.com/acme/notify/gen/notify/v1"
+	"github.com/acme/notify/internal/store"
+)
+
+// ItemService implements pb.ItemServiceServer.
+type ItemService struct {
+	pb.UnimplementedItemServiceServer
+
+	store store.Items
+}
+
+var (
+	_ server.Service          = (*ItemService)(nil)
+	_ server.GatewayRegistrar = (*ItemService)(nil)
+)
+
+// NewItemService returns an ItemService that keeps items in s.
+func NewItemService(s store.Items) *ItemService {
+	return &ItemService{store: s}
+}
+
+// RegisterGRPC implements server.Service.
+func (s *ItemService) RegisterGRPC(r grpc.ServiceRegistrar) {
+	pb.RegisterItemServiceServer(r, s)
+}
+
+// RegisterGateway implements server.GatewayRegistrar.
+func (s *ItemService) RegisterGateway(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
+	return pb.RegisterItemServiceHandler(ctx, mux, conn)
+}
+
+// GetItem implements pb.ItemServiceServer.
+func (s *ItemService) GetItem(ctx context.Context, req *pb.GetItemRequest) (*pb.Item, error) {
+	v, err := s.store.GetItem(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return itemToProto(v), nil
+}
+
+// ListItems implements pb.ItemServiceServer.
+func (s *ItemService) ListItems(ctx context.Context, req *pb.ListItemsRequest) (*pb.ListItemsResponse, error) {
+	size := req.GetPageSize()
+	if size == 0 {
+		size = defaultPageSize
+	}
+	after, err := decodePageToken(req.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	// Ask for one more to know whether there is a next page.
+	list, err := s.store.ListItems(ctx, after, size+1)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.ListItemsResponse{}
+	if len(list) > int(size) {
+		list = list[:size]
+		resp.NextPageToken = encodePageToken(list[len(list)-1].ID)
+	}
+	resp.Items = make([]*pb.Item, len(list))
+	for i, v := range list {
+		resp.Items[i] = itemToProto(v)
+	}
+	return resp, nil
+}
+
+// CreateItem implements pb.ItemServiceServer.
+func (s *ItemService) CreateItem(ctx context.Context, req *pb.CreateItemRequest) (*pb.Item, error) {
+	v, err := s.store.CreateItem(ctx, req.GetItem().GetTitle())
+	if err != nil {
+		return nil, err
+	}
+	return itemToProto(v), nil
+}
+
+// DeleteItem implements pb.ItemServiceServer.
+func (s *ItemService) DeleteItem(ctx context.Context, req *pb.DeleteItemRequest) (*emptypb.Empty, error) {
+	if err := s.store.DeleteItem(ctx, req.GetId()); err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func itemToProto(v store.Item) *pb.Item {
+	return &pb.Item{Id: v.ID, Title: v.Title, CreateTime: timestamppb.New(v.CreateTime)}
+}

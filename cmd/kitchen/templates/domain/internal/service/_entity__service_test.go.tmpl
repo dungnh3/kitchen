@@ -1,0 +1,85 @@
+package service
+
+import (
+	"testing"
+
+	"github.com/dungnh3/kitchen/errs"
+	"google.golang.org/grpc/codes"
+
+	pb "{% .Module %}/gen/{% .ProtoPackage %}/v1"
+	"{% .Module %}/internal/store/memstore"
+)
+
+func Test{% .E.Name %}Lifecycle(t *testing.T) {
+	ctx := t.Context()
+	svc := New{% .E.Name %}Service(memstore.New{% .E.Names %}())
+
+	created, err := svc.Create{% .E.Name %}(ctx, &pb.Create{% .E.Name %}Request{% "{" %}{% .E.Name %}: &pb.{% .E.Name %}{Title: "first"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.GetId() == "" || created.GetCreateTime() == nil {
+		t.Fatalf("server fields not set: %v", created)
+	}
+
+	got, err := svc.Get{% .E.Name %}(ctx, &pb.Get{% .E.Name %}Request{Id: created.GetId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetTitle() != "first" {
+		t.Errorf("title = %q, want %q", got.GetTitle(), "first")
+	}
+
+	if _, err := svc.Delete{% .E.Name %}(ctx, &pb.Delete{% .E.Name %}Request{Id: created.GetId()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Get{% .E.Name %}(ctx, &pb.Get{% .E.Name %}Request{Id: created.GetId()}); errs.Code(err) != codes.NotFound {
+		t.Errorf("Get{% .E.Name %} after delete: code %v, want NotFound (err %v)", errs.Code(err), err)
+	}
+	if _, err := svc.Delete{% .E.Name %}(ctx, &pb.Delete{% .E.Name %}Request{Id: created.GetId()}); errs.Code(err) != codes.NotFound {
+		t.Errorf("second Delete{% .E.Name %}: code %v, want NotFound", errs.Code(err))
+	}
+}
+
+func TestList{% .E.Names %}Pages(t *testing.T) {
+	ctx := t.Context()
+	svc := New{% .E.Name %}Service(memstore.New{% .E.Names %}())
+	for _, title := range []string{"a", "b", "c", "d", "e"} {
+		if _, err := svc.Create{% .E.Name %}(ctx, &pb.Create{% .E.Name %}Request{% "{" %}{% .E.Name %}: &pb.{% .E.Name %}{Title: title}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seen := map[string]bool{}
+	token := ""
+	for pages := 1; ; pages++ {
+		resp, err := svc.List{% .E.Names %}(ctx, &pb.List{% .E.Names %}Request{PageSize: 2, PageToken: token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range resp.Get{% .E.Names %}() {
+			if seen[v.GetId()] {
+				t.Fatalf("%s returned twice", v.GetId())
+			}
+			seen[v.GetId()] = true
+		}
+		token = resp.GetNextPageToken()
+		if token == "" {
+			if pages != 3 {
+				t.Errorf("got %d pages, want 3", pages)
+			}
+			break
+		}
+	}
+	if len(seen) != 5 {
+		t.Errorf("listed %d, want 5", len(seen))
+	}
+}
+
+func TestList{% .E.Names %}BadToken(t *testing.T) {
+	svc := New{% .E.Name %}Service(memstore.New{% .E.Names %}())
+	_, err := svc.List{% .E.Names %}(t.Context(), &pb.List{% .E.Names %}Request{PageToken: "%%%"})
+	if errs.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code %v, want InvalidArgument (err %v)", errs.Code(err), err)
+	}
+}

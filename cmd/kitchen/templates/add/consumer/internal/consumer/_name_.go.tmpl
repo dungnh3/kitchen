@@ -1,0 +1,37 @@
+package consumer
+
+import (
+	"context"
+	"errors"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+)
+
+// {% .N.Name %}Message is the JSON message that the {% .N.Words %} consumer reads.
+// Change its fields to the producer's payload.
+type {% .N.Name %}Message struct {
+	ID string `json:"id"`
+}
+
+// {% .N.Name %} handles {% .N.Name %}Message messages.
+type {% .N.Name %} struct {
+	logger *log.Logger
+}
+
+// New{% .N.Name %} returns {% .N.Article %} {% .N.Name %} handler. logger nil means log.Default().
+func New{% .N.Name %}(logger *log.Logger) *{% .N.Name %} {
+	return &{% .N.Name %}{logger: log.OrDefault(logger)}
+}
+
+// Handler returns the handler to subscribe. A message that is not a
+// {% .N.Name %}Message JSON document is dead-lettered.
+func (h *{% .N.Name %}) Handler() pubsub.Handler { return pubsub.JSON(h.handle) }
+
+func (h *{% .N.Name %}) handle(ctx context.Context, msg {% .N.Name %}Message, _ *pubsub.Message) error {
+	if msg.ID == "" {
+		return pubsub.Permanent(errors.New("{% .N.Name %}Message without id"))
+	}
+	h.logger.InfoContext(ctx, "message handled", log.String("consumer", "{% .N.Words %}"), log.String("id", msg.ID))
+	return nil
+}

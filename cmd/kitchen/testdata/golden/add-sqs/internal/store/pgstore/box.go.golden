@@ -1,0 +1,76 @@
+package pgstore
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/pg"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/acme/catalog/internal/store"
+	"github.com/acme/catalog/internal/store/pgstore/sqlcdb"
+)
+
+// Boxes is a store.Boxes on a pgx pool.
+type Boxes struct {
+	q *sqlcdb.Queries
+}
+
+var _ store.Boxes = (*Boxes)(nil)
+
+// NewBoxes returns Boxes on pool, which the caller owns.
+func NewBoxes(pool *pgxpool.Pool) *Boxes {
+	return &Boxes{q: sqlcdb.New(pool)}
+}
+
+// GetBox implements store.Boxes.
+func (s *Boxes) GetBox(ctx context.Context, id string) (store.Box, error) {
+	row, err := s.q.GetBox(ctx, id)
+	if err != nil {
+		// pg.MapError turns pgx.ErrNoRows into errs.ErrNotFound, constraint
+		// violations into the matching errs sentinel, and so on.
+		return store.Box{}, pg.MapError(err)
+	}
+	return boxFromRow(row), nil
+}
+
+// ListBoxes implements store.Boxes.
+func (s *Boxes) ListBoxes(ctx context.Context, after string, limit int32) ([]store.Box, error) {
+	if after == "" {
+		after = firstID
+	}
+	rows, err := s.q.ListBoxes(ctx, sqlcdb.ListBoxesParams{After: after, PageLimit: limit})
+	if err != nil {
+		return nil, pg.MapError(err)
+	}
+	out := make([]store.Box, len(rows))
+	for i, r := range rows {
+		out[i] = boxFromRow(r)
+	}
+	return out, nil
+}
+
+// CreateBox implements store.Boxes.
+func (s *Boxes) CreateBox(ctx context.Context, title string) (store.Box, error) {
+	row, err := s.q.CreateBox(ctx, title)
+	if err != nil {
+		return store.Box{}, pg.MapError(err)
+	}
+	return boxFromRow(row), nil
+}
+
+// DeleteBox implements store.Boxes.
+func (s *Boxes) DeleteBox(ctx context.Context, id string) error {
+	n, err := s.q.DeleteBox(ctx, id)
+	if err != nil {
+		return pg.MapError(err)
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+func boxFromRow(r sqlcdb.Box) store.Box {
+	return store.Box{ID: r.ID, Title: r.Title, CreateTime: r.CreateTime}
+}

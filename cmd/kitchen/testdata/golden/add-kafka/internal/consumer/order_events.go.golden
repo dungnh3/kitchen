@@ -1,0 +1,37 @@
+package consumer
+
+import (
+	"context"
+	"errors"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+)
+
+// OrderEventsMessage is the JSON message that the order events consumer reads.
+// Change its fields to the producer's payload.
+type OrderEventsMessage struct {
+	ID string `json:"id"`
+}
+
+// OrderEvents handles OrderEventsMessage messages.
+type OrderEvents struct {
+	logger *log.Logger
+}
+
+// NewOrderEvents returns an OrderEvents handler. logger nil means log.Default().
+func NewOrderEvents(logger *log.Logger) *OrderEvents {
+	return &OrderEvents{logger: log.OrDefault(logger)}
+}
+
+// Handler returns the handler to subscribe. A message that is not a
+// OrderEventsMessage JSON document is dead-lettered.
+func (h *OrderEvents) Handler() pubsub.Handler { return pubsub.JSON(h.handle) }
+
+func (h *OrderEvents) handle(ctx context.Context, msg OrderEventsMessage, _ *pubsub.Message) error {
+	if msg.ID == "" {
+		return pubsub.Permanent(errors.New("OrderEventsMessage without id"))
+	}
+	h.logger.InfoContext(ctx, "message handled", log.String("consumer", "order events"), log.String("id", msg.ID))
+	return nil
+}

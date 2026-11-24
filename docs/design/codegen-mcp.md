@@ -244,7 +244,7 @@ kitchen new service ... [-with redis,lease,pubsub,outbox] [-pubsub gcp|kafka|sqs
 | F3 | Periodic jobs run in the worker under `lease.Elector` (one replica per job), interval only | a new `cron` package; Kubernetes CronJob only | No new concern or dependency |
 | F4 | Local dependencies in `compose.yaml` (`make up`/`down`, creates topics, subscriptions, queues) and every variable in `docs/ENV.md`; no Kubernetes or Helm files | kustomize; Helm | Manifests live with the platform; the env contract is what a deploy needs |
 | F5 | Upgrades of generated projects: a manifest plus a drift check first (§3c), a three-way `kitchen upgrade` later | upgrade now; none | Cheap and safe while templates still change |
-| F6 | Add-on generators planned: `kitchen add domain`, `add consumer`, `add job`; no `add rpc` or `add migration` (buf and goose do that) | – | – |
+| F6 | Add-on generators `kitchen add domain`, `add consumer`, `add job` (§3d); no `add rpc` or `add migration` (buf and goose do that) | – | – |
 | F7 | Internal APIs: a per-method policy, deny by default | a second gRPC port | One mechanism, fail-closed |
 | F8 | MySQL template later; MongoDB documented only | both; Postgres only | – |
 
@@ -278,6 +278,28 @@ failure. The managed header goes after a Dockerfile `# syntax=` directive.
 Generated CI and `make check` pin the CLI at the version that generated the
 project (`v0.1.0` for development builds). `kitchen new service -dry-run`
 lists the files, marking the managed ones.
+
+## 3d. `kitchen add` (owner, popups 2026-11-24)
+
+| # | Decision (owner) | Alternatives | Why |
+|---|---|---|---|
+| A1 | A new domain's proto file goes in the service's proto package (`proto/<pkg>/v1/<domain>_service.proto`) | a sub-package `<pkg>.<domain>.v1`; `proto/<domain>/v1` | No global name clash between services (Go protobuf panics when two packages with the same full name are linked), one `gen/` package |
+| A2 | One file per domain in the existing packages (`service`, `store`, `memstore`, `pgstore`, `queries/`) | a package per domain | Few packages; the example `item` domain uses the same layout |
+| A3 | A domain is a full CRUD vertical, rendered from the same `templates/domain` as `item` | an empty skeleton | It runs at once and is covered by the build tests |
+
+Mechanics: `kitchen add domain|consumer|job` reads `.kitchen.yaml`, renders
+`templates/domain` or `templates/add/<kind>`, and inserts lines before
+marker comments (`// kitchen:stores`, `kitchen:services`, `kitchen:consumers`,
+`kitchen:subscriptions`, `kitchen:subscriptions-validate`,
+`kitchen:subscriptions-test`, `kitchen:subscriptions-env`, `kitchen:jobs`,
+`# kitchen:local-env`, `<!-- kitchen:subscriptions -->`), indented like the
+marker; Go files are gofmt'd. All files and markers are checked first and
+nothing is written on any failure. `add domain` takes the next migration
+number and runs `buf generate` and `sqlc generate`. Names: singular kebab
+case; the plural is the regular English one unless `-plural` is given. A
+consumer gets a required `PUBSUB_<NAME>_*` subscription (`config.Subscription`
+with `Validate`) and its local topic, subscription or queue in the
+Makefile. `item` keeps its flat `PUBSUB_ITEMS_*` settings with defaults.
 
 ## 4. Sequencing
 

@@ -1,9 +1,0 @@
--- +goose Up
-CREATE TABLE items (
-    id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-    title       text        NOT NULL CHECK (char_length(title) BETWEEN 1 AND 200),
-    create_time timestamptz NOT NULL DEFAULT now()
-);
-
--- +goose Down
-DROP TABLE items;

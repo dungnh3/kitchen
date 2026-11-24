@@ -1,0 +1,98 @@
+package service
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/server"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "{% .Module %}/gen/{% .ProtoPackage %}/v1"
+	"{% .Module %}/internal/store"
+)
+
+// {% .E.Name %}Service implements pb.{% .E.Name %}ServiceServer.
+type {% .E.Name %}Service struct {
+	pb.Unimplemented{% .E.Name %}ServiceServer
+
+	store store.{% .E.Names %}
+}
+
+var (
+	_ server.Service          = (*{% .E.Name %}Service)(nil)
+	_ server.GatewayRegistrar = (*{% .E.Name %}Service)(nil)
+)
+
+// New{% .E.Name %}Service returns {% .E.Article %} {% .E.Name %}Service that keeps {% .E.WordsPlural %} in s.
+func New{% .E.Name %}Service(s store.{% .E.Names %}) *{% .E.Name %}Service {
+	return &{% .E.Name %}Service{store: s}
+}
+
+// RegisterGRPC implements server.Service.
+func (s *{% .E.Name %}Service) RegisterGRPC(r grpc.ServiceRegistrar) {
+	pb.Register{% .E.Name %}ServiceServer(r, s)
+}
+
+// RegisterGateway implements server.GatewayRegistrar.
+func (s *{% .E.Name %}Service) RegisterGateway(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
+	return pb.Register{% .E.Name %}ServiceHandler(ctx, mux, conn)
+}
+
+// Get{% .E.Name %} implements pb.{% .E.Name %}ServiceServer.
+func (s *{% .E.Name %}Service) Get{% .E.Name %}(ctx context.Context, req *pb.Get{% .E.Name %}Request) (*pb.{% .E.Name %}, error) {
+	v, err := s.store.Get{% .E.Name %}(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return {% .E.Lower %}ToProto(v), nil
+}
+
+// List{% .E.Names %} implements pb.{% .E.Name %}ServiceServer.
+func (s *{% .E.Name %}Service) List{% .E.Names %}(ctx context.Context, req *pb.List{% .E.Names %}Request) (*pb.List{% .E.Names %}Response, error) {
+	size := req.GetPageSize()
+	if size == 0 {
+		size = defaultPageSize
+	}
+	after, err := decodePageToken(req.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	// Ask for one more to know whether there is a next page.
+	list, err := s.store.List{% .E.Names %}(ctx, after, size+1)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.List{% .E.Names %}Response{}
+	if len(list) > int(size) {
+		list = list[:size]
+		resp.NextPageToken = encodePageToken(list[len(list)-1].ID)
+	}
+	resp.{% .E.Names %} = make([]*pb.{% .E.Name %}, len(list))
+	for i, v := range list {
+		resp.{% .E.Names %}[i] = {% .E.Lower %}ToProto(v)
+	}
+	return resp, nil
+}
+
+// Create{% .E.Name %} implements pb.{% .E.Name %}ServiceServer.
+func (s *{% .E.Name %}Service) Create{% .E.Name %}(ctx context.Context, req *pb.Create{% .E.Name %}Request) (*pb.{% .E.Name %}, error) {
+	v, err := s.store.Create{% .E.Name %}(ctx, req.Get{% .E.Name %}().GetTitle())
+	if err != nil {
+		return nil, err
+	}
+	return {% .E.Lower %}ToProto(v), nil
+}
+
+// Delete{% .E.Name %} implements pb.{% .E.Name %}ServiceServer.
+func (s *{% .E.Name %}Service) Delete{% .E.Name %}(ctx context.Context, req *pb.Delete{% .E.Name %}Request) (*emptypb.Empty, error) {
+	if err := s.store.Delete{% .E.Name %}(ctx, req.GetId()); err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func {% .E.Lower %}ToProto(v store.{% .E.Name %}) *pb.{% .E.Name %} {
+	return &pb.{% .E.Name %}{Id: v.ID, Title: v.Title, CreateTime: timestamppb.New(v.CreateTime)}
+}

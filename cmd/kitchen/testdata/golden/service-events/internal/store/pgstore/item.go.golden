@@ -1,0 +1,97 @@
+package pgstore
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/pg"
+	outboxpgx "github.com/dungnh3/kitchen/pubsub/outbox/pgx"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/acme/billing/internal/events"
+	"github.com/acme/billing/internal/store"
+	"github.com/acme/billing/internal/store/pgstore/sqlcdb"
+)
+
+// Items is a store.Items on a pgx pool.
+type Items struct {
+	q      *sqlcdb.Queries
+	pool   *pgxpool.Pool
+	outbox *outboxpgx.Store
+	topic  string
+}
+
+var _ store.Items = (*Items)(nil)
+
+// NewItems returns Items on pool, which the caller owns. Events are
+// written to outbox, for topic, in the transaction of the change.
+func NewItems(pool *pgxpool.Pool, outbox *outboxpgx.Store, topic string) *Items {
+	return &Items{q: sqlcdb.New(pool), pool: pool, outbox: outbox, topic: topic}
+}
+
+// GetItem implements store.Items.
+func (s *Items) GetItem(ctx context.Context, id string) (store.Item, error) {
+	row, err := s.q.GetItem(ctx, id)
+	if err != nil {
+		// pg.MapError turns pgx.ErrNoRows into errs.ErrNotFound, constraint
+		// violations into the matching errs sentinel, and so on.
+		return store.Item{}, pg.MapError(err)
+	}
+	return itemFromRow(row), nil
+}
+
+// ListItems implements store.Items.
+func (s *Items) ListItems(ctx context.Context, after string, limit int32) ([]store.Item, error) {
+	if after == "" {
+		after = firstID
+	}
+	rows, err := s.q.ListItems(ctx, sqlcdb.ListItemsParams{After: after, PageLimit: limit})
+	if err != nil {
+		return nil, pg.MapError(err)
+	}
+	out := make([]store.Item, len(rows))
+	for i, r := range rows {
+		out[i] = itemFromRow(r)
+	}
+	return out, nil
+}
+
+// CreateItem implements store.Items. The item and its ItemCreated event are
+// written in one transaction, so the event is enqueued if and only if the
+// item is stored; the worker's relay then publishes it.
+func (s *Items) CreateItem(ctx context.Context, title string) (store.Item, error) {
+	var v store.Item
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		row, err := s.q.WithTx(tx).CreateItem(ctx, title)
+		if err != nil {
+			return err
+		}
+		v = itemFromRow(row)
+		m, err := events.NewItemCreated(v)
+		if err != nil {
+			return err
+		}
+		return s.outbox.Enqueue(ctx, tx, s.topic, m)
+	})
+	if err != nil {
+		return store.Item{}, pg.MapError(err)
+	}
+	return v, nil
+}
+
+// DeleteItem implements store.Items.
+func (s *Items) DeleteItem(ctx context.Context, id string) error {
+	n, err := s.q.DeleteItem(ctx, id)
+	if err != nil {
+		return pg.MapError(err)
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+func itemFromRow(r sqlcdb.Item) store.Item {
+	return store.Item{ID: r.ID, Title: r.Title, CreateTime: r.CreateTime}
+}

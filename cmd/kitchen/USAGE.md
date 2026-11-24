@@ -1,8 +1,8 @@
 # cmd/kitchen
 
 `kitchen` is the code generator for projects built on kitchen. It has two
-templates, and a `check` command that keeps generated services in line
-with their template:
+templates, an `add` command that grows a generated service, and a `check`
+command that keeps it in line with its template:
 
 - `kitchen new service`: a gRPC + REST (grpc-gateway) service, with
   PostgreSQL or without a database, and optional Redis, events (Pub/Sub,
@@ -128,8 +128,8 @@ worker`): deploy it from the same image as a second Deployment.
 
 What `-name` controls in a service: the proto package (dashes become
 underscores, so `edge-gw` gives `proto/edge_gw/v1/`), the telemetry service
-name and the default `ERROR_DOMAIN`. The example service is always
-`ItemService`.
+name and the default `ERROR_DOMAIN`. The example domain is always `item`
+(`ItemService`); add others with `kitchen add domain`.
 
 ### `kitchen new mcp` only
 
@@ -176,8 +176,8 @@ The exact trees are in [testdata/golden](testdata/golden):
 | `internal/events/`, `internal/consumer/`, `internal/job/` | Events and their handlers (`pubsub`), periodic jobs (`lease`) |
 | `internal/app/migrate.go` | goose migrations through kitchen `migrate`, with an advisory lock |
 | `internal/app/app_test.go` | Integration test of the whole service on random ports (Postgres via testcontainers) |
-| `internal/service/` | `ItemService` over `store.Store`, with opaque page tokens; unit tests |
-| `internal/store/` | `Store` interface, `memstore`, and `pgstore` with `queries.sql` and sqlc output (`sqlcdb`, committed) |
+| `internal/service/` | One file per domain (`item_service.go`: `ItemService` over `store.Items`), opaque page tokens; unit tests |
+| `internal/store/` | One file per domain in each package: types and interface (`store.Items`), `memstore`, and `pgstore` with `queries/<domain>.sql` and sqlc output (`sqlcdb`, committed) |
 | `migrations/` | goose SQL, embedded in the binary; `00002_create_outbox.sql` with `outbox` |
 | `compose.yaml` | Local Postgres, Redis and broker (emulator) for `make up` |
 | `.kitchen.yaml` | How the project was generated and the hash of each managed file; read by `kitchen check` |
@@ -282,6 +282,42 @@ files rather than copies here:
   clients, `http.Server`, `status.New`, OTel SDK setup and so on. Tests may
   use the libraries directly. Keep the file when you change the project.
 
+## `kitchen add`
+
+Run it in a generated service; it reads `.kitchen.yaml` for the module,
+database and features. Names are lower-case words separated by dashes.
+
+```bash
+kitchen add domain order-item          # or: -plural people for an irregular plural
+kitchen add consumer payments          # needs -with pubsub
+kitchen add job cleanup -every 5m      # needs -with lease
+```
+
+| Command | Writes | Changes |
+|---|---|---|
+| `add domain <name>` | `proto/<pkg>/v1/<name>_service.proto` (same proto package; CRUD with protovalidate and REST at `/v1/<plural>`), `internal/service/<name>_service.go` and test, `internal/store/<name>.go`, `memstore/<name>.go`, and with Postgres `pgstore/<name>.go`, `pgstore/queries/<name>.sql` and the next migration | `internal/app/app.go` (store and service); then runs `buf generate` and `sqlc generate` (`-no-generate` to skip) |
+| `add consumer <name>` | `internal/consumer/<name>.go` (a `pubsub.JSON` handler over a message type to adapt) and test | `config.go` (a `PUBSUB_<NAME>_*` subscription, validated), `worker.go` (subscribe), the tests' config, `docs/ENV.md`, the `Makefile` local settings and the topic, subscription or queue that `make up` creates |
+| `add job <name>` | `internal/job/<name>.go` and test | `worker.go` (the job list) |
+
+Changes go before marker comments such as `// kitchen:services` in the
+generated files; keep the markers. Every file and marker is checked before
+anything is written: an existing file, a taken name or a missing marker
+stops the command and changes nothing, with the error naming the file. The
+names of the services, stores, consumers and jobs come from `<name>`, so
+`order-item` gives `OrderItemService`, `store.OrderItems`, the table
+`order_items` and the REST collection `/v1/orderItems`.
+
+| Flag | Commands | Default | Meaning |
+|---|---|---|---|
+| `-dir` | all | `.` | Project directory |
+| `-plural` | `domain` | regular English plural | Plural for an irregular noun, for example `-plural people` |
+| `-no-generate` | `domain` | `false` | Skip `buf generate` and `sqlc generate`; run `make generate` later |
+| `-every` | `job` | `1m` | Time between two runs |
+
+Add an RPC to an existing service, or a migration, by hand: see below.
+`buf` and `goose` already do those, so there is no `kitchen add rpc` or
+`kitchen add migration`.
+
 ## Advanced
 
 ### Add an RPC to a service
@@ -289,31 +325,29 @@ files rather than copies here:
 1. Edit `proto/<name>/v1/*.proto`. Validation rules go in the proto file;
    `server` enforces them before your method runs.
 2. With Postgres, add a migration in `migrations/` and queries in
-   `internal/store/pgstore/queries.sql`.
+   `internal/store/pgstore/queries/<domain>.sql`.
 3. Run `make generate`. It runs `buf generate` and `sqlc generate`.
 4. Implement the method in `internal/service`.
 5. Run `make lint` (golangci-lint, `buf lint`, `sqlc vet`) and
    `make breaking` to compare the API with `main`.
 
 `gen/` and `sqlcdb/` are committed. CI runs `make generate` and fails if
-they are stale. A new gRPC service type is registered in
-`internal/app/app.go` next to the existing one:
+they are stale. A new gRPC service type is registered in the `services`
+list of `internal/app/app.go` (`kitchen add domain` does it for you):
 
 ```go
-server.WithServices(service.New(st)),
+services := []server.Service{
+	service.NewItemService(items),
+	// kitchen:services
+}
 ```
 
-### Add a consumer or a job
+### Consumers and jobs
 
-A consumer is a `pubsub.Handler`, usually `pubsub.JSON` over an event type
-from `internal/events`. Subscribe it in `RunWorker` like the `ItemCreated`
-one, with its own topic and subscription settings in `config.PubSub`.
-Handlers must be idempotent: return `nil` to ack, an error to retry and
-`pubsub.Permanent(err)` to dead-letter.
-
-A job is a `job.Job{Name, Every, Run}` in `jobs` in
-`internal/app/worker.go`. Keep `Name` stable (it names the lease) and stop
-the run when its context is cancelled.
+Consumer handlers must be idempotent: return `nil` to ack, an error to
+retry and `pubsub.Permanent(err)` to dead-letter. Keep a job's `Name`
+stable (it names the lease) and stop the run when its context is
+cancelled.
 
 ### Run the dependencies locally
 
@@ -362,8 +396,7 @@ copy `internal/app/migrate.go`, `internal/store/pgstore/`, `migrations/`,
 `sqlc.yaml`, and the `Database` config and `openDB` wiring from
 [service-postgres](testdata/golden/service-postgres).
 
-For MySQL or MongoDB there is no template. Write a `store.Store`
-implementation and open the client in `internal/app` with `mysqlx.Open` or
+For MySQL or MongoDB there is no template. Implement the store interfaces and open the client in `internal/app` with `mysqlx.Open` or
 `mongox.Open`; never call the drivers directly (the lint config denies
 them). For MySQL migrations, use `migrate.NewMySQL` in place of
 `migrate.NewPostgres`. See [pg](../../pg), [mysqlx](../../mysqlx),
@@ -427,7 +460,8 @@ The generated projects:
   With a worker it also runs the worker; Redis is miniredis and the broker
   is the in-memory `pubsub/memory`, so it checks that creating an item
   publishes its event (through the outbox with `outbox`).
-- `memstore` is the fake for `store.Store`; there are no mocks to generate.
+- `memstore` is the fake for the store interfaces; there are no mocks to
+  generate.
 - Config tests cover the environment parsing and validation.
 - Lint: `make lint` runs golangci-lint v2.15.0 with `go run` in both
   generated projects, so nothing has to be installed.
@@ -442,7 +476,10 @@ go test ./... -update    # rewrite testdata/golden after a template change
 
 The check tests generate a service and edit, delete, own and age its
 managed files; the build tests also run `kitchen check` on every generated
-service after code generation.
+service after code generation. The add tests compare what `kitchen add`
+writes with `testdata/golden/add-*`, check every refusal, and that a missing
+marker writes nothing; the build tests run the adds on the events, Kafka
+and SQS services before building them.
 
 The build tests generate every golden variant, build, vet, test and lint
 them. They need the network and, for the service, Docker. A matrix test

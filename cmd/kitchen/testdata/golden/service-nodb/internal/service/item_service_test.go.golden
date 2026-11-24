@@ -1,0 +1,85 @@
+package service
+
+import (
+	"testing"
+
+	"github.com/dungnh3/kitchen/errs"
+	"google.golang.org/grpc/codes"
+
+	pb "example.com/team/edge-gateway/gen/edge_gw/v1"
+	"example.com/team/edge-gateway/internal/store/memstore"
+)
+
+func TestItemLifecycle(t *testing.T) {
+	ctx := t.Context()
+	svc := NewItemService(memstore.NewItems())
+
+	created, err := svc.CreateItem(ctx, &pb.CreateItemRequest{Item: &pb.Item{Title: "first"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.GetId() == "" || created.GetCreateTime() == nil {
+		t.Fatalf("server fields not set: %v", created)
+	}
+
+	got, err := svc.GetItem(ctx, &pb.GetItemRequest{Id: created.GetId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetTitle() != "first" {
+		t.Errorf("title = %q, want %q", got.GetTitle(), "first")
+	}
+
+	if _, err := svc.DeleteItem(ctx, &pb.DeleteItemRequest{Id: created.GetId()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetItem(ctx, &pb.GetItemRequest{Id: created.GetId()}); errs.Code(err) != codes.NotFound {
+		t.Errorf("GetItem after delete: code %v, want NotFound (err %v)", errs.Code(err), err)
+	}
+	if _, err := svc.DeleteItem(ctx, &pb.DeleteItemRequest{Id: created.GetId()}); errs.Code(err) != codes.NotFound {
+		t.Errorf("second DeleteItem: code %v, want NotFound", errs.Code(err))
+	}
+}
+
+func TestListItemsPages(t *testing.T) {
+	ctx := t.Context()
+	svc := NewItemService(memstore.NewItems())
+	for _, title := range []string{"a", "b", "c", "d", "e"} {
+		if _, err := svc.CreateItem(ctx, &pb.CreateItemRequest{Item: &pb.Item{Title: title}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seen := map[string]bool{}
+	token := ""
+	for pages := 1; ; pages++ {
+		resp, err := svc.ListItems(ctx, &pb.ListItemsRequest{PageSize: 2, PageToken: token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range resp.GetItems() {
+			if seen[v.GetId()] {
+				t.Fatalf("%s returned twice", v.GetId())
+			}
+			seen[v.GetId()] = true
+		}
+		token = resp.GetNextPageToken()
+		if token == "" {
+			if pages != 3 {
+				t.Errorf("got %d pages, want 3", pages)
+			}
+			break
+		}
+	}
+	if len(seen) != 5 {
+		t.Errorf("listed %d, want 5", len(seen))
+	}
+}
+
+func TestListItemsBadToken(t *testing.T) {
+	svc := NewItemService(memstore.NewItems())
+	_, err := svc.ListItems(t.Context(), &pb.ListItemsRequest{PageToken: "%%%"})
+	if errs.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code %v, want InvalidArgument (err %v)", errs.Code(err), err)
+	}
+}

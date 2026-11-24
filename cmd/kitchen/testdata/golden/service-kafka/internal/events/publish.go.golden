@@ -9,7 +9,7 @@ import (
 	"github.com/acme/notify/internal/store"
 )
 
-// Store is a store.Store that publishes an ItemCreated event after each
+// Items is a store.Items that publishes an ItemCreated event after each
 // item it creates.
 //
 // The event is published after the item is stored, outside any
@@ -17,22 +17,22 @@ import (
 // and only logged. When every event must be delivered, write it in the
 // same transaction as the data with the transactional outbox
 // (github.com/dungnh3/kitchen/pubsub/outbox/pgx).
-type Store struct {
-	store.Store
+type Items struct {
+	store.Items
 	pub    pubsub.Publisher
 	topic  string
 	logger *log.Logger
 }
 
-// NewStore returns a Store that keeps items in s and publishes events to
+// NewItems returns an Items that keeps items in s and publishes events to
 // topic. logger nil means log.Default().
-func NewStore(s store.Store, pub pubsub.Publisher, topic string, logger *log.Logger) *Store {
-	return &Store{Store: s, pub: pub, topic: topic, logger: log.OrDefault(logger)}
+func NewItems(s store.Items, pub pubsub.Publisher, topic string, logger *log.Logger) *Items {
+	return &Items{Items: s, pub: pub, topic: topic, logger: log.OrDefault(logger)}
 }
 
-// CreateItem implements store.Store.
-func (s *Store) CreateItem(ctx context.Context, title string) (store.Item, error) {
-	it, err := s.Store.CreateItem(ctx, title)
+// CreateItem implements store.Items.
+func (s *Items) CreateItem(ctx context.Context, title string) (store.Item, error) {
+	it, err := s.Items.CreateItem(ctx, title)
 	if err != nil {
 		return it, err
 	}

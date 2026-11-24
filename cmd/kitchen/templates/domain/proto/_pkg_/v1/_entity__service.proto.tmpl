@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package {% .ProtoPackage %}.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// {% .E.Name %}Service manages {% .E.WordsPlural %}, a resource-oriented API
+// (https://google.aip.dev/121). Change the {% .E.Name %} fields to your data.
+service {% .E.Name %}Service {
+  // Get{% .E.Name %} returns one {% .E.Words %}.
+  rpc Get{% .E.Name %}(Get{% .E.Name %}Request) returns ({% .E.Name %}) {
+    option (google.api.http) = {get: "/v1/{% .E.Camels %}/{id}"};
+  }
+
+  // List{% .E.Names %} returns {% .E.WordsPlural %} ordered by id, one page at a time.
+  rpc List{% .E.Names %}(List{% .E.Names %}Request) returns (List{% .E.Names %}Response) {
+    option (google.api.http) = {get: "/v1/{% .E.Camels %}"};
+  }
+
+  // Create{% .E.Name %} creates {% .E.Article %} {% .E.Words %}.
+  rpc Create{% .E.Name %}(Create{% .E.Name %}Request) returns ({% .E.Name %}) {
+    option (google.api.http) = {
+      post: "/v1/{% .E.Camels %}"
+      body: "{% .E.Snake %}"
+    };
+  }
+
+  // Delete{% .E.Name %} deletes {% .E.Article %} {% .E.Words %}.
+  rpc Delete{% .E.Name %}(Delete{% .E.Name %}Request) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/{% .E.Camels %}/{id}"};
+  }
+}
+
+// {% .E.Name %} is a resource of the service.
+message {% .E.Name %} {
+  // The {% .E.Words %} id, assigned by the server.
+  string id = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // A short title.
+  string title = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 200
+    }
+  ];
+  // When the {% .E.Words %} was created.
+  google.protobuf.Timestamp create_time = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// Get{% .E.Name %}Request is the request of Get{% .E.Name %}.
+message Get{% .E.Name %}Request {
+  // The {% .E.Words %} id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// List{% .E.Names %}Request is the request of List{% .E.Names %}.
+message List{% .E.Names %}Request {
+  // The maximum number of {% .E.WordsPlural %} to return; 0 means the server default (50).
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // The next_page_token of the previous response, to get the next page.
+  string page_token = 2 [(buf.validate.field).string.max_len = 512];
+}
+
+// List{% .E.Names %}Response is the response of List{% .E.Names %}.
+message List{% .E.Names %}Response {
+  // The {% .E.WordsPlural %} of this page.
+  repeated {% .E.Name %} {% .E.Snakes %} = 1;
+  // A token to get the next page; empty on the last page.
+  string next_page_token = 2;
+}
+
+// Create{% .E.Name %}Request is the request of Create{% .E.Name %}.
+message Create{% .E.Name %}Request {
+  // The {% .E.Words %} to create; output-only fields are ignored.
+  {% .E.Name %} {% .E.Snake %} = 1 [(buf.validate.field).required = true];
+}
+
+// Delete{% .E.Name %}Request is the request of Delete{% .E.Name %}.
+message Delete{% .E.Name %}Request {
+  // The {% .E.Words %} id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}

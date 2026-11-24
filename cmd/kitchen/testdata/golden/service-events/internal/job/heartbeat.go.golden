@@ -1,0 +1,22 @@
+package job
+
+import (
+	"context"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+)
+
+// Heartbeat returns an example job that logs a line every minute. Replace
+// it with real jobs.
+func Heartbeat(logger *log.Logger) Job {
+	logger = log.OrDefault(logger)
+	return Job{
+		Name:  "heartbeat",
+		Every: time.Minute,
+		Run: func(ctx context.Context) error {
+			logger.InfoContext(ctx, "heartbeat job ran")
+			return nil
+		},
+	}
+}

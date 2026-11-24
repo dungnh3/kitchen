@@ -1,0 +1,77 @@
+package memstore
+
+import (
+	"cmp"
+	"context"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/google/uuid"
+
+	"github.com/acme/billing/internal/store"
+)
+
+// OrderItems is an in-memory store.OrderItems. The zero value is not usable; call
+// NewOrderItems.
+type OrderItems struct {
+	mu   sync.RWMutex
+	byID map[string]store.OrderItem
+	now  func() time.Time
+}
+
+var _ store.OrderItems = (*OrderItems)(nil)
+
+// NewOrderItems returns an empty OrderItems.
+func NewOrderItems() *OrderItems {
+	return &OrderItems{byID: map[string]store.OrderItem{}, now: time.Now}
+}
+
+// GetOrderItem implements store.OrderItems.
+func (s *OrderItems) GetOrderItem(_ context.Context, id string) (store.OrderItem, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.byID[id]
+	if !ok {
+		return store.OrderItem{}, errs.ErrNotFound
+	}
+	return v, nil
+}
+
+// ListOrderItems implements store.OrderItems.
+func (s *OrderItems) ListOrderItems(_ context.Context, after string, limit int32) ([]store.OrderItem, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]store.OrderItem, 0, len(s.byID))
+	for _, v := range s.byID {
+		if v.ID > after {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b store.OrderItem) int { return cmp.Compare(a.ID, b.ID) })
+	if len(out) > int(limit) {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// CreateOrderItem implements store.OrderItems.
+func (s *OrderItems) CreateOrderItem(_ context.Context, title string) (store.OrderItem, error) {
+	v := store.OrderItem{ID: uuid.NewString(), Title: title, CreateTime: s.now().UTC()}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byID[v.ID] = v
+	return v, nil
+}
+
+// DeleteOrderItem implements store.OrderItems.
+func (s *OrderItems) DeleteOrderItem(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byID[id]; !ok {
+		return errs.ErrNotFound
+	}
+	delete(s.byID, id)
+	return nil
+}

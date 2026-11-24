@@ -38,8 +38,8 @@ curl -s localhost:8080/v1/items
 | `cmd/server/` | `main`: logging, configuration, the commands (`{% .Commands %}`) |
 | `internal/app/` | Wiring: telemetry, {% if .Postgres %}database, {% end %}{% if .Redis %}Redis, {% end %}{% if .PubSub %}broker, {% end %}auth, rate limits, server{% if .Worker %}, worker{% end %}; integration test |
 | `internal/config/` | Configuration from environment variables |
-| `internal/service/` | The API implementation |
-| `internal/store/` | The `Store` interface and its implementations (`memstore`{% if .Postgres %}, `pgstore`{% end %}) |
+| `internal/service/` | The API implementation, one file per domain (`item_service.go`) |
+| `internal/store/` | Per domain: the types and store interface (`store.Items`) and their implementations (`memstore`{% if .Postgres %}, `pgstore`{% end %}) |
 {%- if .PubSub %}
 | `internal/events/` | The events the service publishes (`ItemCreated`) |
 | `internal/consumer/` | The event handlers of the worker |
@@ -50,15 +50,23 @@ curl -s localhost:8080/v1/items
 | `docs/ENV.md` | Environment variables |
 | `.kitchen.yaml` | How kitchen generated the project; `make check` compares the managed files with it |
 {%- if .Postgres %}
-| `internal/store/pgstore/queries.sql` | SQL queries; `make generate` turns them into `sqlcdb` (committed) |
+| `internal/store/pgstore/queries/` | SQL queries, one file per domain; `make generate` turns them into `sqlcdb` (committed) |
 | `migrations/` | goose migrations, embedded in the binary |
 {%- end %}
 
 ## Change the API
 
+A new resource with its CRUD API, store{% if .Postgres %}, queries and migration{% end %}:
+
+```bash
+go run github.com/dungnh3/kitchen/cmd/kitchen@{% .CLIVersion %} add domain order
+```
+
+To change an existing API:
+
 1. Edit `proto/{% .ProtoPackage %}/v1/*.proto` (validation rules go in the proto file).
 {%- if .Postgres %}
-2. Add a migration in `migrations/` and queries in `internal/store/pgstore/queries.sql`.
+2. Add a migration in `migrations/` and queries in `internal/store/pgstore/queries/`.
 3. Run `make generate`, then implement the new methods in `internal/service`.
 {%- else %}
 2. Run `make generate`, then implement the new methods in `internal/service`.
@@ -119,7 +127,7 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
   event in one transaction (transactional outbox,
   `github.com/dungnh3/kitchen/pubsub/outbox/pgx`); the worker relays the
   outbox to the broker, so an event is enqueued if and only if its item is
-  stored, and the relay publishes it at least once.{% else %}`events.Store` publishes an `ItemCreated` event after each item is
+  stored, and the relay publishes it at least once.{% else %}`events.Items` publishes an `ItemCreated` event after each item is
   stored. A failed publish is logged and the event is lost; for guaranteed
   delivery, write events through the transactional outbox
   (`github.com/dungnh3/kitchen/pubsub/outbox/pgx`) in the transaction of
@@ -127,13 +135,13 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
 - **Consumers.** `internal/consumer` handles the events with
   `github.com/dungnh3/kitchen/pubsub`. Delivery is at least once, so
   handlers must be idempotent. Return `nil` to ack, an error to retry, and
-  `pubsub.Permanent(err)` to dead-letter. Subscribe a new handler in
-  `internal/app/worker.go`.
+  `pubsub.Permanent(err)` to dead-letter. `kitchen add consumer <name>`
+  adds a consumer with its subscription settings.
 {%- end %}
 {%- if .Lease %}
 - **Jobs.** `internal/job` runs each job on one replica at a time under a
-  Redis lease. Add jobs to `jobs` in `internal/app/worker.go`; a run must
-  stop when its context is cancelled.
+  Redis lease. `kitchen add job <name> -every 5m` adds one; a run must stop
+  when its context is cancelled.
 {%- end %}
 - **Probes.** Set `ADMIN_ADDR` and point the worker's probes at `/livez` and
   `/readyz` on it.
@@ -147,6 +155,11 @@ with the transactional outbox `github.com/dungnh3/kitchen/pubsub/outbox/pgx`
 (add its `Schema()` to a migration) and relay them to Pub/Sub, Kafka or SQS
 with the `pubsub` adapters.
 {%- end %}{% end %}
+
+## Markers
+
+`kitchen add` inserts code before marker comments such as
+`// kitchen:services`; keep them where they are.
 
 ## Managed files
 

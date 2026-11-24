@@ -1,0 +1,77 @@
+package memstore
+
+import (
+	"cmp"
+	"context"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/google/uuid"
+
+	"github.com/acme/notify/internal/store"
+)
+
+// Categories is an in-memory store.Categories. The zero value is not usable; call
+// NewCategories.
+type Categories struct {
+	mu   sync.RWMutex
+	byID map[string]store.Category
+	now  func() time.Time
+}
+
+var _ store.Categories = (*Categories)(nil)
+
+// NewCategories returns an empty Categories.
+func NewCategories() *Categories {
+	return &Categories{byID: map[string]store.Category{}, now: time.Now}
+}
+
+// GetCategory implements store.Categories.
+func (s *Categories) GetCategory(_ context.Context, id string) (store.Category, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.byID[id]
+	if !ok {
+		return store.Category{}, errs.ErrNotFound
+	}
+	return v, nil
+}
+
+// ListCategories implements store.Categories.
+func (s *Categories) ListCategories(_ context.Context, after string, limit int32) ([]store.Category, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]store.Category, 0, len(s.byID))
+	for _, v := range s.byID {
+		if v.ID > after {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b store.Category) int { return cmp.Compare(a.ID, b.ID) })
+	if len(out) > int(limit) {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// CreateCategory implements store.Categories.
+func (s *Categories) CreateCategory(_ context.Context, title string) (store.Category, error) {
+	v := store.Category{ID: uuid.NewString(), Title: title, CreateTime: s.now().UTC()}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byID[v.ID] = v
+	return v, nil
+}
+
+// DeleteCategory implements store.Categories.
+func (s *Categories) DeleteCategory(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byID[id]; !ok {
+		return errs.ErrNotFound
+	}
+	delete(s.byID, id)
+	return nil
+}

@@ -14,6 +14,7 @@ func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 func environ(kv ...string) env.Options {
 	m := map[string]string{
 		"PUBSUB_BROKERS": "localhost:9092",
+		// kitchen:subscriptions-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]

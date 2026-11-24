@@ -1,0 +1,25 @@
+package store
+
+import (
+	"context"
+	"time"
+)
+
+// Box is a stored box.
+type Box struct {
+	ID         string
+	Title      string
+	CreateTime time.Time
+}
+
+// Boxes persists boxes. Implementations return errs errors, such as
+// errs.ErrNotFound for a missing box, so the server maps them to the right
+// gRPC and HTTP status.
+type Boxes interface {
+	GetBox(ctx context.Context, id string) (Box, error)
+	// ListBoxes returns at most limit boxes with an id greater than
+	// after ("" for the first page), ordered by id.
+	ListBoxes(ctx context.Context, after string, limit int32) ([]Box, error)
+	CreateBox(ctx context.Context, title string) (Box, error)
+	DeleteBox(ctx context.Context, id string) error
+}

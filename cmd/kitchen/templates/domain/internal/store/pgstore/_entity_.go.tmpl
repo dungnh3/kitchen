@@ -1,0 +1,121 @@
+package pgstore
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/pg"
+{%- if .Outbox %}
+	outboxpgx "github.com/dungnh3/kitchen/pubsub/outbox/pgx"
+	"github.com/jackc/pgx/v5"
+{%- end %}
+	"github.com/jackc/pgx/v5/pgxpool"
+
+{% if .Outbox %}	"{% .Module %}/internal/events"
+{% end %}	"{% .Module %}/internal/store"
+	"{% .Module %}/internal/store/pgstore/sqlcdb"
+)
+
+// {% .E.Names %} is a store.{% .E.Names %} on a pgx pool.
+type {% .E.Names %} struct {
+	q *sqlcdb.Queries
+{%- if .Outbox %}
+	pool   *pgxpool.Pool
+	outbox *outboxpgx.Store
+	topic  string
+{%- end %}
+}
+
+var _ store.{% .E.Names %} = (*{% .E.Names %})(nil)
+{%- if .Outbox %}
+
+// New{% .E.Names %} returns {% .E.Names %} on pool, which the caller owns. Events are
+// written to outbox, for topic, in the transaction of the change.
+func New{% .E.Names %}(pool *pgxpool.Pool, outbox *outboxpgx.Store, topic string) *{% .E.Names %} {
+	return &{% .E.Names %}{q: sqlcdb.New(pool), pool: pool, outbox: outbox, topic: topic}
+}
+{%- else %}
+
+// New{% .E.Names %} returns {% .E.Names %} on pool, which the caller owns.
+func New{% .E.Names %}(pool *pgxpool.Pool) *{% .E.Names %} {
+	return &{% .E.Names %}{q: sqlcdb.New(pool)}
+}
+{%- end %}
+
+// Get{% .E.Name %} implements store.{% .E.Names %}.
+func (s *{% .E.Names %}) Get{% .E.Name %}(ctx context.Context, id string) (store.{% .E.Name %}, error) {
+	row, err := s.q.Get{% .E.Name %}(ctx, id)
+	if err != nil {
+		// pg.MapError turns pgx.ErrNoRows into errs.ErrNotFound, constraint
+		// violations into the matching errs sentinel, and so on.
+		return store.{% .E.Name %}{}, pg.MapError(err)
+	}
+	return {% .E.Lower %}FromRow(row), nil
+}
+
+// List{% .E.Names %} implements store.{% .E.Names %}.
+func (s *{% .E.Names %}) List{% .E.Names %}(ctx context.Context, after string, limit int32) ([]store.{% .E.Name %}, error) {
+	if after == "" {
+		after = firstID
+	}
+	rows, err := s.q.List{% .E.Names %}(ctx, sqlcdb.List{% .E.Names %}Params{After: after, PageLimit: limit})
+	if err != nil {
+		return nil, pg.MapError(err)
+	}
+	out := make([]store.{% .E.Name %}, len(rows))
+	for i, r := range rows {
+		out[i] = {% .E.Lower %}FromRow(r)
+	}
+	return out, nil
+}
+{%- if .Outbox %}
+
+// Create{% .E.Name %} implements store.{% .E.Names %}. The {% .E.Words %} and its {% .E.Name %}Created event are
+// written in one transaction, so the event is enqueued if and only if the
+// {% .E.Words %} is stored; the worker's relay then publishes it.
+func (s *{% .E.Names %}) Create{% .E.Name %}(ctx context.Context, title string) (store.{% .E.Name %}, error) {
+	var v store.{% .E.Name %}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		row, err := s.q.WithTx(tx).Create{% .E.Name %}(ctx, title)
+		if err != nil {
+			return err
+		}
+		v = {% .E.Lower %}FromRow(row)
+		m, err := events.New{% .E.Name %}Created(v)
+		if err != nil {
+			return err
+		}
+		return s.outbox.Enqueue(ctx, tx, s.topic, m)
+	})
+	if err != nil {
+		return store.{% .E.Name %}{}, pg.MapError(err)
+	}
+	return v, nil
+}
+{%- else %}
+
+// Create{% .E.Name %} implements store.{% .E.Names %}.
+func (s *{% .E.Names %}) Create{% .E.Name %}(ctx context.Context, title string) (store.{% .E.Name %}, error) {
+	row, err := s.q.Create{% .E.Name %}(ctx, title)
+	if err != nil {
+		return store.{% .E.Name %}{}, pg.MapError(err)
+	}
+	return {% .E.Lower %}FromRow(row), nil
+}
+{%- end %}
+
+// Delete{% .E.Name %} implements store.{% .E.Names %}.
+func (s *{% .E.Names %}) Delete{% .E.Name %}(ctx context.Context, id string) error {
+	n, err := s.q.Delete{% .E.Name %}(ctx, id)
+	if err != nil {
+		return pg.MapError(err)
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+func {% .E.Lower %}FromRow(r sqlcdb.{% .E.Name %}) store.{% .E.Name %} {
+	return store.{% .E.Name %}{ID: r.ID, Title: r.Title, CreateTime: r.CreateTime}
+}

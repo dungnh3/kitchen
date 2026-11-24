@@ -1,0 +1,17 @@
+package job
+
+import (
+	"testing"
+
+	"github.com/dungnh3/kitchen/log"
+)
+
+func Test{% .N.Name %}(t *testing.T) {
+	j := {% .N.Name %}(log.Discard())
+	if j.Name == "" || j.Every <= 0 {
+		t.Fatalf("job = %+v", j)
+	}
+	if err := j.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}

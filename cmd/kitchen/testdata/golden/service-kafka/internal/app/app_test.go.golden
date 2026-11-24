@@ -44,6 +44,7 @@ func TestApp(t *testing.T) {
 			ItemsDeadLetterTopic: "items.dlq",
 			ItemsTopic:           "items",
 			Concurrency:          2,
+			// kitchen:subscriptions-test
 		},
 	}
 	// The broker is in process; the test reads the topic through its own
@@ -188,8 +189,8 @@ func startWorker(t *testing.T, cfg config.Config, opts ...Option) {
 type memBroker struct{ *memory.Broker }
 
 func (b memBroker) Source(topic, subscription string) (pubsub.Source, error) {
-	if subscription == "" {
-		subscription = "worker"
+	if subscription == "" { // SQS: the worker reads the queue itself
+		subscription = topic + "-worker"
 	}
 	return b.Subscribe(topic, subscription)
 }

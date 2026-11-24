@@ -143,7 +143,10 @@ func TestGeneratedServiceBuilds(t *testing.T) {
 			t.Parallel()
 			p.applyDefaults()
 			dir := filepath.Join(t.TempDir(), "proj")
-			if err := scaffold.Write(dir, renderSvc(t, p)); err != nil {
+			// The cases with add commands also build what they add.
+			if _, ok := serviceAdds[name]; ok {
+				runAdds(t, dir, name)
+			} else if err := scaffold.Write(dir, renderSvc(t, p)); err != nil {
 				t.Fatal(err)
 			}
 			env := append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
@@ -164,6 +167,11 @@ func TestGeneratedServiceBuilds(t *testing.T) {
 			if err := generateService(t.Context(), dir, env, &out, &out); err != nil {
 				skipOffline(t, out.Bytes())
 				t.Fatalf("generate: %v\n%s", err, out.String())
+			}
+			if _, ok := serviceAdds[name]; ok {
+				if err := generateDomain(t.Context(), dir, env, p.Postgres(), &out, &out); err != nil {
+					t.Fatalf("generate domains: %v\n%s", err, out.String())
+				}
 			}
 			for _, rel := range []string{"gen/" + p.ProtoPackage() + "/v1/item_service.pb.go", "gen/" + p.ProtoPackage() + "/v1/item_service.pb.gw.go", "go.sum"} {
 				if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {

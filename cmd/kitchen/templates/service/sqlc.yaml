@@ -3,7 +3,7 @@ version: "2"
 sql:
   - engine: postgresql
     schema: migrations
-    queries: internal/store/pgstore/queries.sql
+    queries: internal/store/pgstore/queries
     gen:
       go:
         package: sqlcdb

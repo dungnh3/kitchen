@@ -13,6 +13,10 @@ DB_URL ?= postgres://app:app@localhost:5432/app?sslmode=disable
 LOCAL_ENV := AUTH_DISABLED=true LOG_FORMAT=text DB_URL="$(DB_URL)"
 LOCAL_ENV += REDIS_ADDRS=localhost:6379 REDIS_TLS=false
 LOCAL_ENV += PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT=local PUBSUB_MAX_DELIVERY_ATTEMPTS=0
+# topic:subscription pairs that "make up" creates in the emulator.
+LOCAL_SUBSCRIPTIONS := billing-items:billing-items-worker
+# "kitchen add consumer" adds the settings of its subscription here.
+# kitchen:local-env
 
 .PHONY: generate build test lint check breaking run tidy docker run-worker up down migrate-up migrate-down migrate-status
 
@@ -58,11 +62,13 @@ migrate-up migrate-down migrate-status:
 # subscription in the emulator.
 up:
 	docker compose up -d --wait
-	curl -sf --retry 30 --retry-connrefused --retry-delay 1 -X PUT \
-		http://localhost:8085/v1/projects/local/topics/billing-items >/dev/null
-	curl -sf -X PUT -H 'Content-Type: application/json' \
-		-d '{"topic":"projects/local/topics/billing-items","enableMessageOrdering":true}' \
-		http://localhost:8085/v1/projects/local/subscriptions/billing-items-worker >/dev/null
+	for pair in $(LOCAL_SUBSCRIPTIONS); do topic=$${pair%%:*}; sub=$${pair#*:}; \
+		curl -sf --retry 30 --retry-connrefused --retry-delay 1 -X PUT \
+			http://localhost:8085/v1/projects/local/topics/$$topic >/dev/null || exit 1; \
+		curl -sf -X PUT -H 'Content-Type: application/json' \
+			-d "{\"topic\":\"projects/local/topics/$$topic\",\"enableMessageOrdering\":true}" \
+			http://localhost:8085/v1/projects/local/subscriptions/$$sub >/dev/null || exit 1; \
+	done
 
 down:
 	docker compose down

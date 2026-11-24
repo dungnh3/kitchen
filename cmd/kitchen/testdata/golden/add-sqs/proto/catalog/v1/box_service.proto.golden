@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package catalog.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// BoxService manages boxes, a resource-oriented API
+// (https://google.aip.dev/121). Change the Box fields to your data.
+service BoxService {
+  // GetBox returns one box.
+  rpc GetBox(GetBoxRequest) returns (Box) {
+    option (google.api.http) = {get: "/v1/boxes/{id}"};
+  }
+
+  // ListBoxes returns boxes ordered by id, one page at a time.
+  rpc ListBoxes(ListBoxesRequest) returns (ListBoxesResponse) {
+    option (google.api.http) = {get: "/v1/boxes"};
+  }
+
+  // CreateBox creates a box.
+  rpc CreateBox(CreateBoxRequest) returns (Box) {
+    option (google.api.http) = {
+      post: "/v1/boxes"
+      body: "box"
+    };
+  }
+
+  // DeleteBox deletes a box.
+  rpc DeleteBox(DeleteBoxRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/boxes/{id}"};
+  }
+}
+
+// Box is a resource of the service.
+message Box {
+  // The box id, assigned by the server.
+  string id = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // A short title.
+  string title = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 200
+    }
+  ];
+  // When the box was created.
+  google.protobuf.Timestamp create_time = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// GetBoxRequest is the request of GetBox.
+message GetBoxRequest {
+  // The box id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListBoxesRequest is the request of ListBoxes.
+message ListBoxesRequest {
+  // The maximum number of boxes to return; 0 means the server default (50).
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // The next_page_token of the previous response, to get the next page.
+  string page_token = 2 [(buf.validate.field).string.max_len = 512];
+}
+
+// ListBoxesResponse is the response of ListBoxes.
+message ListBoxesResponse {
+  // The boxes of this page.
+  repeated Box boxes = 1;
+  // A token to get the next page; empty on the last page.
+  string next_page_token = 2;
+}
+
+// CreateBoxRequest is the request of CreateBox.
+message CreateBoxRequest {
+  // The box to create; output-only fields are ignored.
+  Box box = 1 [(buf.validate.field).required = true];
+}
+
+// DeleteBoxRequest is the request of DeleteBox.
+message DeleteBoxRequest {
+  // The box id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}

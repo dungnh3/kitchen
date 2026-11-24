@@ -85,6 +85,26 @@ type PubSub struct {
 	ItemsTopic string `env:"ITEMS_TOPIC"`
 	// Concurrency is the number of messages the worker handles at once.
 	Concurrency int `env:"CONCURRENCY" envDefault:"10"`
+
+	// The subscriptions of the consumers that "kitchen add consumer" adds
+	// above "kitchen:subscriptions".
+	// kitchen:subscriptions
+}
+
+// Subscription is a topic and the worker's subscription to it.
+type Subscription struct {
+	// Topic is the queue URL.
+	Topic string `env:"TOPIC"`
+}
+
+// Validate reports the missing settings of s; prefix is the prefix of its
+// variables, for example PUBSUB_ORDERS_.
+func (s Subscription) Validate(prefix string) error {
+	var errs []error
+	if s.Topic == "" {
+		errs = append(errs, fmt.Errorf("%sTOPIC is required", prefix))
+	}
+	return errors.Join(errs...)
 }
 
 // Auth configures bearer-token authentication. Every method needs a valid
@@ -156,6 +176,7 @@ func (c Config) validateDeps() error {
 	if c.PubSub.Concurrency < 1 {
 		errs = append(errs, errors.New("PUBSUB_CONCURRENCY must be at least 1"))
 	}
+	// kitchen:subscriptions-validate
 	return errors.Join(errs...)
 }
 

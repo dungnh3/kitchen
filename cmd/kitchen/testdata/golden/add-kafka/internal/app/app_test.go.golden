@@ -1,0 +1,264 @@
+package app
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+	"github.com/dungnh3/kitchen/pubsub/memory"
+	"github.com/dungnh3/kitchen/server"
+	"go.uber.org/goleak"
+
+	"github.com/acme/notify/internal/config"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+// TestApp starts the whole service on random ports and calls it over REST.
+func TestApp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts the service")
+	}
+	base := config.Config{
+		Env:             "test",
+		GRPCAddr:        "127.0.0.1:0",
+		HTTPAddr:        "127.0.0.1:0",
+		ShutdownTimeout: 5 * time.Second,
+		ErrorDomain:     Name,
+		PubSub: config.PubSub{
+			Brokers:              []string{"localhost:9092"},
+			MaxDeliveryAttempts:  5,
+			ItemsSubscription:    "items-worker",
+			ItemsDeadLetterTopic: "items.dlq",
+			ItemsTopic:           "items",
+			Concurrency:          2,
+			OrderEvents:          config.Subscription{Topic: "order-events", Subscription: "notify-order-events-worker", DeadLetterTopic: "order-events.dlq"},
+			// kitchen:subscriptions-test
+		},
+	}
+	// The broker is in process; the test reads the topic through its own
+	// subscription.
+	broker := memBroker{memory.New()}
+	t.Cleanup(func() { _ = broker.Close(context.Background()) })
+	events, err := broker.Subscribe(base.PubSub.ItemsTopic, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := []Option{WithBroker(broker)}
+	startWorker(t, base, opts...)
+
+	t.Run("crud", func(t *testing.T) {
+		cfg := base
+		cfg.Auth.Disabled = true
+		url := start(t, cfg, opts...)
+
+		var item map[string]any
+		call(t, http.MethodPost, url+"/v1/items", `{"title":"first"}`, http.StatusOK, &item)
+		id, _ := item["id"].(string)
+		if id == "" || item["title"] != "first" {
+			t.Fatalf("created item = %v", item)
+		}
+		if m := receive(t, events); m.Key != id {
+			t.Errorf("ItemCreated event key = %q, want the item id %q", m.Key, id)
+		}
+		call(t, http.MethodGet, url+"/v1/items/"+id, "", http.StatusOK, &item)
+
+		var list struct {
+			Items []map[string]any `json:"items"`
+		}
+		call(t, http.MethodGet, url+"/v1/items?page_size=10", "", http.StatusOK, &list)
+		if len(list.Items) != 1 {
+			t.Errorf("listed %d items, want 1", len(list.Items))
+		}
+
+		// protovalidate rules from the proto file run before the method.
+		var e apiError
+		call(t, http.MethodPost, url+"/v1/items", `{"title":""}`, http.StatusBadRequest, &e)
+		call(t, http.MethodGet, url+"/v1/items/not-a-uuid", "", http.StatusBadRequest, &e)
+
+		call(t, http.MethodDelete, url+"/v1/items/"+id, "", http.StatusOK, nil)
+		call(t, http.MethodGet, url+"/v1/items/"+id, "", http.StatusNotFound, &e)
+		if e.Error.Status != "NOT_FOUND" {
+			t.Errorf("error status = %q, want NOT_FOUND", e.Error.Status)
+		}
+	})
+
+	t.Run("auth", func(t *testing.T) {
+		jwks := httptest.NewServer(jwksHandler(t))
+		defer jwks.Close()
+		cfg := base
+		cfg.Auth = config.Auth{Issuer: "https://issuer.example.com", JWKSURL: jwks.URL, Audience: Name}
+		url := start(t, cfg, opts...)
+
+		var e apiError
+		call(t, http.MethodGet, url+"/v1/items", "", http.StatusUnauthorized, &e)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, url+"/v1/items", nil)
+		req.Header.Set("Authorization", "Bearer not-a-jwt")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("invalid token: status %d, want 401", resp.StatusCode)
+		}
+	})
+}
+
+type apiError struct {
+	Error struct {
+		Code   int    `json:"code"`
+		Status string `json:"status"`
+	} `json:"error"`
+}
+
+// start runs the service until the test ends and returns its REST base URL.
+func start(t *testing.T, cfg config.Config, opts ...Option) string {
+	t.Helper()
+	var lc net.ListenConfig
+	grpcLis, err := lc.Listen(t.Context(), "tcp", cfg.GRPCAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpLis, err := lc.Listen(t.Context(), "tcp", cfg.HTTPAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, cfg, log.Discard(), "test", append(opts, WithServerOptions(server.WithGRPCListener(grpcLis), server.WithHTTPListener(httpLis)))...)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	})
+
+	url := "http://" + httpLis.Addr().String()
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, url+"/readyz", nil)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return url
+			}
+		}
+		select {
+		case err := <-done:
+			done <- err
+			t.Fatalf("service stopped: %v", err)
+		case <-deadline.C:
+			t.Fatal("service not ready after 30s")
+		case <-tick.C:
+		}
+	}
+}
+
+// startWorker runs the worker until the test ends.
+func startWorker(t *testing.T, cfg config.Config, opts ...Option) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- RunWorker(ctx, cfg, log.Discard(), "test", opts...) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("RunWorker: %v", err)
+		}
+	})
+}
+
+// memBroker is an in-process Broker.
+type memBroker struct{ *memory.Broker }
+
+func (b memBroker) Source(topic, subscription string) (pubsub.Source, error) {
+	if subscription == "" { // SQS: the worker reads the queue itself
+		subscription = topic + "-worker"
+	}
+	return b.Subscribe(topic, subscription)
+}
+
+// receive returns the next message of sub, waiting at most 30s.
+func receive(t *testing.T, sub *memory.Subscription) *pubsub.Message {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	var m *pubsub.Message
+	if err := sub.Receive(ctx, func(_ context.Context, d pubsub.Delivery) {
+		d.Ack()
+		m = d.Message()
+		cancel()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if m == nil {
+		t.Fatal("no message after 30s")
+	}
+	return m
+}
+
+func call(t *testing.T, method, url, body string, wantStatus int, out any) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("%s %s: status %d, want %d: %s", method, url, resp.StatusCode, wantStatus, b)
+	}
+	if out != nil {
+		if err := json.Unmarshal(b, out); err != nil {
+			t.Fatalf("%s %s: %v: %s", method, url, err, b)
+		}
+	}
+}
+
+// jwksHandler serves a key set with one fresh ES256 key.
+func jwksHandler(t *testing.T) http.Handler {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := key.PublicKey.Bytes() // 0x04 || X || Y
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := base64.RawURLEncoding.EncodeToString
+	body, err := json.Marshal(map[string]any{"keys": []map[string]string{{
+		"kty": "EC", "crv": "P-256", "alg": "ES256", "use": "sig", "kid": "test",
+		"x": enc(pub[1:33]), "y": enc(pub[33:]),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+}

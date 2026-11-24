@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// CategoryService manages categories, a resource-oriented API
+// (https://google.aip.dev/121). Change the Category fields to your data.
+service CategoryService {
+  // GetCategory returns one category.
+  rpc GetCategory(GetCategoryRequest) returns (Category) {
+    option (google.api.http) = {get: "/v1/categories/{id}"};
+  }
+
+  // ListCategories returns categories ordered by id, one page at a time.
+  rpc ListCategories(ListCategoriesRequest) returns (ListCategoriesResponse) {
+    option (google.api.http) = {get: "/v1/categories"};
+  }
+
+  // CreateCategory creates a category.
+  rpc CreateCategory(CreateCategoryRequest) returns (Category) {
+    option (google.api.http) = {
+      post: "/v1/categories"
+      body: "category"
+    };
+  }
+
+  // DeleteCategory deletes a category.
+  rpc DeleteCategory(DeleteCategoryRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/categories/{id}"};
+  }
+}
+
+// Category is a resource of the service.
+message Category {
+  // The category id, assigned by the server.
+  string id = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // A short title.
+  string title = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 200
+    }
+  ];
+  // When the category was created.
+  google.protobuf.Timestamp create_time = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// GetCategoryRequest is the request of GetCategory.
+message GetCategoryRequest {
+  // The category id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListCategoriesRequest is the request of ListCategories.
+message ListCategoriesRequest {
+  // The maximum number of categories to return; 0 means the server default (50).
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // The next_page_token of the previous response, to get the next page.
+  string page_token = 2 [(buf.validate.field).string.max_len = 512];
+}
+
+// ListCategoriesResponse is the response of ListCategories.
+message ListCategoriesResponse {
+  // The categories of this page.
+  repeated Category categories = 1;
+  // A token to get the next page; empty on the last page.
+  string next_page_token = 2;
+}
+
+// CreateCategoryRequest is the request of CreateCategory.
+message CreateCategoryRequest {
+  // The category to create; output-only fields are ignored.
+  Category category = 1 [(buf.validate.field).required = true];
+}
+
+// DeleteCategoryRequest is the request of DeleteCategory.
+message DeleteCategoryRequest {
+  // The category id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}

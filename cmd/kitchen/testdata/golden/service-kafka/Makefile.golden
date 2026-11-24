@@ -9,6 +9,10 @@ KITCHEN       := go run github.com/dungnh3/kitchen/cmd/kitchen@v0.1.0
 # Local runs: no auth, readable logs, the dependencies of compose.yaml.
 LOCAL_ENV := AUTH_DISABLED=true LOG_FORMAT=text
 LOCAL_ENV += PUBSUB_BROKERS=localhost:9092 PUBSUB_TLS=false
+# Topics that "make up" creates.
+LOCAL_TOPICS := notify-items notify-items.dlq
+# "kitchen add consumer" adds the settings of its subscription here.
+# kitchen:local-env
 
 .PHONY: generate build test lint check breaking run tidy docker run-worker up down
 
@@ -48,9 +52,9 @@ run-worker:
 # Start the local dependencies of compose.yaml and create the topics.
 up:
 	docker compose up -d --wait
-	for t in notify-items notify-items.dlq; do \
+	for topic in $(LOCAL_TOPICS); do \
 		docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
-			--create --if-not-exists --topic $$t >/dev/null || exit 1; \
+			--create --if-not-exists --topic $$topic >/dev/null || exit 1; \
 	done
 
 down:

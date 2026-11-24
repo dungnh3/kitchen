@@ -1,0 +1,30 @@
+package consumer
+
+import (
+	"errors"
+	"testing"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/pubsub"
+)
+
+func Test{% .N.Name %}(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      string
+		permanent bool
+	}{
+		{"valid", `{"id":"1"}`, false},
+		{"not json", "x", true},
+		{"no id", `{}`, true},
+	}
+	h := New{% .N.Name %}(log.Discard()).Handler()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := h(t.Context(), &pubsub.Message{Data: []byte(tt.data)})
+			if got := errors.Is(err, pubsub.ErrPermanent); got != tt.permanent || !tt.permanent && err != nil {
+				t.Errorf("err = %v, want permanent %v", err, tt.permanent)
+			}
+		})
+	}
+}

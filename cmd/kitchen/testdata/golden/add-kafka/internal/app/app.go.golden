@@ -1,0 +1,159 @@
+// Package app wires the service together: telemetry, errors,
+// authentication, rate limits and the gRPC + REST server, and the
+// worker.
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/dungnh3/kitchen/auth"
+	xcontext "github.com/dungnh3/kitchen/context"
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/i18n"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+	"github.com/dungnh3/kitchen/ratelimit"
+	"github.com/dungnh3/kitchen/server"
+	"golang.org/x/text/language"
+
+	"github.com/acme/notify/internal/config"
+	"github.com/acme/notify/internal/events"
+	"github.com/acme/notify/internal/service"
+	"github.com/acme/notify/internal/store"
+	"github.com/acme/notify/internal/store/memstore"
+)
+
+// Name is the service name reported in telemetry.
+const Name = "notify"
+
+// publicMethods skip authentication and rate limits: the gRPC health
+// service, used by load balancers and Kubernetes probes. The HTTP probes
+// /livez and /readyz are always public.
+var publicMethods = []string{"/grpc.health.v1.Health/"}
+
+// Run serves the API until ctx is cancelled, then shuts down gracefully.
+// logger nil means log.Default().
+func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version string, opts ...Option) (err error) {
+	if err := cfg.ValidateServer(); err != nil {
+		return err
+	}
+	logger = log.OrDefault(logger)
+	var o options
+	for _, f := range opts {
+		f(&o)
+	}
+	d, err := openDeps(ctx, cfg, logger, version, o)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, d.close(ctx)) }()
+
+	// One store and one service per domain. "kitchen add domain" adds its
+	// store above "kitchen:stores" and its service above "kitchen:services".
+	// The data lives in memory: replace memstore with a real store.
+	var items store.Items = memstore.NewItems()
+	items = events.NewItems(items, d.broker, cfg.PubSub.ItemsTopic, logger)
+	categories := memstore.NewCategories()
+	// kitchen:stores
+	services := []server.Service{
+		service.NewItemService(items),
+		service.NewCategoryService(categories),
+		// kitchen:services
+	}
+
+	bundle, err := i18n.New(language.English, i18n.WithDefaults())
+	if err != nil {
+		return fmt.Errorf("i18n: %w", err)
+	}
+	errh := errs.NewHandler(errs.Config{Logger: logger, Localizer: bundle, Domain: cfg.ErrorDomain})
+
+	rlCfg := ratelimit.Config{
+		Default:       &ratelimit.Policy{Limits: ratelimit.DefaultLimits()},
+		Skip:          publicMethods,
+		Exempt:        cfg.RateLimit.Exempt,
+		DryRun:        cfg.RateLimit.DryRun,
+		Disabled:      cfg.RateLimit.Disabled,
+		Errors:        errh,
+		Logger:        logger,
+		MeterProvider: d.tel.MeterProvider(),
+	}
+	limiter, err := ratelimit.New(rlCfg)
+	if err != nil {
+		return fmt.Errorf("rate limit: %w", err)
+	}
+
+	serverOpts := []server.Option{
+		server.WithLogger(logger),
+		server.WithVersion(version),
+		server.WithErrors(errh),
+		server.WithGRPCAddr(cfg.GRPCAddr),
+		server.WithHTTPAddr(cfg.HTTPAddr),
+		server.WithTracerProvider(d.tel.TracerProvider()),
+		server.WithMeterProvider(d.tel.MeterProvider()),
+		server.WithPropagator(d.tel.Propagator()),
+		server.WithRateLimit(limiter),
+		server.WithShutdownDelay(cfg.ShutdownDelay),
+		server.WithShutdownTimeout(cfg.ShutdownTimeout),
+		server.WithReadiness(d.checks()...),
+		server.WithServices(services...),
+	}
+	if len(cfg.TrustedProxies) > 0 {
+		tp, err := xcontext.NewTrustedProxies(cfg.TrustedProxies...)
+		if err != nil {
+			return fmt.Errorf("TRUSTED_PROXIES: %w", err)
+		}
+		serverOpts = append(serverOpts, server.WithTrustedProxies(tp))
+	}
+	if cfg.AdminAddr != "" {
+		serverOpts = append(serverOpts, server.WithAdmin(cfg.AdminAddr, d.adminOptions()...))
+	}
+	if cfg.GRPCReflection {
+		serverOpts = append(serverOpts, server.WithReflection())
+	}
+
+	if cfg.Auth.Disabled {
+		logger.WarnContext(ctx, "authentication is disabled (AUTH_DISABLED=true): every caller is anonymous")
+	} else {
+		authn, closeAuth, err := newAuthenticator(ctx, cfg.Auth, errh, logger, d.tel)
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, closeAuth(context.WithoutCancel(ctx))) }()
+		serverOpts = append(serverOpts, server.WithAuth(authn), server.WithUserIDFrom(auth.SubjectFromContext))
+	}
+
+	srv, err := server.New(append(serverOpts, o.server...)...)
+	if err != nil {
+		return err
+	}
+	return srv.Run(ctx)
+}
+
+// newAuthenticator verifies JWTs with the issuer's JWKS. It fails if the key
+// set cannot be fetched, so a misconfigured service never starts.
+func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, logger *log.Logger, tel *sdk.Telemetry) (*auth.Authenticator, func(context.Context) error, error) {
+	jwks, err := auth.NewJWKS(ctx, auth.JWKSConfig{
+		Issuer:   cfg.Issuer,
+		Audience: cfg.Audience,
+		URL:      cfg.JWKSURL,
+		Types:    cfg.TokenTypes,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("auth: %w", err)
+	}
+	authn, err := auth.New(auth.Config{
+		Verifiers:     []auth.Verifier{jwks},
+		Audience:      cfg.Audience,
+		Public:        publicMethods,
+		WriteError:    errh.WriteHTTP,
+		Logger:        logger,
+		MeterProvider: tel.MeterProvider(),
+	})
+	if err != nil {
+		_ = jwks.Close(ctx)
+		return nil, nil, fmt.Errorf("auth: %w", err)
+	}
+	return authn, jwks.Close, nil
+}

@@ -1,0 +1,77 @@
+package memstore
+
+import (
+	"cmp"
+	"context"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/google/uuid"
+
+	"github.com/acme/catalog/internal/store"
+)
+
+// Boxes is an in-memory store.Boxes. The zero value is not usable; call
+// NewBoxes.
+type Boxes struct {
+	mu   sync.RWMutex
+	byID map[string]store.Box
+	now  func() time.Time
+}
+
+var _ store.Boxes = (*Boxes)(nil)
+
+// NewBoxes returns an empty Boxes.
+func NewBoxes() *Boxes {
+	return &Boxes{byID: map[string]store.Box{}, now: time.Now}
+}
+
+// GetBox implements store.Boxes.
+func (s *Boxes) GetBox(_ context.Context, id string) (store.Box, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.byID[id]
+	if !ok {
+		return store.Box{}, errs.ErrNotFound
+	}
+	return v, nil
+}
+
+// ListBoxes implements store.Boxes.
+func (s *Boxes) ListBoxes(_ context.Context, after string, limit int32) ([]store.Box, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]store.Box, 0, len(s.byID))
+	for _, v := range s.byID {
+		if v.ID > after {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b store.Box) int { return cmp.Compare(a.ID, b.ID) })
+	if len(out) > int(limit) {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// CreateBox implements store.Boxes.
+func (s *Boxes) CreateBox(_ context.Context, title string) (store.Box, error) {
+	v := store.Box{ID: uuid.NewString(), Title: title, CreateTime: s.now().UTC()}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byID[v.ID] = v
+	return v, nil
+}
+
+// DeleteBox implements store.Boxes.
+func (s *Boxes) DeleteBox(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byID[id]; !ok {
+		return errs.ErrNotFound
+	}
+	delete(s.byID, id)
+	return nil
+}

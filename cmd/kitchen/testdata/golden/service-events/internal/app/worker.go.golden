@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	leaseredis "github.com/dungnh3/kitchen/lease/redis"
 	"github.com/dungnh3/kitchen/log"
@@ -44,18 +43,27 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, versi
 
 	var runners []func(context.Context) error
 
-	src, err := d.broker.Source(cfg.PubSub.ItemsTopic, cfg.PubSub.ItemsSubscription)
-	if err != nil {
-		return fmt.Errorf("items source: %w", err)
+	// subscribe consumes topic through subscription with h.
+	subscribe := func(topic, subscription string, h pubsub.Handler) error {
+		src, err := d.broker.Source(topic, subscription)
+		if err != nil {
+			return err
+		}
+		sub, err := pubsub.NewSubscriber(src, h,
+			pubsub.WithConcurrency(cfg.PubSub.Concurrency),
+			pubsub.WithLogger(logger),
+		)
+		if err != nil {
+			return err
+		}
+		runners = append(runners, sub.Run)
+		return nil
 	}
-	sub, err := pubsub.NewSubscriber(src, consumer.NewItems(logger).Handler(),
-		pubsub.WithConcurrency(cfg.PubSub.Concurrency),
-		pubsub.WithLogger(logger),
-	)
-	if err != nil {
-		return fmt.Errorf("items subscriber: %w", err)
+	// "kitchen add consumer" adds its subscription above "kitchen:consumers".
+	if err := subscribe(cfg.PubSub.ItemsTopic, cfg.PubSub.ItemsSubscription, consumer.NewItems(logger).Handler()); err != nil {
+		return fmt.Errorf("items consumer: %w", err)
 	}
-	runners = append(runners, sub.Run)
+	// kitchen:consumers
 
 	ob, err := outboxpgx.New(d.pool, outboxpgx.WithLogger(logger))
 	if err != nil {
@@ -72,7 +80,11 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, versi
 	if err != nil {
 		return fmt.Errorf("lease: %w", err)
 	}
-	jobs := jobs(logger)
+	// "kitchen add job" adds its job above "kitchen:jobs".
+	jobs := []job.Job{
+		job.Heartbeat(logger),
+		// kitchen:jobs
+	}
 	runners = append(runners, func(ctx context.Context) error { return job.Run(ctx, locker, logger, jobs...) })
 
 	if cfg.AdminAddr != "" {
@@ -87,18 +99,6 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, versi
 	err = runAll(ctx, runners...)
 	logger.InfoContext(ctx, "worker stopped")
 	return err
-}
-
-// jobs are the periodic jobs of the worker.
-func jobs(logger *log.Logger) []job.Job {
-	return []job.Job{{
-		Name:  "heartbeat",
-		Every: time.Minute,
-		Run: func(ctx context.Context) error {
-			logger.InfoContext(ctx, "heartbeat job ran")
-			return nil
-		},
-	}}
 }
 
 // runAll runs every runner until ctx is cancelled or one of them fails,

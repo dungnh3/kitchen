@@ -16,6 +16,7 @@ func environ(kv ...string) env.Options {
 		"DB_URL":         "postgres://app@localhost:5432/app?sslmode=disable",
 		"REDIS_ADDRS":    "localhost:6379",
 		"PUBSUB_PROJECT": "local",
+		// kitchen:subscriptions-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]

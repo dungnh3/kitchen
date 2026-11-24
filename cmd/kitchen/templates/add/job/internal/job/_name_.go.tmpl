@@ -1,0 +1,22 @@
+package job
+
+import (
+	"context"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+)
+
+// {% .N.Name %} returns the {% .N.Words %} job. It runs every {% .EveryText %} on one worker
+// replica at a time.
+func {% .N.Name %}(logger *log.Logger) Job {
+	logger = log.OrDefault(logger)
+	return Job{
+		Name:  "{% .N.Kebab %}",
+		Every: {% .Every %},
+		Run: func(ctx context.Context) error {
+			logger.InfoContext(ctx, "job ran", log.String("job", "{% .N.Kebab %}"))
+			return nil
+		},
+	}
+}

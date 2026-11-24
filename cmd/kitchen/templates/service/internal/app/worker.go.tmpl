@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-{%- if .Lease %}
-	"time"
-{%- end %}
 
 {% if .Lease %}	leaseredis "github.com/dungnh3/kitchen/lease/redis"
 {% end %}	"github.com/dungnh3/kitchen/log"
@@ -61,22 +58,31 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, versi
 	var runners []func(context.Context) error
 {%- if .PubSub %}
 
-	src, err := d.broker.Source(cfg.PubSub.ItemsTopic, {% if .SQS %}""{% else %}cfg.PubSub.ItemsSubscription{% end %})
-	if err != nil {
-		return fmt.Errorf("items source: %w", err)
-	}
-	sub, err := pubsub.NewSubscriber(src, consumer.NewItems(logger).Handler(),
-		pubsub.WithConcurrency(cfg.PubSub.Concurrency),
-		pubsub.WithLogger(logger),
+	// subscribe consumes topic through subscription with h.
+	subscribe := func(topic, subscription{% if .Kafka %}, deadLetterTopic{% end %} string, h pubsub.Handler) error {
+		src, err := d.broker.Source(topic, subscription)
+		if err != nil {
+			return err
+		}
+		sub, err := pubsub.NewSubscriber(src, h,
+			pubsub.WithConcurrency(cfg.PubSub.Concurrency),
+			pubsub.WithLogger(logger),
 {%- if .Kafka %}
-		pubsub.WithMaxDeliveryAttempts(cfg.PubSub.MaxDeliveryAttempts),
-		pubsub.WithDeadLetter(pubsub.DeadLetterTo(d.broker, cfg.PubSub.ItemsDeadLetterTopic)),
+			pubsub.WithMaxDeliveryAttempts(cfg.PubSub.MaxDeliveryAttempts),
+			pubsub.WithDeadLetter(pubsub.DeadLetterTo(d.broker, deadLetterTopic)),
 {%- end %}
-	)
-	if err != nil {
-		return fmt.Errorf("items subscriber: %w", err)
+		)
+		if err != nil {
+			return err
+		}
+		runners = append(runners, sub.Run)
+		return nil
 	}
-	runners = append(runners, sub.Run)
+	// "kitchen add consumer" adds its subscription above "kitchen:consumers".
+	if err := subscribe(cfg.PubSub.ItemsTopic, {% if .SQS %}""{% else %}cfg.PubSub.ItemsSubscription{% end %}{% if .Kafka %}, cfg.PubSub.ItemsDeadLetterTopic{% end %}, consumer.NewItems(logger).Handler()); err != nil {
+		return fmt.Errorf("items consumer: %w", err)
+	}
+	// kitchen:consumers
 {%- end %}
 {%- if .Outbox %}
 
@@ -97,7 +103,11 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, versi
 	if err != nil {
 		return fmt.Errorf("lease: %w", err)
 	}
-	jobs := jobs(logger)
+	// "kitchen add job" adds its job above "kitchen:jobs".
+	jobs := []job.Job{
+		job.Heartbeat(logger),
+		// kitchen:jobs
+	}
 	runners = append(runners, func(ctx context.Context) error { return job.Run(ctx, locker, logger, jobs...) })
 {%- end %}
 
@@ -114,20 +124,7 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, versi
 	logger.InfoContext(ctx, "worker stopped")
 	return err
 }
-{%- if .Lease %}
 
-// jobs are the periodic jobs of the worker.
-func jobs(logger *log.Logger) []job.Job {
-	return []job.Job{{
-		Name:  "heartbeat",
-		Every: time.Minute,
-		Run: func(ctx context.Context) error {
-			logger.InfoContext(ctx, "heartbeat job ran")
-			return nil
-		},
-	}}
-}
-{%- end %}
 
 // runAll runs every runner until ctx is cancelled or one of them fails,
 // which cancels the others. It returns after all of them have returned.

@@ -8,8 +8,8 @@ import "google/api/field_behavior.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-// ItemService manages items. It is an example of a resource-oriented API
-// (https://google.aip.dev/121): replace it with your own.
+// ItemService manages items, a resource-oriented API
+// (https://google.aip.dev/121). Change the Item fields to your data.
 service ItemService {
   // GetItem returns one item.
   rpc GetItem(GetItemRequest) returns (Item) {
@@ -35,7 +35,7 @@ service ItemService {
   }
 }
 
-// Item is an example resource.
+// Item is a resource of the service.
 message Item {
   // The item id, assigned by the server.
   string id = 1 [(google.api.field_behavior) = OUTPUT_ONLY];

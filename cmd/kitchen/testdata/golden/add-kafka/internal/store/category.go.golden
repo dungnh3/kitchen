@@ -1,0 +1,25 @@
+package store
+
+import (
+	"context"
+	"time"
+)
+
+// Category is a stored category.
+type Category struct {
+	ID         string
+	Title      string
+	CreateTime time.Time
+}
+
+// Categories persists categories. Implementations return errs errors, such as
+// errs.ErrNotFound for a missing category, so the server maps them to the right
+// gRPC and HTTP status.
+type Categories interface {
+	GetCategory(ctx context.Context, id string) (Category, error)
+	// ListCategories returns at most limit categories with an id greater than
+	// after ("" for the first page), ordered by id.
+	ListCategories(ctx context.Context, after string, limit int32) ([]Category, error)
+	CreateCategory(ctx context.Context, title string) (Category, error)
+	DeleteCategory(ctx context.Context, id string) error
+}

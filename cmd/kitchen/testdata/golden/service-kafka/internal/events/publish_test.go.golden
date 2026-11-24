@@ -22,7 +22,7 @@ func TestStorePublishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := NewStore(memstore.New(), broker, "items", log.Discard())
+	s := NewItems(memstore.NewItems(), broker, "items", log.Discard())
 
 	it, err := s.CreateItem(t.Context(), "first")
 	if err != nil {
@@ -51,7 +51,7 @@ func TestStorePublishes(t *testing.T) {
 func TestStoreKeepsItemWhenPublishFails(t *testing.T) {
 	broker := memory.New()
 	_ = broker.Close(context.Background()) // every publish fails
-	s := NewStore(memstore.New(), broker, "items", log.Discard())
+	s := NewItems(memstore.NewItems(), broker, "items", log.Discard())
 
 	it, err := s.CreateItem(t.Context(), "first")
 	if err != nil {

@@ -1,0 +1,77 @@
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+IMAGE   ?= catalog
+
+# Code generators and the linter run at pinned versions with "go run", so
+# nothing has to be installed. The protoc plugins are "tool" deps in go.mod.
+BUF           := go run github.com/bufbuild/buf/cmd/buf@v1.75.0
+SQLC          := go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+KITCHEN       := go run github.com/dungnh3/kitchen/cmd/kitchen@v0.1.0
+
+DB_URL ?= postgres://app:app@localhost:5432/app?sslmode=disable
+# Local runs: no auth, readable logs, the dependencies of compose.yaml.
+LOCAL_ENV := AUTH_DISABLED=true LOG_FORMAT=text DB_URL="$(DB_URL)"
+LOCAL_ENV += REDIS_ADDRS=localhost:6379 REDIS_TLS=false
+SQS_URL := http://localhost:9324/000000000000
+LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
+	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=$(SQS_URL)/catalog-items
+# Queues that "make up" creates.
+LOCAL_QUEUES := catalog-items
+# "kitchen add consumer" adds the settings of its subscription here.
+LOCAL_ENV += PUBSUB_ORDER_EVENTS_TOPIC=$(SQS_URL)/order-events
+LOCAL_QUEUES += order-events
+# kitchen:local-env
+
+.PHONY: generate build test lint check breaking run tidy docker run-worker up down migrate-up migrate-down migrate-status
+
+# Regenerate gen/ from proto/ and internal/store/pgstore/sqlcdb from the SQL.
+# The generated code is committed; CI fails if it is stale.
+generate:
+	$(BUF) generate
+	$(SQLC) generate
+
+build:
+	go build -ldflags="-X main.version=$(VERSION)" -o bin/server ./cmd/server
+
+test:
+	go test -race -count=1 ./...
+
+lint:
+	$(GOLANGCI_LINT) run ./...
+	$(BUF) lint
+	$(SQLC) vet
+
+# Fail when a file managed by kitchen was edited (see .kitchen.yaml). Add
+# ARGS=-write to update the managed files to the current template.
+check:
+	$(KITCHEN) check $(ARGS)
+
+# Compare the API with main for breaking changes.
+breaking:
+	$(BUF) breaking --against '.git#branch=main'
+
+tidy:
+	go mod tidy
+
+run:
+	$(LOCAL_ENV) DB_MIGRATE_ON_START=true go run ./cmd/server serve
+
+run-worker:
+	$(LOCAL_ENV) go run ./cmd/server worker
+
+migrate-up migrate-down migrate-status:
+	$(LOCAL_ENV) go run ./cmd/server migrate $(@:migrate-%=%)
+
+# Start the local dependencies of compose.yaml and create the queue.
+up:
+	docker compose up -d --wait
+	for queue in $(LOCAL_QUEUES); do \
+		curl -sf --retry 30 --retry-connrefused --retry-delay 1 \
+			"http://localhost:9324/?Action=CreateQueue&QueueName=$$queue" >/dev/null || exit 1; \
+	done
+
+down:
+	docker compose down
+
+docker:
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .

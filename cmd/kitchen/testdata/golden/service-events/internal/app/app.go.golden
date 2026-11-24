@@ -61,9 +61,17 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 	if err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
+
+	// One store and one service per domain. "kitchen add domain" adds its
+	// store above "kitchen:stores" and its service above "kitchen:services".
 	// ItemCreated events are written to the outbox with the item; the worker
 	// relays them to the broker.
-	var st store.Store = pgstore.New(d.pool, ob, cfg.PubSub.ItemsTopic)
+	var items store.Items = pgstore.NewItems(d.pool, ob, cfg.PubSub.ItemsTopic)
+	// kitchen:stores
+	services := []server.Service{
+		service.NewItemService(items),
+		// kitchen:services
+	}
 
 	bundle, err := i18n.New(language.English, i18n.WithDefaults())
 	if err != nil {
@@ -105,7 +113,7 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 		server.WithShutdownDelay(cfg.ShutdownDelay),
 		server.WithShutdownTimeout(cfg.ShutdownTimeout),
 		server.WithReadiness(d.checks()...),
-		server.WithServices(service.New(st)),
+		server.WithServices(services...),
 	}
 	if len(cfg.TrustedProxies) > 0 {
 		tp, err := xcontext.NewTrustedProxies(cfg.TrustedProxies...)

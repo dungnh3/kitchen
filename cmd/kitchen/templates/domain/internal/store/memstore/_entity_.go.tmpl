@@ -1,0 +1,77 @@
+package memstore
+
+import (
+	"cmp"
+	"context"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/google/uuid"
+
+	"{% .Module %}/internal/store"
+)
+
+// {% .E.Names %} is an in-memory store.{% .E.Names %}. The zero value is not usable; call
+// New{% .E.Names %}.
+type {% .E.Names %} struct {
+	mu   sync.RWMutex
+	byID map[string]store.{% .E.Name %}
+	now  func() time.Time
+}
+
+var _ store.{% .E.Names %} = (*{% .E.Names %})(nil)
+
+// New{% .E.Names %} returns an empty {% .E.Names %}.
+func New{% .E.Names %}() *{% .E.Names %} {
+	return &{% .E.Names %}{byID: map[string]store.{% .E.Name %}{}, now: time.Now}
+}
+
+// Get{% .E.Name %} implements store.{% .E.Names %}.
+func (s *{% .E.Names %}) Get{% .E.Name %}(_ context.Context, id string) (store.{% .E.Name %}, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.byID[id]
+	if !ok {
+		return store.{% .E.Name %}{}, errs.ErrNotFound
+	}
+	return v, nil
+}
+
+// List{% .E.Names %} implements store.{% .E.Names %}.
+func (s *{% .E.Names %}) List{% .E.Names %}(_ context.Context, after string, limit int32) ([]store.{% .E.Name %}, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]store.{% .E.Name %}, 0, len(s.byID))
+	for _, v := range s.byID {
+		if v.ID > after {
+			out = append(out, v)
+		}
+	}
+	slices.SortFunc(out, func(a, b store.{% .E.Name %}) int { return cmp.Compare(a.ID, b.ID) })
+	if len(out) > int(limit) {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// Create{% .E.Name %} implements store.{% .E.Names %}.
+func (s *{% .E.Names %}) Create{% .E.Name %}(_ context.Context, title string) (store.{% .E.Name %}, error) {
+	v := store.{% .E.Name %}{ID: uuid.NewString(), Title: title, CreateTime: s.now().UTC()}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byID[v.ID] = v
+	return v, nil
+}
+
+// Delete{% .E.Name %} implements store.{% .E.Names %}.
+func (s *{% .E.Names %}) Delete{% .E.Name %}(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byID[id]; !ok {
+		return errs.ErrNotFound
+	}
+	delete(s.byID, id)
+	return nil
+}

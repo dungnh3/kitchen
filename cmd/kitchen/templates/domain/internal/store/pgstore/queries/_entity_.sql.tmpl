@@ -1,0 +1,15 @@
+-- name: Get{% .E.Name %} :one
+SELECT id, title, create_time FROM {% .E.Snakes %} WHERE id = $1;
+
+-- name: List{% .E.Names %} :many
+SELECT id, title, create_time FROM {% .E.Snakes %}
+WHERE id > sqlc.arg(after)::uuid
+ORDER BY id
+LIMIT sqlc.arg(page_limit);
+
+-- name: Create{% .E.Name %} :one
+INSERT INTO {% .E.Snakes %} (title) VALUES ($1)
+RETURNING id, title, create_time;
+
+-- name: Delete{% .E.Name %} :execrows
+DELETE FROM {% .E.Snakes %} WHERE id = $1;

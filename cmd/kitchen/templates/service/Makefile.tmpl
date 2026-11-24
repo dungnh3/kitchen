@@ -20,12 +20,22 @@ LOCAL_ENV += REDIS_ADDRS=localhost:6379 REDIS_TLS=false
 {%- end %}
 {%- if .GCP %}
 LOCAL_ENV += PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT=local PUBSUB_MAX_DELIVERY_ATTEMPTS=0
+# topic:subscription pairs that "make up" creates in the emulator.
+LOCAL_SUBSCRIPTIONS := {% .Name %}-items:{% .Name %}-items-worker
 {%- else if .Kafka %}
 LOCAL_ENV += PUBSUB_BROKERS=localhost:9092 PUBSUB_TLS=false
+# Topics that "make up" creates.
+LOCAL_TOPICS := {% .Name %}-items {% .Name %}-items.dlq
 {%- else if .SQS %}
-SQS_QUEUE ?= {% .Name %}-items
+SQS_URL := http://localhost:9324/000000000000
 LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
-	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=http://localhost:9324/000000000000/$(SQS_QUEUE)
+	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=$(SQS_URL)/{% .Name %}-items
+# Queues that "make up" creates.
+LOCAL_QUEUES := {% .Name %}-items
+{%- end %}
+{%- if .PubSub %}
+# "kitchen add consumer" adds the settings of its subscription here.
+# kitchen:local-env
 {%- end %}
 
 .PHONY: generate build test lint check breaking run tidy docker{% if .Worker %} run-worker{% end %}{% if .Compose %} up down{% end %}{% if .Postgres %} migrate-up migrate-down migrate-status{% end %}
@@ -82,19 +92,23 @@ migrate-up migrate-down migrate-status:
 up:
 	docker compose up -d --wait
 {%- if .GCP %}
-	curl -sf --retry 30 --retry-connrefused --retry-delay 1 -X PUT \
-		http://localhost:8085/v1/projects/local/topics/{% .Name %}-items >/dev/null
-	curl -sf -X PUT -H 'Content-Type: application/json' \
-		-d '{"topic":"projects/local/topics/{% .Name %}-items","enableMessageOrdering":true}' \
-		http://localhost:8085/v1/projects/local/subscriptions/{% .Name %}-items-worker >/dev/null
+	for pair in $(LOCAL_SUBSCRIPTIONS); do topic=$${pair%%:*}; sub=$${pair#*:}; \
+		curl -sf --retry 30 --retry-connrefused --retry-delay 1 -X PUT \
+			http://localhost:8085/v1/projects/local/topics/$$topic >/dev/null || exit 1; \
+		curl -sf -X PUT -H 'Content-Type: application/json' \
+			-d "{\"topic\":\"projects/local/topics/$$topic\",\"enableMessageOrdering\":true}" \
+			http://localhost:8085/v1/projects/local/subscriptions/$$sub >/dev/null || exit 1; \
+	done
 {%- else if .Kafka %}
-	for t in {% .Name %}-items {% .Name %}-items.dlq; do \
+	for topic in $(LOCAL_TOPICS); do \
 		docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
-			--create --if-not-exists --topic $$t >/dev/null || exit 1; \
+			--create --if-not-exists --topic $$topic >/dev/null || exit 1; \
 	done
 {%- else if .SQS %}
-	curl -sf --retry 30 --retry-connrefused --retry-delay 1 \
-		'http://localhost:9324/?Action=CreateQueue&QueueName=$(SQS_QUEUE)' >/dev/null
+	for queue in $(LOCAL_QUEUES); do \
+		curl -sf --retry 30 --retry-connrefused --retry-delay 1 \
+			"http://localhost:9324/?Action=CreateQueue&QueueName=$$queue" >/dev/null || exit 1; \
+	done
 {%- end %}
 
 down:

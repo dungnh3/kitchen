@@ -12,9 +12,13 @@ DB_URL ?= postgres://app:app@localhost:5432/app?sslmode=disable
 # Local runs: no auth, readable logs, the dependencies of compose.yaml.
 LOCAL_ENV := AUTH_DISABLED=true LOG_FORMAT=text DB_URL="$(DB_URL)"
 LOCAL_ENV += REDIS_ADDRS=localhost:6379 REDIS_TLS=false
-SQS_QUEUE ?= catalog-items
+SQS_URL := http://localhost:9324/000000000000
 LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
-	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=http://localhost:9324/000000000000/$(SQS_QUEUE)
+	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=$(SQS_URL)/catalog-items
+# Queues that "make up" creates.
+LOCAL_QUEUES := catalog-items
+# "kitchen add consumer" adds the settings of its subscription here.
+# kitchen:local-env
 
 .PHONY: generate build test lint check breaking run tidy docker run-worker up down migrate-up migrate-down migrate-status
 
@@ -59,8 +63,10 @@ migrate-up migrate-down migrate-status:
 # Start the local dependencies of compose.yaml and create the queue.
 up:
 	docker compose up -d --wait
-	curl -sf --retry 30 --retry-connrefused --retry-delay 1 \
-		'http://localhost:9324/?Action=CreateQueue&QueueName=$(SQS_QUEUE)' >/dev/null
+	for queue in $(LOCAL_QUEUES); do \
+		curl -sf --retry 30 --retry-connrefused --retry-delay 1 \
+			"http://localhost:9324/?Action=CreateQueue&QueueName=$$queue" >/dev/null || exit 1; \
+	done
 
 down:
 	docker compose down

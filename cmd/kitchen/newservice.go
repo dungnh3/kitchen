@@ -373,6 +373,18 @@ func renderService(p serviceParams) (scaffold.Files, error) {
 		}
 		out[rel] = b
 	}
+	// The example domain.
+	item, err := newEntity("item", "")
+	if err != nil {
+		return nil, err
+	}
+	dom, err := renderDomain(p, item, "00001", p.Outbox())
+	if err != nil {
+		return nil, err
+	}
+	for rel, b := range dom {
+		out[rel] = b
+	}
 	if err := addManaged(out, p); err != nil {
 		return nil, err
 	}

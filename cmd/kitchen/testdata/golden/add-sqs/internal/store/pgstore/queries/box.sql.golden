@@ -1,0 +1,15 @@
+-- name: GetBox :one
+SELECT id, title, create_time FROM boxes WHERE id = $1;
+
+-- name: ListBoxes :many
+SELECT id, title, create_time FROM boxes
+WHERE id > sqlc.arg(after)::uuid
+ORDER BY id
+LIMIT sqlc.arg(page_limit);
+
+-- name: CreateBox :one
+INSERT INTO boxes (title) VALUES ($1)
+RETURNING id, title, create_time;
+
+-- name: DeleteBox :execrows
+DELETE FROM boxes WHERE id = $1;

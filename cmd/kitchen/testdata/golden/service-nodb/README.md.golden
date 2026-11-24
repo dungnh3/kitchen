@@ -31,12 +31,20 @@ curl -s localhost:8080/v1/items
 | `cmd/server/` | `main`: logging, configuration, the commands (`serve`) |
 | `internal/app/` | Wiring: telemetry, auth, rate limits, server; integration test |
 | `internal/config/` | Configuration from environment variables |
-| `internal/service/` | The API implementation |
-| `internal/store/` | The `Store` interface and its implementations (`memstore`) |
+| `internal/service/` | The API implementation, one file per domain (`item_service.go`) |
+| `internal/store/` | Per domain: the types and store interface (`store.Items`) and their implementations (`memstore`) |
 | `docs/ENV.md` | Environment variables |
 | `.kitchen.yaml` | How kitchen generated the project; `make check` compares the managed files with it |
 
 ## Change the API
+
+A new resource with its CRUD API, store:
+
+```bash
+go run github.com/dungnh3/kitchen/cmd/kitchen@v0.1.0 add domain order
+```
+
+To change an existing API:
 
 1. Edit `proto/edge_gw/v1/*.proto` (validation rules go in the proto file).
 2. Run `make generate`, then implement the new methods in `internal/service`.
@@ -66,6 +74,11 @@ clients, `http.Server`, `status.New`, OTel SDK setup, ...). Use `redisx`,
 Rate limits use per-instance memory. To share them between instances, pass a
 Redis store (`github.com/dungnh3/kitchen/ratelimit/redis`) as
 `ratelimit.Config.Store`.
+
+## Markers
+
+`kitchen add` inserts code before marker comments such as
+`// kitchen:services`; keep them where they are.
 
 ## Managed files
 

@@ -1,0 +1,25 @@
+package store
+
+import (
+	"context"
+	"time"
+)
+
+// OrderItem is a stored order item.
+type OrderItem struct {
+	ID         string
+	Title      string
+	CreateTime time.Time
+}
+
+// OrderItems persists order items. Implementations return errs errors, such as
+// errs.ErrNotFound for a missing order item, so the server maps them to the right
+// gRPC and HTTP status.
+type OrderItems interface {
+	GetOrderItem(ctx context.Context, id string) (OrderItem, error)
+	// ListOrderItems returns at most limit order items with an id greater than
+	// after ("" for the first page), ordered by id.
+	ListOrderItems(ctx context.Context, after string, limit int32) ([]OrderItem, error)
+	CreateOrderItem(ctx context.Context, title string) (OrderItem, error)
+	DeleteOrderItem(ctx context.Context, id string) error
+}

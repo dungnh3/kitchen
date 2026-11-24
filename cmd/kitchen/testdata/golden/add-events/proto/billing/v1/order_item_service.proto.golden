@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package billing.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// OrderItemService manages order items, a resource-oriented API
+// (https://google.aip.dev/121). Change the OrderItem fields to your data.
+service OrderItemService {
+  // GetOrderItem returns one order item.
+  rpc GetOrderItem(GetOrderItemRequest) returns (OrderItem) {
+    option (google.api.http) = {get: "/v1/orderItems/{id}"};
+  }
+
+  // ListOrderItems returns order items ordered by id, one page at a time.
+  rpc ListOrderItems(ListOrderItemsRequest) returns (ListOrderItemsResponse) {
+    option (google.api.http) = {get: "/v1/orderItems"};
+  }
+
+  // CreateOrderItem creates an order item.
+  rpc CreateOrderItem(CreateOrderItemRequest) returns (OrderItem) {
+    option (google.api.http) = {
+      post: "/v1/orderItems"
+      body: "order_item"
+    };
+  }
+
+  // DeleteOrderItem deletes an order item.
+  rpc DeleteOrderItem(DeleteOrderItemRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/orderItems/{id}"};
+  }
+}
+
+// OrderItem is a resource of the service.
+message OrderItem {
+  // The order item id, assigned by the server.
+  string id = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // A short title.
+  string title = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 200
+    }
+  ];
+  // When the order item was created.
+  google.protobuf.Timestamp create_time = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// GetOrderItemRequest is the request of GetOrderItem.
+message GetOrderItemRequest {
+  // The order item id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListOrderItemsRequest is the request of ListOrderItems.
+message ListOrderItemsRequest {
+  // The maximum number of order items to return; 0 means the server default (50).
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // The next_page_token of the previous response, to get the next page.
+  string page_token = 2 [(buf.validate.field).string.max_len = 512];
+}
+
+// ListOrderItemsResponse is the response of ListOrderItems.
+message ListOrderItemsResponse {
+  // The order items of this page.
+  repeated OrderItem order_items = 1;
+  // A token to get the next page; empty on the last page.
+  string next_page_token = 2;
+}
+
+// CreateOrderItemRequest is the request of CreateOrderItem.
+message CreateOrderItemRequest {
+  // The order item to create; output-only fields are ignored.
+  OrderItem order_item = 1 [(buf.validate.field).required = true];
+}
+
+// DeleteOrderItemRequest is the request of DeleteOrderItem.
+message DeleteOrderItemRequest {
+  // The order item id.
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}

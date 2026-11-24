@@ -1,0 +1,76 @@
+package pgstore
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/pg"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/acme/billing/internal/store"
+	"github.com/acme/billing/internal/store/pgstore/sqlcdb"
+)
+
+// OrderItems is a store.OrderItems on a pgx pool.
+type OrderItems struct {
+	q *sqlcdb.Queries
+}
+
+var _ store.OrderItems = (*OrderItems)(nil)
+
+// NewOrderItems returns OrderItems on pool, which the caller owns.
+func NewOrderItems(pool *pgxpool.Pool) *OrderItems {
+	return &OrderItems{q: sqlcdb.New(pool)}
+}
+
+// GetOrderItem implements store.OrderItems.
+func (s *OrderItems) GetOrderItem(ctx context.Context, id string) (store.OrderItem, error) {
+	row, err := s.q.GetOrderItem(ctx, id)
+	if err != nil {
+		// pg.MapError turns pgx.ErrNoRows into errs.ErrNotFound, constraint
+		// violations into the matching errs sentinel, and so on.
+		return store.OrderItem{}, pg.MapError(err)
+	}
+	return orderItemFromRow(row), nil
+}
+
+// ListOrderItems implements store.OrderItems.
+func (s *OrderItems) ListOrderItems(ctx context.Context, after string, limit int32) ([]store.OrderItem, error) {
+	if after == "" {
+		after = firstID
+	}
+	rows, err := s.q.ListOrderItems(ctx, sqlcdb.ListOrderItemsParams{After: after, PageLimit: limit})
+	if err != nil {
+		return nil, pg.MapError(err)
+	}
+	out := make([]store.OrderItem, len(rows))
+	for i, r := range rows {
+		out[i] = orderItemFromRow(r)
+	}
+	return out, nil
+}
+
+// CreateOrderItem implements store.OrderItems.
+func (s *OrderItems) CreateOrderItem(ctx context.Context, title string) (store.OrderItem, error) {
+	row, err := s.q.CreateOrderItem(ctx, title)
+	if err != nil {
+		return store.OrderItem{}, pg.MapError(err)
+	}
+	return orderItemFromRow(row), nil
+}
+
+// DeleteOrderItem implements store.OrderItems.
+func (s *OrderItems) DeleteOrderItem(ctx context.Context, id string) error {
+	n, err := s.q.DeleteOrderItem(ctx, id)
+	if err != nil {
+		return pg.MapError(err)
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+func orderItemFromRow(r sqlcdb.OrderItem) store.OrderItem {
+	return store.OrderItem{ID: r.ID, Title: r.Title, CreateTime: r.CreateTime}
+}
