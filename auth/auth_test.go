@@ -272,6 +272,8 @@ func TestNewValidation(t *testing.T) {
 		{Verifiers: []auth.Verifier{v}, Public: []string{"/"}},
 		{Verifiers: []auth.Verifier{v}, Public: []string{""}},
 		{Verifiers: []auth.Verifier{nil}},
+		{Verifiers: []auth.Verifier{v}},                                        // no audience
+		{Verifiers: []auth.Verifier{v}, Audience: audience, AnyAudience: true}, // both
 	}
 	for i, c := range bad {
 		if _, err := auth.New(c); err == nil {
@@ -281,7 +283,7 @@ func TestNewValidation(t *testing.T) {
 }
 
 func TestBearerParsing(t *testing.T) {
-	a := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}})
+	a := newAuthenticator(t, auth.Config{Audience: audience, Verifiers: []auth.Verifier{newHMAC(t, issuerA)}})
 	tok := sign(t, baseClaims(issuerA), jwa.HS256(), hmacSecret, "k1")
 	ic := a.UnaryServerInterceptor()
 	info := &grpc.UnaryServerInfo{FullMethod: "/agent.v1.AgentService/Get"}
@@ -324,6 +326,7 @@ func TestBearerParsing(t *testing.T) {
 
 func TestPublicMethods(t *testing.T) {
 	a := newAuthenticator(t, auth.Config{
+		Audience:  audience,
 		Verifiers: []auth.Verifier{newHMAC(t, issuerA)},
 		Public:    []string{"/grpc.health.v1.Health/", "/agent.v1.AgentService/Ping"},
 	})
@@ -348,6 +351,7 @@ func TestPublicMethods(t *testing.T) {
 
 func TestRequireScopes(t *testing.T) {
 	a := newAuthenticator(t, auth.Config{
+		Audience:  audience,
 		Verifiers: []auth.Verifier{newHMAC(t, issuerA)},
 		Authorizer: auth.RequireScopes(map[string][]string{
 			"/agent.v1.AgentService/Delete": {"agents:admin"},
@@ -381,7 +385,7 @@ type fakeStream struct {
 func (f fakeStream) Context() context.Context { return f.ctx }
 
 func TestStreamInterceptor(t *testing.T) {
-	a := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}})
+	a := newAuthenticator(t, auth.Config{Audience: audience, Verifiers: []auth.Verifier{newHMAC(t, issuerA)}})
 	ic := a.StreamServerInterceptor()
 	ctx := metadata.NewIncomingContext(context.Background(),
 		metadata.Pairs("authorization", "Bearer "+sign(t, baseClaims(issuerA), jwa.HS256(), hmacSecret, "k1")))
@@ -402,7 +406,7 @@ func TestStreamInterceptor(t *testing.T) {
 }
 
 func TestHTTPMiddleware(t *testing.T) {
-	a := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}, Public: []string{"GET /healthz"}})
+	a := newAuthenticator(t, auth.Config{Audience: audience, Verifiers: []auth.Verifier{newHMAC(t, issuerA)}, Public: []string{"GET /healthz"}})
 	mux := http.NewServeMux()
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, has := auth.FromContext(r.Context()); !has && r.Pattern != "GET /healthz" {
@@ -701,7 +705,7 @@ func TestAllVerifier(t *testing.T) {
 		},
 	})
 	defer in.Close()
-	a := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{auth.All(newHMAC(t, issuerA), in)}})
+	a := newAuthenticator(t, auth.Config{Audience: audience, Verifiers: []auth.Verifier{auth.All(newHMAC(t, issuerA), in)}})
 	tok := sign(t, baseClaims(issuerA), jwa.HS256(), hmacSecret, "k1")
 	p, err := a.Authenticate(context.Background(), tok)
 	if err != nil || p.Subject != "user-1" {

@@ -222,6 +222,10 @@ func (in *Introspection) load(ctx context.Context, token, key string) (introResu
 	now := in.cfg.Now()
 	negative := introResult{K: key, Until: now.Add(in.cfg.NegativeTTL)}
 	switch {
+	case errors.Is(err, ErrAuthUnavailable):
+		// First: an authority failure is never cached, whatever reason its
+		// cause carries.
+		return introResult{}, err
 	case err == nil && p != nil:
 		until := now.Add(in.cfg.TTL)
 		if !p.ExpiresAt.IsZero() && p.ExpiresAt.Before(until) {

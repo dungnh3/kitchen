@@ -28,10 +28,15 @@ type Config struct {
 	Verifiers []Verifier
 	// Opaque handles tokens that are not JWTs. nil: such tokens are rejected.
 	Opaque Verifier
-	// Audience, when set, must be in every principal's Audience, whatever
-	// verifier produced it. Leave it empty only if each verifier checks
-	// its own audience.
+	// Audience must be in every principal's Audience, whatever verifier
+	// produced it (RFC 8725 section 3.9): a token minted for another API of
+	// the same issuer is rejected. Required unless AnyAudience is set.
 	Audience string
+	// AnyAudience accepts principals whatever their audience. Set it only
+	// when every verifier checks its own audience (StaticConfig.Audience,
+	// JWKSConfig.Audience, RFC7662Config.Audience) or the issuer mints
+	// tokens for this service alone. It may not be combined with Audience.
+	AnyAudience bool
 	// Public lists methods that skip authentication: an exact gRPC full
 	// method ("/pkg.Svc/Method") or HTTP route pattern, or a service prefix
 	// ending in "/" ("/grpc.health.v1.Health/"). Everything else requires a
@@ -82,6 +87,12 @@ type Authenticator struct {
 func New(cfg Config) (*Authenticator, error) {
 	if len(cfg.Verifiers) == 0 && cfg.Opaque == nil {
 		return nil, errors.New("auth: at least one verifier is required")
+	}
+	switch {
+	case cfg.Audience == "" && !cfg.AnyAudience:
+		return nil, errors.New("auth: Audience is required (set AnyAudience to accept every audience)")
+	case cfg.Audience != "" && cfg.AnyAudience:
+		return nil, errors.New("auth: Audience and AnyAudience are mutually exclusive")
 	}
 	a := &Authenticator{
 		byIssuer: make(map[string]Verifier, len(cfg.Verifiers)),
@@ -271,6 +282,10 @@ func authzError(err error) error {
 func (a *Authenticator) reject(ctx context.Context, method string, err error) error {
 	var out *errs.Error
 	switch {
+	case errors.Is(err, ErrAuthUnavailable):
+		// First: an authority failure stays a 503 whatever reason its
+		// cause carries.
+		out = ErrAuthUnavailable
 	case errors.Is(err, ErrTokenMissing):
 		out = ErrTokenMissing
 	case errors.Is(err, ErrTokenExpired):
@@ -278,16 +293,15 @@ func (a *Authenticator) reject(ctx context.Context, method string, err error) er
 	case errors.Is(err, ErrInsufficientScope), errors.Is(err, ErrForbidden):
 		// Keep the client-safe metadata (missing_scope), drop the cause.
 		out = errs.FromStatus(errs.FromError(err).GRPCStatus())
-	case errors.Is(err, ErrAuthUnavailable):
-		out = ErrAuthUnavailable
 	default:
 		out = ErrTokenInvalid
 	}
 	a.record(ctx, strings.ToLower(out.Reason()))
 	if out.Reason() == ErrAuthUnavailable.Reason() {
-		a.log.WarnContext(ctx, "authentication unavailable", "rpc.method", method, "error", err)
+		a.log.WarnContext(ctx, "authentication unavailable", log.String("rpc.method", method), log.Err(err))
 	} else {
-		a.log.DebugContext(ctx, "request rejected", "rpc.method", method, "reason", out.Reason(), "error", err)
+		a.log.DebugContext(ctx, "request rejected", log.String("rpc.method", method),
+			log.String("reason", out.Reason()), log.Err(err))
 	}
 	// The cause stays in the log, not on the wire.
 	return out
@@ -352,21 +366,58 @@ func (a *Authenticator) StreamServerInterceptor() grpc.StreamServerInterceptor {
 			ctx, cancel = context.WithDeadlineCause(ctx, p.ExpiresAt, ErrTokenExpired)
 			defer cancel()
 		}
-		err = handler(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
-		if err != nil && ctx.Err() != nil && errors.Is(context.Cause(ctx), ErrTokenExpired) {
+		ws := &wrappedStream{ServerStream: ss, ctx: ctx}
+		err = handler(srv, ws)
+		if expired := ws.expired(); expired != nil {
 			// The stream outlived its token: tell the client to re-authenticate.
-			return ErrTokenExpired
+			return expired
 		}
 		return err
 	}
 }
 
+// wrappedStream carries the authenticated context. Once the token expired
+// (the context's cause is ErrTokenExpired) it refuses to receive or send,
+// so a handler that never looks at its context still stops serving the
+// stream.
 type wrappedStream struct {
 	grpc.ServerStream
 	ctx context.Context
 }
 
 func (w *wrappedStream) Context() context.Context { return w.ctx }
+
+func (w *wrappedStream) expired() error {
+	if w.ctx.Err() != nil && errors.Is(context.Cause(w.ctx), ErrTokenExpired) {
+		return ErrTokenExpired
+	}
+	return nil
+}
+
+func (w *wrappedStream) RecvMsg(m any) error {
+	if err := w.expired(); err != nil {
+		return err
+	}
+	if err := w.ServerStream.RecvMsg(m); err != nil {
+		return err
+	}
+	// The token may have expired while waiting for the message.
+	return w.expired()
+}
+
+func (w *wrappedStream) SendMsg(m any) error {
+	if err := w.expired(); err != nil {
+		return err
+	}
+	return w.ServerStream.SendMsg(m)
+}
+
+func (w *wrappedStream) SendHeader(md metadata.MD) error {
+	if err := w.expired(); err != nil {
+		return err
+	}
+	return w.ServerStream.SendHeader(md)
+}
 
 // AuthenticateHTTP authenticates and authorizes r as the route pattern
 // (the method passed to Public and the Authorizer). It returns r's context

@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/dungnh3/kitchen/errs"
 	"github.com/dungnh3/kitchen/httpx"
 )
 
@@ -20,6 +22,10 @@ type RFC7662Config struct {
 	ClientSecret string
 	// Issuer, when set, must equal the response's iss.
 	Issuer string
+	// Audience, when set, must be in the response's aud (RFC 7662 section
+	// 4: the resource server checks the token is meant for it). A response
+	// without aud is then rejected.
+	Audience string
 	// Client sends the requests. Default: an httpx client (kitchen/httpx:
 	// traced and metered, bounded error bodies, safe redirects) with a 5s
 	// timeout. No retry: NewIntrospection already caches and coalesces calls.
@@ -67,8 +73,11 @@ func RFC7662(cfg RFC7662Config) IntrospectFunc {
 		}
 		var r rfc7662Response
 		if err := req.Do(ctx, &r); err != nil {
-			return nil, fmt.Errorf("auth: rfc7662: %w", err) // never ErrTokenInvalid: the authority did not answer
+			// The authority did not answer: never ErrTokenInvalid, whatever
+			// the response said.
+			return nil, errs.Wrap(fmt.Errorf("auth: rfc7662: %w", err), ErrAuthUnavailable)
 		}
+		aud := audience(r.Aud)
 		now := time.Now()
 		switch {
 		case !r.Active:
@@ -79,11 +88,13 @@ func RFC7662(cfg RFC7662Config) IntrospectFunc {
 			return nil, ErrTokenExpired
 		case r.Nbf != 0 && now.Before(time.Unix(r.Nbf, 0)):
 			return nil, ErrTokenInvalid
+		case cfg.Audience != "" && !slices.Contains(aud, cfg.Audience):
+			return nil, ErrTokenInvalid
 		}
 		p := &Principal{
 			Subject:  r.Sub,
 			Issuer:   r.Iss,
-			Audience: audience(r.Aud),
+			Audience: aud,
 			Scopes:   strings.Fields(r.Scope),
 			TokenID:  r.Jti,
 			Claims: map[string]any{

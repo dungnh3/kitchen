@@ -18,7 +18,14 @@ import (
 	"github.com/dungnh3/kitchen/errs"
 )
 
-const defaultLeeway = 30 * time.Second
+const (
+	defaultLeeway = 30 * time.Second
+	// maxLeeway bounds the clock-skew allowance: a larger one would keep
+	// expired tokens alive for longer than any real clock drift.
+	maxLeeway = 5 * time.Minute
+	// minRSABits is the RFC 7518 section 3.3 minimum RSA key size.
+	minRSABits = 2048
+)
 
 // errKeySourceUnavailable marks key lookups that failed for infrastructure
 // reasons (JWKS not reachable), as opposed to an unknown key.
@@ -63,6 +70,12 @@ func (c jwtCheck) allowed(alg jwa.SignatureAlgorithm) bool {
 func (c jwtCheck) verify(ctx context.Context, token string, src keySource) (*Principal, error) {
 	kp := jws.KeyProviderFunc(func(_ context.Context, sink jws.KeySink, sig *jws.Signature, _ *jws.Message) error {
 		h := sig.ProtectedHeaders()
+		// RFC 7515 section 4.1.11: a critical extension the recipient does
+		// not understand makes the JWS invalid. This verifier understands
+		// none (b64=false, RFC 7797, included), so any "crit" is rejected.
+		if h.Has(jws.CriticalKey) || h.Has(jws.B64Key) {
+			return errors.New("auth: critical header extensions are not supported")
+		}
 		alg, ok := h.Algorithm()
 		if !ok || !c.allowed(alg) {
 			return fmt.Errorf("auth: algorithm %q not allowed", alg)
@@ -164,7 +177,9 @@ type StaticConfig struct {
 	Issuer   string // required; must match the token's iss
 	Audience string // when set, must be in the token's aud
 	Keys     []Key  // at least one
-	Leeway   time.Duration
+	// Leeway is the allowed clock skew for exp, nbf and iat. Default 30s,
+	// at most 5m.
+	Leeway time.Duration
 	// Types, when set, lists the accepted JWT "typ" header values (RFC 8725
 	// explicit typing), for example []string{"at+jwt"} for RFC 9068 access
 	// tokens, so an ID token of the same issuer cannot be used as an access
@@ -189,6 +204,10 @@ func NewStatic(cfg StaticConfig) (*Static, error) {
 	if len(cfg.Keys) == 0 {
 		return nil, errors.New("auth: static: at least one key is required")
 	}
+	leeway, err := checkLeeway(cfg.Leeway)
+	if err != nil {
+		return nil, fmt.Errorf("auth: static: %w", err)
+	}
 	s := &Static{keys: make(map[string]Key, len(cfg.Keys))}
 	var algs []jwa.SignatureAlgorithm
 	for _, k := range cfg.Keys {
@@ -203,24 +222,36 @@ func NewStatic(cfg StaticConfig) (*Static, error) {
 	}
 	s.check = jwtCheck{
 		issuer: cfg.Issuer, audience: cfg.Audience, algs: algs, types: normTypes(cfg.Types),
-		leeway: leewayOr(cfg.Leeway), now: nowOr(cfg.Now),
+		leeway: leeway, now: nowOr(cfg.Now),
 	}
 	return s, nil
 }
 
+// hmacMinBytes is the RFC 7518 section 3.2 minimum secret size: at least
+// the hash output size.
+var hmacMinBytes = map[string]int{"HS256": 32, "HS384": 48, "HS512": 64}
+
 // checkKeyMaterial makes sure the algorithm family matches the key type, so
-// an HMAC algorithm can never be paired with a public key (alg confusion).
+// an HMAC algorithm can never be paired with a public key (alg confusion),
+// and that the key meets the RFC 7518 minimum size.
 func checkKeyMaterial(k Key) error {
 	name := k.Alg.String()
 	var ok bool
 	switch {
 	case strings.HasPrefix(name, "HS"):
+		minLen, known := hmacMinBytes[name]
+		if !known {
+			return fmt.Errorf("unsupported algorithm %q", name)
+		}
 		var b []byte
-		if b, ok = k.Material.([]byte); ok && len(b) < 32 {
-			return errors.New("HMAC secret must be at least 32 bytes")
+		if b, ok = k.Material.([]byte); ok && len(b) < minLen {
+			return fmt.Errorf("%s secret must be at least %d bytes", name, minLen)
 		}
 	case strings.HasPrefix(name, "RS"), strings.HasPrefix(name, "PS"):
-		_, ok = k.Material.(*rsa.PublicKey)
+		var pub *rsa.PublicKey
+		if pub, ok = k.Material.(*rsa.PublicKey); ok && pub.N.BitLen() < minRSABits {
+			return fmt.Errorf("RSA key must be at least %d bits", minRSABits)
+		}
 	case strings.HasPrefix(name, "ES"):
 		_, ok = k.Material.(*ecdsa.PublicKey)
 	case name == "EdDSA" || name == "Ed25519":
@@ -258,11 +289,15 @@ func (s *Static) key(_ context.Context, kid string, alg jwa.SignatureAlgorithm) 
 	return k.Material, nil
 }
 
-func leewayOr(d time.Duration) time.Duration {
-	if d > 0 {
-		return d
+// checkLeeway applies the default and the upper bound.
+func checkLeeway(d time.Duration) (time.Duration, error) {
+	switch {
+	case d <= 0:
+		return defaultLeeway, nil
+	case d > maxLeeway:
+		return 0, fmt.Errorf("leeway %s exceeds %s", d, maxLeeway)
 	}
-	return defaultLeeway
+	return d, nil
 }
 
 func nowOr(f func() time.Time) func() time.Time {

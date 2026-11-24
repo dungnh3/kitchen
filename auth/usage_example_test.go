@@ -30,6 +30,7 @@ func ExampleNewJWKS() {
 
 	authn, err := auth.New(auth.Config{
 		Verifiers: []auth.Verifier{jwks},
+		Audience:  "api.example.com",
 		Public:    []string{"/grpc.health.v1.Health/", "GET /healthz"},
 		Logger:    logger,
 	})
@@ -87,6 +88,7 @@ func ExampleNewIntrospection() {
 // without a token runs anonymously; a bad token is still rejected.
 func ExampleFromContext() {
 	cfg := auth.Config{
+		Audience: "api.example.com",
 		Public:   []string{"GET /healthz"},
 		Optional: []string{"GET /catalog"}, // personalised when signed in
 	}

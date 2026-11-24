@@ -60,12 +60,20 @@ The safe defaults:
 - **Strict keys.**
   - Each key accepts exactly one algorithm, and the key type must match it.
     An HMAC algorithm can never be used with a public key.
-  - HMAC secrets must be at least 32 bytes.
-  - `alg: none` is always rejected.
+  - RFC 7518 minimums: HMAC secrets at least the hash size (HS256 32
+    bytes, HS384 48, HS512 64); RSA keys at least 2048 bits (static keys
+    fail at start-up, weaker JWKS keys are ignored).
+  - `alg: none` is always rejected, and so is any `crit` header (RFC 7515:
+    this package understands no critical extension).
+- **Audience required.** `auth.New` fails without `Config.Audience` unless
+  `AnyAudience` is set on purpose, so a token minted for another API of the
+  same issuer is rejected (RFC 8725 section 3.9).
 - **Bounded input.** Tokens longer than 8192 bytes are rejected before
-  decoding. The clock leeway is 30s.
+  decoding. The clock leeway is 30s by default, at most 5m.
 - **Streams end with their token.** A gRPC stream is cancelled at the
-  token's expiry and ends with `TOKEN_EXPIRED`.
+  token's expiry and ends with `TOKEN_EXPIRED`; from then on `RecvMsg` and
+  `SendMsg` fail with `TOKEN_EXPIRED` too, so a handler that never reads its
+  context stops as well.
 - **Outages fail closed.** When a key set or introspection endpoint is
   unreachable, requests are rejected with `AUTH_UNAVAILABLE` (503), never
   let through.
@@ -78,7 +86,8 @@ The safe defaults:
 |---|---|---|
 | `Verifiers` | none | always: one per JWT issuer (`NewStatic`, `NewJWKS`, `NewIntrospection` with `Issuer`) |
 | `Opaque` | nil (opaque tokens rejected) | your IdP issues opaque tokens |
-| `Audience` | empty | every principal must carry this audience, whatever verifier produced it |
+| `Audience` | none, required | every principal must carry this audience, whatever verifier produced it |
+| `AnyAudience` | false | only when every verifier checks its own audience, or the issuer mints tokens for this service alone; not with `Audience` |
 | `Public` | none | health checks, login, public pages |
 | `Optional` | none | pages that personalise when signed in |
 | `Authorizer` | none | per-method scopes (`RequireScopes`) or your own `AuthorizerFunc` |
@@ -137,8 +146,9 @@ prefix ending in `/`. A method may not be in both lists.
 
 Use it when an identity provider publishes its keys. They are fetched once
 at start (failure aborts start-up), refreshed in the background (honouring
-`Cache-Control`, between 5m and 1h) and refetched, rate limited, when an
-unknown key ID shows up after a rotation. From `ExampleNewJWKS`:
+`Cache-Control` max-age, clamped between `MinRefresh` 5m and `MaxRefresh`
+1h; `MinRefresh` without it) and refetched when an unknown key ID shows up
+after a rotation. From `ExampleNewJWKS`:
 
 ```go
 jwks, err := auth.NewJWKS(ctx, auth.JWKSConfig{
@@ -155,6 +165,7 @@ defer func() { _ = jwks.Close(ctx) }()
 
 authn, err := auth.New(auth.Config{
 	Verifiers: []auth.Verifier{jwks},
+	Audience:  "api.example.com",
 	Public:    []string{"/grpc.health.v1.Health/", "GET /healthz"},
 	Logger:    logger,
 })
@@ -166,7 +177,25 @@ srv, err := server.New(server.WithAuth(authn), server.WithLogger(logger))
 ```
 
 - JWKS only accepts asymmetric algorithms (RS256, ES256 and EdDSA by
-  default); HS* is refused.
+  default); HS* is refused. Symmetric (`oct`), `use: enc`, `key_ops`
+  without `verify` and RSA keys under 2048 bits are ignored (logged at
+  Warn); one key jwx cannot parse does not drop the rest of the set.
+- Verification reads an in-memory snapshot of the key set: no lock and no
+  I/O per request.
+- Key rotation: a token with an unknown `kid` starts one refresh (at most
+  one per `MissRefresh`, 30s). Every request that needs a refresh while one
+  runs waits for that same fetch, so a burst of tokens signed with a new key
+  is served, not rejected. The fetch is detached from the request that
+  started it (a cancelled request does not abort it) and bounded by 30s.
+- Outage: when the JWKS endpoint fails, the last good key set stays in use
+  for known keys; an unknown `kid` is then `AUTH_UNAVAILABLE` (503), not
+  `TOKEN_INVALID`, because the key may well exist. Background refreshes are
+  retried with backoff (1s, doubling, at most `MinRefresh` apart) and each
+  failure is logged at Warn (`auth: jwks refresh failed`). A key set that
+  parses cleanly replaces the old one even when it is empty (an IdP
+  withdrawing every key).
+- `Close` stops the refresh goroutines; `Verify` afterwards fails fast with
+  `AUTH_UNAVAILABLE`.
 - Set `Types` to the provider's access-token type (RFC 9068 `at+jwt`)
   whenever it sends one. Without it, an ID token from the same issuer is
   accepted as an access token.
@@ -258,7 +287,9 @@ request with 403 (`FORBIDDEN`); return `auth.ErrInsufficientScope` or
 
 - Sign test tokens with an HMAC `Static` verifier and a fixed `Now`, as in
   `Example`. `Authenticate` checks a token without any transport.
-- For JWKS, serve a key set from `httptest.NewServer`.
+- For JWKS, serve a key set from `httptest.NewServer`, or pass an
+  `httpx.WithTransport` client serving it from memory, which also works in
+  a `testing/synctest` bubble (refresh schedule tests).
 - For Redis-backed introspection, use `miniredis`.
 - Assert with `errors.Is(err, auth.ErrTokenInvalid)` (or the other
   sentinels) and `status.Code(err)`.
@@ -271,7 +302,10 @@ request with 403 (`FORBIDDEN`); return `auth.ErrInsufficientScope` or
   on success.
 - **Logs**: rejections at Debug (`rpc.method`, `reason`, `error`); outages
   at Warn (`authentication unavailable`); tampered introspection cache
-  entries at Warn.
+  entries at Warn; failed JWKS refreshes (`auth: jwks refresh failed`, with
+  `url`, `attempt`, `retry_in`) and ignored JWKS keys at Warn. Tokens and
+  claim values are never logged; the `iss` of an unrouted token may appear
+  in the Debug cause.
 - **errs reasons**: `TOKEN_MISSING`, `TOKEN_INVALID`, `TOKEN_EXPIRED`,
   `FORBIDDEN`, `INSUFFICIENT_SCOPE`, `AUTH_UNAVAILABLE`.
 - JWKS and introspection calls appear as `httpx` client spans.
@@ -280,8 +314,11 @@ request with 403 (`FORBIDDEN`); return `auth.ErrInsufficientScope` or
 
 - List only what must be anonymous in `Public`. Never add a whole service
   prefix to make one method public.
-- Set `Audience` (on the verifier or on `Config`) so tokens for other APIs
-  are rejected.
+- Set `Config.Audience` (required unless `AnyAudience`) so tokens for
+  other APIs are rejected. With RFC 7662, also set
+  `RFC7662Config.Audience`.
+- Alert on `auth: jwks refresh failed` logs: keys keep working, but a
+  rotation will be refused (503) until the endpoint is back.
 - Set `JWKSConfig.Types` to your provider's access-token type.
 - Load HMAC secrets, `ClientSecret` and `CacheKey` from a secret store.
   `CacheKey` must be at least 32 random bytes and the same across the fleet.

@@ -76,6 +76,7 @@ func TestTypes(t *testing.T) {
 
 func TestUserIDAndAuthorizerErrors(t *testing.T) {
 	a := newAuthenticator(t, auth.Config{
+		Audience:  audience,
 		Verifiers: []auth.Verifier{newHMAC(t, issuerA)},
 		Authorizer: auth.AuthorizerFunc(func(_ context.Context, method string, _ *auth.Principal) error {
 			if method == "/x.Svc/Boom" {
@@ -106,6 +107,7 @@ func TestUserIDAndAuthorizerErrors(t *testing.T) {
 
 func TestWWWAuthenticate(t *testing.T) {
 	a := newAuthenticator(t, auth.Config{
+		Audience:   audience,
 		Verifiers:  []auth.Verifier{newHMAC(t, issuerA)},
 		Authorizer: auth.RequireScopes(map[string][]string{"GET /admin": {"admin"}}),
 	})
@@ -247,16 +249,18 @@ func TestIntrospectionRedisTampering(t *testing.T) {
 
 func TestOptionalMethods(t *testing.T) {
 	if _, err := auth.New(auth.Config{
+		Audience:  audience,
 		Verifiers: []auth.Verifier{newHMAC(t, issuerA)},
 		Public:    []string{"/s/Feed"}, Optional: []string{"/s/Feed"},
 	}); err == nil {
 		t.Fatal("method both public and optional accepted")
 	}
-	if _, err := auth.New(auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}, Optional: []string{"/"}}); err == nil {
+	if _, err := auth.New(auth.Config{Audience: audience, Verifiers: []auth.Verifier{newHMAC(t, issuerA)}, Optional: []string{"/"}}); err == nil {
 		t.Fatal(`optional "/" accepted`)
 	}
 	authorized := 0
 	a := newAuthenticator(t, auth.Config{
+		Audience:  audience,
 		Verifiers: []auth.Verifier{newHMAC(t, issuerA)},
 		Optional:  []string{"/s/Feed"},
 		Authorizer: auth.AuthorizerFunc(func(context.Context, string, *auth.Principal) error {
@@ -291,12 +295,12 @@ func TestOptionalMethods(t *testing.T) {
 }
 
 func TestMaxTokenBytes(t *testing.T) {
-	a := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}, MaxTokenBytes: 64})
+	a := newAuthenticator(t, auth.Config{Audience: audience, Verifiers: []auth.Verifier{newHMAC(t, issuerA)}, MaxTokenBytes: 64})
 	tok := sign(t, baseClaims(issuerA), jwa.HS256(), hmacSecret, "k1")
 	if _, err := a.Authenticate(context.Background(), tok); !errors.Is(err, auth.ErrTokenInvalid) {
 		t.Fatalf("oversized token: err = %v", err)
 	}
-	def := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}})
+	def := newAuthenticator(t, auth.Config{Audience: audience, Verifiers: []auth.Verifier{newHMAC(t, issuerA)}})
 	if _, err := def.Authenticate(context.Background(), strings.Repeat("a", 8193)); !errors.Is(err, auth.ErrTokenInvalid) {
 		t.Fatalf("default limit: err = %v", err)
 	}
@@ -311,7 +315,7 @@ func TestStreamEndsAtTokenExpiry(t *testing.T) {
 	c["exp"] = time.Now().Add(time.Second).Unix()
 	md := metadata.Pairs("authorization", "Bearer "+sign(t, c, jwa.HS256(), hmacSecret, "k1"))
 	run := func(outlive bool) (error, bool) {
-		a := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}, StreamOutlivesToken: outlive})
+		a := newAuthenticator(t, auth.Config{Audience: audience, Verifiers: []auth.Verifier{newHMAC(t, issuerA)}, StreamOutlivesToken: outlive})
 		var hasDeadline bool
 		err := a.StreamServerInterceptor()(nil, fakeStream{ctx: metadata.NewIncomingContext(context.Background(), md)},
 			&grpc.StreamServerInfo{FullMethod: "/s/Stream"}, func(_ any, ss grpc.ServerStream) error {
@@ -377,7 +381,7 @@ func TestLogsThroughKitchenLog(t *testing.T) {
 	var mu sync.Mutex
 	w := writerFunc(func(p []byte) (int, error) { mu.Lock(); defer mu.Unlock(); return buf.Write(p) })
 	log.SetDefault(log.New(w, log.Options{Schema: log.SchemaGCP, Level: log.LevelDebug}))
-	a := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}})
+	a := newAuthenticator(t, auth.Config{Audience: audience, Verifiers: []auth.Verifier{newHMAC(t, issuerA)}})
 	_, _ = a.UnaryServerInterceptor()(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/x.Svc/Get"},
 		func(context.Context, any) (any, error) { return nil, nil })
 	mu.Lock()

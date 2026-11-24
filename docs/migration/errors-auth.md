@@ -251,3 +251,40 @@ nothing. See design X11.
   old behaviour). The old `guard` had none of these.- `auth.IntrospectionConfig.Prefix` is required when `Redis` is set (one
   prefix per verifier).
 
+## Revision 2026-11-24 (auth deep review)
+
+Breaking:
+
+- `auth.New` fails unless `Config.Audience` is set, or `Config.AnyAudience`
+  is set explicitly (not both). Before, an empty audience accepted tokens
+  minted for any API of the issuer.
+- RFC 7518 minimums at start-up: HMAC secrets of at least the hash size
+  (HS384 48 bytes, HS512 64; HS256 stays 32), RSA keys of at least 2048
+  bits. `StaticConfig.Leeway` / `JWKSConfig.Leeway` above 5m fail.
+- JWTs with a `crit` (or `b64`) protected header are rejected
+  (`TOKEN_INVALID`), as RFC 7515 section 4.1.11 requires.
+- gRPC streams: after the token expired, `RecvMsg`, `SendMsg` and
+  `SendHeader` on the handler's stream return `TOKEN_EXPIRED`.
+
+Behaviour (no API change unless noted):
+
+- JWKS no longer uses jwx's `jwk.Cache`/httprc. During a key rotation every
+  request with the new `kid` waits for one shared refresh instead of being
+  rejected (before: all but one concurrent request got `TOKEN_INVALID`).
+- An unknown `kid` while the JWKS endpoint fails is `AUTH_UNAVAILABLE`
+  (503), no longer `TOKEN_INVALID` (401).
+- `Verify` after `JWKS.Close` fails fast with `AUTH_UNAVAILABLE` (before: it
+  blocked until the caller's deadline, forever without one). `Close` is
+  idempotent.
+- JWKS keys that must not verify are ignored: `oct`, `use` other than
+  `sig`, `key_ops` without `verify`, RSA under 2048 bits. A set with one
+  unparseable key keeps the others. Without `Cache-Control: max-age` the set
+  is refreshed every `MinRefresh` (unchanged); a failed background refresh
+  is retried with backoff (1s doubling, capped at `MinRefresh`; before: next
+  try after `MinRefresh`).
+- New `JWKSConfig.Logger`; refresh failures and ignored keys are logged at
+  Warn (before: silently dropped).
+- New `RFC7662Config.Audience`. RFC 7662 transport failures wrap
+  `AUTH_UNAVAILABLE` explicitly, and an authority failure is classified
+  before any token reason found deeper in its cause, in both the
+  introspection cache and the authenticator (always 503, never cached).

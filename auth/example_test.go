@@ -25,6 +25,7 @@ func Example() {
 	}
 	authn, err := auth.New(auth.Config{
 		Verifiers: []auth.Verifier{static},
+		Audience:  "api.example.com", // required: tokens for other APIs are rejected
 		Public:    []string{"/grpc.health.v1.Health/"},
 		Authorizer: auth.RequireScopes(map[string][]string{
 			"/agent.v1.AgentService/Delete": {"agents:admin"},
