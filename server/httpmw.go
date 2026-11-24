@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -42,6 +43,15 @@ func (s *Server) sanitize(next http.Handler) http.Handler {
 			}
 		}
 		info := xcontext.FromHTTP(r, s.infoOptions())
+		// A trusted peer (another service) reports the client it resolved,
+		// as on the gRPC port.
+		if trusted {
+			if v := r.Header.Get(xcontext.HeaderClientIP); v != "" {
+				if ip := xcontext.AddrFromHostPort(strings.TrimSpace(v)); ip.IsValid() {
+					info.ClientIP = ip
+				}
+			}
+		}
 		if info.RequestID == "" {
 			info.RequestID = xcontext.NewRequestID()
 		}
@@ -57,8 +67,12 @@ func (s *Server) sanitize(next http.Handler) http.Handler {
 	})
 }
 
-// recoverHTTP turns a handler panic into a 500 (when nothing was written
-// yet) and logs it. http.ErrAbortHandler is re-raised, as net/http expects.
+// recoverHTTP turns a handler panic into a 500 when nothing was written yet,
+// and logs it. When the response had already started, it panics with
+// http.ErrAbortHandler so that net/http aborts the response (HTTP/1: the
+// connection closes without the final chunk; HTTP/2: RST_STREAM) and the
+// client cannot take a truncated body for a complete one.
+// http.ErrAbortHandler itself is re-raised, as net/http expects.
 func (s *Server) recoverHTTP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &recorder{ResponseWriter: w}
@@ -71,9 +85,10 @@ func (s *Server) recoverHTTP(next http.Handler) http.Handler {
 				panic(p)
 			}
 			err := s.recovered(r.Context(), r.Method+" "+r.URL.Path, p)
-			if !rec.wroteHeader {
-				s.errs.WriteHTTP(w, r, err)
+			if rec.wroteHeader {
+				panic(http.ErrAbortHandler)
 			}
+			s.errs.WriteHTTP(w, r, err)
 		}()
 		next.ServeHTTP(rec, r)
 	})
@@ -125,8 +140,10 @@ func (s *Server) logAccess(r *http.Request, rec *recorder, code int, start time.
 }
 
 // limitBody rejects gateway request bodies over n bytes: PAYLOAD_TOO_LARGE
-// (HTTP 413, see errs.HTTPStatusFromStatus) when the declared length is too large, a read error
-// otherwise.
+// (HTTP 413, see errs.HTTPStatusFromStatus) when the declared length is too
+// large, a read error otherwise. A body must also arrive within
+// WithGatewayBodyTimeout (a connection read deadline, cleared when the body
+// ends), or the request fails with 408 (see gatewayError).
 func (s *Server) limitBody(n int64, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > n {
@@ -134,9 +151,28 @@ func (s *Server) limitBody(n int64, next http.Handler) http.Handler {
 			return
 		}
 		st := &bodyLimit{n: n}
+		if d := s.cfg.gatewayBodyTimeout; d > 0 && r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0 {
+			if raw, ok := r.Context().Value(connWriterKey{}).(http.ResponseWriter); ok {
+				rc := http.NewResponseController(raw)
+				if rc.SetReadDeadline(time.Now().Add(d)) == nil {
+					st.rc = rc
+				}
+			}
+		}
 		r = r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, st))
 		r.Body = &limitedBody{ReadCloser: http.MaxBytesReader(w, r.Body, n), st: st}
 		next.ServeHTTP(w, r)
+	})
+}
+
+type connWriterKey struct{}
+
+// withConnWriter stores the ResponseWriter net/http created, so limitBody
+// can set the connection read deadline whatever the middlewares in between
+// wrap (a wrapper without Unwrap would hide it from ResponseController).
+func withConnWriter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), connWriterKey{}, w)))
 	})
 }
 
@@ -209,10 +245,14 @@ func (s *Server) userIDHTTP(next http.Handler) http.Handler {
 
 type bodyLimitKey struct{}
 
-// bodyLimit records that a request body hit the limit, for gatewayError.
+// bodyLimit records that a request body hit the limit or the read
+// deadline, for gatewayError.
 type bodyLimit struct {
 	n        int64
 	exceeded atomic.Bool
+	timedOut atomic.Bool
+	// rc holds the armed read deadline; nil once cleared (or never armed).
+	rc *http.ResponseController
 }
 
 type limitedBody struct {
@@ -222,9 +262,24 @@ type limitedBody struct {
 
 func (b *limitedBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
+	if err == nil {
+		return n, nil
+	}
 	var mbe *http.MaxBytesError
-	if err != nil && errors.As(err, &mbe) {
+	switch {
+	case errors.As(err, &mbe):
 		b.st.exceeded.Store(true)
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		b.st.timedOut.Store(true)
+	}
+	// The body is complete: clear the deadline before net/http's background
+	// read (started at EOF) hits it and cancels the request context of an
+	// RPC that runs longer than the body timeout; a pending read sees the
+	// cleared deadline. After a failure the deadline stays, so net/http's
+	// discard of the unread body fails fast and the connection closes.
+	if rc := b.st.rc; rc != nil && errors.Is(err, io.EOF) {
+		b.st.rc = nil
+		_ = rc.SetReadDeadline(time.Time{})
 	}
 	return n, err
 }

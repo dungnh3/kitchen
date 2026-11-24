@@ -101,6 +101,9 @@ What you get with no options:
 | `WithCORS(cfg)` | off | A browser app on another origin. |
 | `WithCompression()` | off | No CDN or ingress compresses in front of you. |
 | `WithStreamingMarshalers()` | off | Server streams over REST as SSE or NDJSON. |
+| `WithGatewayBodyTimeout(d)` | 30s | A REST body must arrive within `d`, or 408. Raise it for large JSON uploads from slow networks; `0` disables it. `HTTPRegistrar` routes are not affected. |
+| `WithGRPCServerOptions(o...)` | none | Public gRPC port only (`grpc.Creds` for TLS, `keepalive`). Never reaches the in-process server behind REST. |
+| `WithHTTPServerConfig(f)` | see godoc | `http.Server` timeouts; setting `TLSConfig` (with a certificate) makes the HTTP port serve TLS (h1 + h2). |
 | `WithForwardHeaders(h...)` | `xcontext.DefaultForwardHeaders` | More HTTP headers to reach gRPC metadata and `xcontext.Info`. |
 | `WithLogger`, `WithTracerProvider`, `WithMeterProvider`, `WithPropagator` | process logger, OTel globals | Tests, or a second server with its own telemetry. |
 
@@ -298,18 +301,58 @@ watch := func(ctx context.Context, send func(string) error) error {
 }
 ```
 
+REST streams end with the same AIP-193 envelope as every other error: SSE
+sends `event: error` with `data: {"error": {...}}`, NDJSON and the default
+JSON stream send a `{"error": {...}}` line (results stay bare messages in
+NDJSON and `{"result": ...}` in JSON). The HTTP status of the response is
+already sent by then; read `error.code` and `error.status`.
+
+### Load balancing gRPC connections
+
+gRPC connections live forever by default, so after a scale-out the new pods
+get no traffic from clients that are already connected (Kubernetes Service,
+L4 load balancers). Rotate connections with a maximum age longer than your
+longest stream, plus a grace that lets in-flight streams finish:
+
+```go
+server.WithKeepalive(
+	keepalive.ServerParameters{
+		Time: 60 * time.Second, Timeout: 20 * time.Second, // keep the defaults
+		MaxConnectionAge: 30 * time.Minute, MaxConnectionAgeGrace: 5 * time.Minute,
+	},
+	keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true},
+)
+```
+
+It is off by default because a stream longer than age + grace is cut
+(UNAVAILABLE, the client retries).
+
+### TLS without a mesh
+
+```go
+server.WithGRPCServerOptions(grpc.Creds(credentials.NewServerTLSFromCert(&cert))),
+server.WithHTTPServerConfig(func(s *http.Server) {
+	s.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+}),
+```
+
+The REST gateway keeps reaching gRPC in process, without TLS.
+
 ### High load and large payloads
 
 Raise `WithMaxMessageSize` and `WithMaxConcurrentStreams` (see
 Configuration), and use `WithHTTPServerConfig` for `http.Server` timeouts.
-Add a `ReadTimeout` only when no route streams. The compiled example is
+Add a `ReadTimeout` only when no route streams: REST gateway bodies are
+already bounded by `WithGatewayBodyTimeout`, and the public gRPC port waits
+at most 20s for a new connection's handshake. The compiled example is
 `Example_tuning` in `server/usage_example_test.go`.
 
 ### Service-to-service identity and other safety switches
 
 Identity metadata (`user-id` and the other `xcontext.IdentityHeaders`) is
 kept only from `WithTrustedIdentityPeers`; from anyone else it is stripped and
-a warning is logged at most once a minute.
+a warning is logged at most once a minute. A trusted peer's
+`X-Kitchen-Client-Ip` is the client IP on both ports.
 
 > **Warning:** `WithTrustAllIdentityHeaders` lets any client claim to be any
 > user; use it only when neither port is reachable by untrusted clients.
@@ -384,7 +427,10 @@ fmt.Println("run:", <-done)
 ## Production checklist
 
 - `log.Setup` and `sdk.Setup` before `server.New`; `signal.NotifyContext`
-  for SIGTERM (the server does not handle signals).
+  for SIGTERM (the server does not handle signals). Call its `stop` once
+  `ctx` is done, so a second Ctrl-C kills a shutdown that hangs.
+- If `main` fails between `server.New` and `Run`, call `srv.Close()` (it
+  releases the gateway connection; a running server needs no Close).
 - `WithShutdownDelay` about 5s; `WithShutdownTimeout` below
   `terminationGracePeriodSeconds`; long streams select on `server.Draining`.
 - `WithAdmin` on a private address, with Kubernetes probes pointed at it.

@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -44,7 +46,7 @@ func (s *Server) newGatewayMux() *runtime.ServeMux {
 		delete(forward, textproto.CanonicalMIMEHeaderKey(h))
 	}
 	opts := []runtime.ServeMuxOption{
-		runtime.WithMarshalerOption(runtime.MIMEWildcard, JSONMarshaler()),
+		runtime.WithMarshalerOption(runtime.MIMEWildcard, &jsonMarshaler{JSONPb: *JSONMarshaler()}),
 		runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
 			if k, ok := forward[textproto.CanonicalMIMEHeaderKey(key)]; ok {
 				return k, true
@@ -53,6 +55,8 @@ func (s *Server) newGatewayMux() *runtime.ServeMux {
 		}),
 		runtime.WithMetadata(s.gatewayMetadata),
 		runtime.WithErrorHandler(s.gatewayError),
+		runtime.WithRoutingErrorHandler(s.routingError),
+		runtime.WithStreamErrorHandler(s.streamError),
 		runtime.WithMiddlewares(routeSpanName),
 	}
 	if s.cfg.rateLimit != nil {
@@ -102,9 +106,19 @@ func (s *Server) gatewayError(ctx context.Context, mux *runtime.ServeMux, m runt
 	}
 	// A chunked body over the limit fails inside the generated decoder as
 	// INVALID_ARGUMENT; report it as PAYLOAD_TOO_LARGE like a declared one.
-	if st, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok && st.exceeded.Load() {
-		s.errs.WriteHTTP(w, r, errs.ErrPayloadTooLarge.With(errs.Meta("limit_bytes", strconv.FormatInt(st.n, 10))))
-		return
+	if st, ok := r.Context().Value(bodyLimitKey{}).(*bodyLimit); ok {
+		if st.exceeded.Load() {
+			s.errs.WriteHTTP(w, r, errs.ErrPayloadTooLarge.With(errs.Meta("limit_bytes", strconv.FormatInt(st.n, 10))))
+			return
+		}
+		// The body did not arrive within WithGatewayBodyTimeout: 408.
+		if st.timedOut.Load() {
+			s.errs.GatewayErrorHandler(ctx, mux, m, w, r, &runtime.HTTPStatusError{
+				HTTPStatus: http.StatusRequestTimeout,
+				Err:        errs.ErrDeadlineExceeded.With(errs.Meta("timeout", s.cfg.gatewayBodyTimeout.String())),
+			})
+			return
+		}
 	}
 	// Generated gateway code turns a body, query or path parameter that
 	// cannot be parsed into a bare InvalidArgument status. Every service
@@ -119,6 +133,107 @@ func (s *Server) gatewayError(ctx context.Context, mux *runtime.ServeMux, m runt
 		}
 	}
 	s.errs.GatewayErrorHandler(ctx, mux, m, w, r, err)
+}
+
+// routingError renders the gateway's routing failures through gatewayError
+// (so WithHTTPErrorHandler still applies) as kitchen errors, instead of
+// grpc-gateway's bare statuses: a bare UNIMPLEMENTED was sanitized and
+// logged at ERROR with a stack trace on every wrong-method request, and
+// answered 501.
+//
+//   - 404: NOT_FOUND.
+//   - 405 (the path exists with another method): HTTP 405, UNIMPLEMENTED.
+//     No Allow header: grpc-gateway does not report the allowed methods.
+//   - 400 (a path that cannot be unescaped): MALFORMED_REQUEST.
+func (s *Server) routingError(ctx context.Context, mux *runtime.ServeMux, m runtime.Marshaler, w http.ResponseWriter, r *http.Request, httpStatus int) {
+	var err error
+	switch httpStatus {
+	case http.StatusNotFound:
+		err = errs.ErrNotFound
+	case http.StatusMethodNotAllowed:
+		err = &runtime.HTTPStatusError{HTTPStatus: http.StatusMethodNotAllowed, Err: errs.ErrUnimplemented}
+	case http.StatusBadRequest:
+		err = errs.ErrMalformedRequest
+	default:
+		err = errs.ErrInternal
+	}
+	s.gatewayError(ctx, mux, m, w, r, err)
+}
+
+// streamError converts an error that ends a REST stream. A status the errs
+// interceptor completed (it has an ErrorInfo) is kept; anything else, such as
+// a marshaling failure inside the gateway, is converted (sanitized and
+// logged) by the errs.Handler. grpc-gateway's default sent err's text as is.
+func (s *Server) streamError(ctx context.Context, err error) *status.Status {
+	if _, ok := errs.Info(err); ok {
+		if st, ok := status.FromError(err); ok {
+			return st
+		}
+	}
+	return s.errs.Status(ctx, err)
+}
+
+// errorEnvelope returns the AIP-193 HTTP error envelope
+// ({"error": {"code": 503, "status": "UNAVAILABLE", ...}}, one line) when v
+// is the error chunk grpc-gateway writes at the end of a failed stream.
+func errorEnvelope(v any) ([]byte, bool) {
+	msg, isErr := unwrapChunk(v)
+	if !isErr {
+		return nil, false
+	}
+	sp, ok := msg.(*spb.Status)
+	if !ok || sp.GetCode() <= 0 { // OK, or not a gRPC code
+		return nil, false
+	}
+	b, _ := errs.MarshalHTTP(errorFromProto(sp).GRPCStatus())
+	return b, true
+}
+
+// errorFromProto rebuilds, through errs, the error streamError chose, from
+// the google.rpc.Status grpc-gateway hands to the marshaler (errs.FromStatus
+// for a proto): the first ErrorInfo gives reason, domain and metadata, the
+// other details are kept, and a status without one gets the code name as
+// reason.
+func errorFromProto(sp *spb.Status) *errs.Error {
+	code := codes.Unknown
+	if c := sp.GetCode(); c > 0 {
+		code = codes.Code(uint32(c))
+	}
+	reason := errs.CodeName(code)
+	opts := []errs.Option{errs.Message(sp.GetMessage())}
+	var details []proto.Message
+	haveInfo := false
+	for _, a := range sp.GetDetails() {
+		m, err := a.UnmarshalNew()
+		if err != nil {
+			continue // unknown detail type
+		}
+		if info, ok := m.(*errdetails.ErrorInfo); ok && !haveInfo {
+			haveInfo = true
+			reason = info.GetReason()
+			opts = append(opts, errs.Domain(info.GetDomain()))
+			for k, v := range info.GetMetadata() {
+				opts = append(opts, errs.Meta(k, v))
+			}
+			continue
+		}
+		details = append(details, m)
+	}
+	if len(details) > 0 {
+		opts = append(opts, errs.Details(details...))
+	}
+	return errs.New(code, reason, opts...)
+}
+
+// jsonMarshaler is JSONMarshaler with the stream error chunk rendered as the
+// AIP-193 envelope; results stay {"result": msg}.
+type jsonMarshaler struct{ runtime.JSONPb }
+
+func (m *jsonMarshaler) Marshal(v any) ([]byte, error) {
+	if b, ok := errorEnvelope(v); ok {
+		return b, nil
+	}
+	return m.JSONPb.Marshal(v)
 }
 
 // truncate cuts s to at most n bytes and returns valid UTF-8 (the parser
@@ -190,13 +305,17 @@ func unwrapChunk(v any) (msg any, isErr bool) {
 }
 
 // sseMarshaler writes each streamed message as one Server-Sent Event:
-// "data: <json>\n\n"; a stream error is "event: error\ndata: <status>\n\n".
+// "data: <json>\n\n"; a stream error is "event: error\ndata: <AIP-193
+// envelope>\n\n".
 type sseMarshaler struct{ runtime.JSONPb }
 
 func (*sseMarshaler) ContentType(any) string { return contentTypeSSE }
 func (*sseMarshaler) Delimiter() []byte      { return []byte("\n\n") }
 
 func (m *sseMarshaler) Marshal(v any) ([]byte, error) {
+	if b, ok := errorEnvelope(v); ok {
+		return append([]byte("event: error\ndata: "), b...), nil
+	}
 	msg, isErr := unwrapChunk(v)
 	b, err := m.JSONPb.Marshal(msg)
 	if err != nil {
@@ -220,13 +339,17 @@ func (m *sseMarshaler) NewEncoder(w io.Writer) runtime.Encoder {
 	})
 }
 
-// ndjsonMarshaler writes each streamed message as one JSON line.
+// ndjsonMarshaler writes each streamed message as one JSON line; a stream
+// error is the AIP-193 envelope line {"error": {...}}.
 type ndjsonMarshaler struct{ runtime.JSONPb }
 
 func (*ndjsonMarshaler) ContentType(any) string { return contentTypeNDJSON }
 func (*ndjsonMarshaler) Delimiter() []byte      { return []byte("\n") }
 
 func (m *ndjsonMarshaler) Marshal(v any) ([]byte, error) {
+	if b, ok := errorEnvelope(v); ok {
+		return b, nil
+	}
 	msg, _ := unwrapChunk(v)
 	return m.JSONPb.Marshal(msg)
 }

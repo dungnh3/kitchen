@@ -284,3 +284,33 @@ dependencies, credential leaks on absolute URLs and redirects.
 - `grpc.health.v1` now reports NOT_SERVING while a `WithReadiness` check
   fails (it used to stay SERVING until shutdown).
 
+## Revision 2026-11-24 (server deep review)
+
+Wire and behaviour changes:
+
+- **REST stream errors** (contract): the error that ends a REST stream is the
+  AIP-193 envelope `{"error": {"code": <HTTP>, "message", "status",
+  "details"}}`. SSE: `event: error` + `data: {"error": ...}`. NDJSON: a
+  `{"error": ...}` line (it was a bare status, identical in shape to a
+  result). Default JSON stream: `{"error": ...}` (was a `google.rpc.Status`
+  with the gRPC code number). Errors not produced by an errs.Handler are
+  sanitized.
+- **Wrong method on a gateway path** (contract): HTTP 405, status
+  UNIMPLEMENTED (was 501, logged at ERROR).
+- **Slow REST bodies**: a gateway request body must arrive within 30s
+  (`WithGatewayBodyTimeout`), or 408 DEADLINE_EXCEEDED. The public gRPC
+  port gives a connection handshake 20s (was 120s).
+- **`WithGRPCServerOptions`** applies to the public port only (it also
+  configured the in-process server, so `grpc.Creds` broke REST).
+- **`WithHTTPServerConfig` with a `TLSConfig`** now serves TLS (it served
+  plaintext); a `TLSConfig` without a certificate fails in `New`.
+- **Registration errors** (duplicate gRPC service, wrong implementation type,
+  conflicting HTTP pattern) are returned by `New` instead of exiting or
+  panicking.
+- **`Server.Close()`** releases a server that is never run; `Run` after it
+  returns `server.ErrClosed`.
+- A panic after an HTTP response started aborts the connection or stream
+  instead of ending the body cleanly.
+- `grpc.health.v1` is NOT_SERVING until the first readiness run passes.
+- A trusted identity peer's `X-Kitchen-Client-Ip` is the client IP on the
+  HTTP port too.

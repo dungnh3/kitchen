@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -72,4 +74,18 @@ func ExampleNewAdmin() {
 	}))
 	go func() { _ = adm.Run(ctx) }()
 	// ... run the worker until ctx is done ...
+}
+
+func ExampleServer_Close() {
+	srv, err := server.New(server.WithLogger(log.Discard()), server.WithHTTPAddr(":0"), server.WithGRPCAddr(":0"))
+	if err != nil {
+		return
+	}
+	// main failed before Run (a dependency did not open, say): release the
+	// server. A running server needs no Close; cancelling Run's ctx is enough.
+	if err := srv.Close(); err != nil {
+		log.Default().Error("close", log.Err(err))
+	}
+	fmt.Println(errors.Is(srv.Run(context.Background()), server.ErrClosed))
+	// Output: true
 }

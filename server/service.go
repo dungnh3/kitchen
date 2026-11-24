@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"reflect"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
@@ -38,11 +40,34 @@ type Closer interface {
 	Close(ctx context.Context) error
 }
 
-// fanoutRegistrar registers every service on several grpc.Servers.
-type fanoutRegistrar []*grpc.Server
+// fanoutRegistrar registers every service on several grpc.Servers. It
+// rejects what grpc-go would answer with logger.Fatalf (an os.Exit from
+// inside New): a service registered twice, or an implementation that does
+// not implement the service's handler type. The first such error is kept
+// for New to return.
+type fanoutRegistrar struct {
+	servers []*grpc.Server
+	err     error
+}
 
-func (f fanoutRegistrar) RegisterService(desc *grpc.ServiceDesc, impl any) {
-	for _, s := range f {
+func (f *fanoutRegistrar) RegisterService(desc *grpc.ServiceDesc, impl any) {
+	if f.err != nil {
+		return
+	}
+	if impl != nil && desc.HandlerType != nil {
+		ht := reflect.TypeOf(desc.HandlerType).Elem()
+		if !reflect.TypeOf(impl).Implements(ht) {
+			f.err = fmt.Errorf("server: register %s: %T does not implement %v", desc.ServiceName, impl, ht)
+			return
+		}
+	}
+	for _, s := range f.servers {
+		if _, dup := s.GetServiceInfo()[desc.ServiceName]; dup {
+			f.err = fmt.Errorf("server: service %s registered twice", desc.ServiceName)
+			return
+		}
+	}
+	for _, s := range f.servers {
 		s.RegisterService(desc, impl)
 	}
 }

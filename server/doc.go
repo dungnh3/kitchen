@@ -39,7 +39,8 @@
 // order within one budget (see [WithShutdownTimeout]): mark not ready, wait
 // the shutdown delay, close the [Draining] channel, drain HTTP and gRPC,
 // close services. The server does not handle OS signals; use
-// signal.NotifyContext in main.
+// signal.NotifyContext in main. A Server that will not run (main failed
+// after New) is released with [Server.Close].
 //
 // Client-sent identity metadata (xcontext.IdentityHeaders) is stripped from
 // untrusted callers on both ports; see [WithTrustedIdentityPeers].

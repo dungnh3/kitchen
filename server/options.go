@@ -48,6 +48,7 @@ const (
 	defaultMaxMessageSize       = 4 << 20
 	defaultMaxConcurrentStreams = 1000
 	defaultShutdownTimeout      = 25 * time.Second
+	defaultGatewayBodyTimeout   = 30 * time.Second
 )
 
 type config struct {
@@ -91,6 +92,7 @@ type config struct {
 	cors                 *CORSConfig
 	compression          bool
 	httpServerConfig     func(*http.Server)
+	gatewayBodyTimeout   time.Duration
 	checks               []Check
 	version              string
 	publicProbes         bool
@@ -111,6 +113,9 @@ func newConfig(opts []Option) *config {
 		validation:      true,
 		shutdownTimeout: defaultShutdownTimeout,
 		publicProbes:    true,
+		// No ReadTimeout (streams), so a client sending its REST body one byte
+		// a minute would hold a handler forever.
+		gatewayBodyTimeout: defaultGatewayBodyTimeout,
 	}
 	for _, o := range opts {
 		o(c)
@@ -197,8 +202,10 @@ func WithStreamInterceptors(i ...grpc.StreamServerInterceptor) Option {
 	return func(c *config) { c.stream = append(c.stream, i...) }
 }
 
-// WithGRPCServerOptions appends raw grpc.ServerOptions, applied after the
-// defaults so they override them.
+// WithGRPCServerOptions appends raw grpc.ServerOptions for the public gRPC
+// port, applied after the defaults so they override them (for example
+// grpc.Creds for TLS, or keepalive). They do not apply to the in-process
+// server behind the REST gateway, which the gateway reaches without TLS.
 func WithGRPCServerOptions(o ...grpc.ServerOption) Option {
 	return func(c *config) { c.grpcOpts = append(c.grpcOpts, o...) }
 }
@@ -344,9 +351,21 @@ func WithCompression() Option { return func(c *config) { c.compression = true } 
 
 // WithHTTPServerConfig adjusts the http.Server before it starts (timeouts,
 // TLS). Defaults: ReadHeaderTimeout 10s, IdleTimeout 650s (longer than the
-// GCP load balancer's 600s), no read/write timeout (streaming).
+// GCP load balancer's 600s), no read/write timeout (streaming; see
+// WithGatewayBodyTimeout for REST bodies). When it sets TLSConfig, the port
+// serves TLS (HTTP/1.1 and HTTP/2 by ALPN) instead of plaintext and h2c;
+// TLSConfig must then provide a certificate (Certificates, GetCertificate or
+// GetConfigForClient), or New fails.
 func WithHTTPServerConfig(f func(*http.Server)) Option {
 	return func(c *config) { c.httpServerConfig = f }
+}
+
+// WithGatewayBodyTimeout bounds how long a REST gateway request body may
+// take to arrive. Default 30s. A slower body fails with HTTP 408
+// (DEADLINE_EXCEEDED); the RPC itself may run longer once the body is in.
+// HTTPRegistrar routes (uploads, SSE) are not affected. d <= 0 disables it.
+func WithGatewayBodyTimeout(d time.Duration) Option {
+	return func(c *config) { c.gatewayBodyTimeout = d }
 }
 
 // WithReadiness adds readiness checks to /readyz (admin port, with failure

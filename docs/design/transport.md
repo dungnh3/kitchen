@@ -111,8 +111,9 @@ which shares one connection, is not capped by the per-connection
 
 recovery → request info (strip untrusted identity, build `xcontext.Info`,
 generate a request id, propagate a trusted user id) → drain → logging →
-errors (`errs.Handler`) → user interceptors → user id (`WithUserIDFrom`) →
-validation (protovalidate via `errs/validation`, PGV). Logging sits outside the
+errors (`errs.Handler`) → auth (`WithAuth`, health exempt) → rate limit
+(`WithRateLimit`, health exempt) → user interceptors → user id
+(`WithUserIDFrom`) → validation (protovalidate via `errs/validation`, PGV). Logging sits outside the
 error conversion so it records the final code; a panic is converted by the
 recovery interceptor itself. The OTel stats handler is always installed and
 skips `grpc.health.v1`.
@@ -289,3 +290,37 @@ revisited.
 |---|---|---|
 | H1 | `grpc.health.v1` stayed SERVING while `WithReadiness` checks failed, so gRPC probes (Kubernetes `grpc:` probes, Envoy, GCP load balancers) kept routing to an instance `/readyz` reported unready. | While running, the server status ("") follows the readiness checks every second (cached results, no extra load on dependencies); shutdown still switches it to NOT_SERVING first. |
 
+## Deep review of 2026-11-24 (`server`)
+
+Every line of the package was read; each finding has a regression test that
+failed before the fix (`server/deepreview_test.go`).
+
+| # | Finding | Severity | Decision |
+|---|---|---|---|
+| S1 | `WithGRPCServerOptions` also configured the in-process server; `grpc.Creds` made every REST call 503. | High | Fixed (owner): the options apply to the public port only. |
+| S2 | `WithHTTPServerConfig` documented TLS, but `Run` called `Serve`, so a `TLSConfig` was ignored and the port served plaintext. | High | Fixed (owner): a `TLSConfig` serves TLS (h1 + h2 by ALPN); one without a certificate fails in `New`. |
+| S3 | Duplicate gRPC service, or an implementation of the wrong type: grpc-go `logger.Fatalf` exited the process inside `New`. A conflicting `HTTPRegistrar` pattern (or `"/"`) panicked. | Medium | Fixed: `New` returns an error. |
+| S4 | A panic after the response started ended it cleanly: the client took a truncated body (or SSE stream) as complete. | Medium | Fixed: re-panic `http.ErrAbortHandler` (connection or stream aborted), as net/http and httputil do. |
+| S5 | REST stream errors were a bare `google.rpc.Status` (gRPC code, no `status`), indistinguishable from a result in NDJSON; gateway-made stream errors were not sanitized. | Medium | Fixed (owner): AIP-193 envelope in SSE, NDJSON and JSON streams; non-errs errors sanitized. Wire change, see migration. |
+| S6 | Wrong method on a gateway path: 501, and an ERROR log with stack trace per request (scanner noise). | Medium | Fixed (owner): 405 UNIMPLEMENTED, no ERROR log. 404 and 400 routing errors are kitchen sentinels too. Reason `METHOD_NOT_ALLOWED` needs an errs/i18n catalog entry first (follow-up). |
+| S7 | Slow-body DoS: no read deadline (streams forbid `ReadTimeout`), so a REST body sent one byte a minute held a handler forever; gRPC handshakes waited 120s. | Medium | Fixed (owner): `WithGatewayBodyTimeout` (30s, 408) on gateway routes only, via a connection read deadline cleared at body EOF (so longer RPCs are not cancelled by net/http's background read); `grpc.ConnectionTimeout(20s)` on the public port. |
+| S8 | `Run` with a ctx cancelled before the serve goroutines reached `Serve` returned "grpc: the server has been stopped". | Low | Fixed: `grpc.ErrServerStopped` is ignored. |
+| S9 | `New` without `Run` leaked 3 grpc-go goroutines (gateway connection) with no way to release them. | Low | Fixed (owner): `Server.Close()`; `Run` after it returns `ErrClosed`. |
+| S10 | With readiness checks, `grpc.health.v1` said SERVING from `Run` until the first check run finished (up to 5s with a hanging dependency). | Low | Fixed: NOT_SERVING until the checks pass. |
+| S11 | A trusted peer's `X-Kitchen-Client-Ip` was used on gRPC but ignored on HTTP. | Low | Fixed (owner): same rule on both ports. |
+| S12 | Hot path: 24 allocations per unary call in the interceptor chain (peer address formatted then parsed, metadata keys lower-cased per call). | Perf | Fixed: 15 allocations, 1176 B (`BenchmarkUnaryChain`). |
+| S13 | No `MaxConnectionAge`: connections never rebalance after scale-out. | Note | Kept off (owner): long streams would be cut; USAGE shows how to enable. |
+| S14 | A readiness run in progress when shutdown starts is detached from cancellation, so `Run` may return up to 5s (check timeout) after shutdown ends; a check that ignores its ctx outlives `Run`. | Note | Deferred: bounded and documented in `Check`. |
+| S15 | A stream error before the first message gets grpc-gateway's code→HTTP status (not errs' 413/415 exceptions). Errors net/http writes itself (bad request line, 431) are not AIP-193. | Note | Deferred: outside the server's control. |
+
+Comparison with mature servers: grpc-go's keepalive example sets
+`MaxConnectionAge` and an enforcement policy (kitchen: enforcement on, age
+opt-in because of long streams); go-kratos runs one interceptor/middleware
+chain per transport (kitchen runs one chain for both through the in-process
+connection, so auth, rate limit and validation cannot drift); connect-go
+serves gRPC and JSON from one `http.Handler` with a read-size limit
+(`ReadMaxBytes`; kitchen: `WithMaxMessageSize` plus the body deadline);
+grpc-gateway's defaults (501 for a wrong method, bare `google.rpc.Status`
+stream errors, `DefaultHeaderMatcher` forwarding every `Grpc-Metadata-*`
+header) are all overridden; Google's API design guide (AIP-193) is the
+error body everywhere, streams included.

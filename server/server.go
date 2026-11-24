@@ -28,6 +28,9 @@ import (
 // ErrAlreadyStarted is returned by Run when it is called more than once.
 var ErrAlreadyStarted = errors.New("server: already started")
 
+// ErrClosed is returned by Run after Close.
+var ErrClosed = errors.New("server: closed")
+
 // Server is a gRPC server with a REST gateway, health checks and an optional
 // admin port. Create it with New and run it with Run.
 type Server struct {
@@ -47,7 +50,8 @@ type Server struct {
 	admin    *Admin       // nil when the admin port is disabled
 
 	drain        chan struct{}
-	started      atomic.Bool
+	started      atomic.Bool // Run or Close was called
+	closed       atomic.Bool // Close was called before Run
 	shuttingDown atomic.Bool
 
 	identityWarnAt atomic.Int64 // unix nanos of the last stripped-identity warning
@@ -98,9 +102,12 @@ func New(opts ...Option) (*Server, error) {
 	hs := drainingHealth{Server: s.grpcHC, drain: s.drain}
 	healthpb.RegisterHealthServer(s.public, hs)
 	healthpb.RegisterHealthServer(s.internal, hs)
-	reg := fanoutRegistrar{s.public, s.internal}
+	reg := &fanoutRegistrar{servers: []*grpc.Server{s.public, s.internal}}
 	for _, svc := range cfg.services {
 		svc.RegisterGRPC(reg)
+	}
+	if reg.err != nil {
+		return nil, reg.err
 	}
 	if cfg.reflection {
 		reflection.Register(s.public)
@@ -133,9 +140,14 @@ func New(opts ...Option) (*Server, error) {
 			Protocols:         new(http.Protocols),
 		}
 		s.httpSrv.Protocols.SetHTTP1(true)
-		s.httpSrv.Protocols.SetUnencryptedHTTP2(true)
+		s.httpSrv.Protocols.SetHTTP2(true)            // with a TLSConfig
+		s.httpSrv.Protocols.SetUnencryptedHTTP2(true) // h2c otherwise
 		if cfg.httpServerConfig != nil {
 			cfg.httpServerConfig(s.httpSrv)
+		}
+		if tc := s.httpSrv.TLSConfig; tc != nil && len(tc.Certificates) == 0 && tc.GetCertificate == nil && tc.GetConfigForClient == nil {
+			_ = conn.Close()
+			return nil, errors.New("server: the HTTP TLSConfig has no certificate (Certificates, GetCertificate or GetConfigForClient)")
 		}
 	}
 	if cfg.adminAddr != "" || cfg.adminLis != nil {
@@ -169,23 +181,34 @@ func (s *Server) grpcServerOptions(public bool) []grpc.ServerOption {
 		grpc.MaxRecvMsgSize(s.cfg.maxMessageSize),
 		grpc.MaxSendMsgSize(s.cfg.maxMessageSize),
 	}
-	if public {
-		opts = append(opts,
-			// grpc-go accepts 16 MiB of headers by default; a client needs far
-			// less (net/http's limit is 1 MiB). Override with WithGRPCServerOptions.
-			grpc.MaxHeaderListSize(maxHeaderListSize),
-			grpc.MaxConcurrentStreams(s.cfg.maxConcurrentStreams),
-			grpc.KeepaliveParams(s.cfg.keepaliveParams),
-			grpc.KeepaliveEnforcementPolicy(s.cfg.keepalivePolicy),
-		)
+	if !public {
+		// The in-process server is reached only by the gateway connection,
+		// which dials it without TLS: user options (grpc.Creds above all)
+		// would break every REST call.
+		return opts
 	}
+	opts = append(opts,
+		// grpc-go accepts 16 MiB of headers by default; a client needs far
+		// less (net/http's limit is 1 MiB). Override with WithGRPCServerOptions.
+		grpc.MaxHeaderListSize(maxHeaderListSize),
+		grpc.MaxConcurrentStreams(s.cfg.maxConcurrentStreams),
+		grpc.KeepaliveParams(s.cfg.keepaliveParams),
+		grpc.KeepaliveEnforcementPolicy(s.cfg.keepalivePolicy),
+		// grpc-go waits 120s for a new connection's handshake; a client that
+		// connects and sends nothing should not hold it that long.
+		grpc.ConnectionTimeout(grpcHandshakeTimeout),
+	)
 	return append(opts, s.cfg.grpcOpts...)
 }
+
+// grpcHandshakeTimeout bounds the connection handshake on the public gRPC
+// port (TLS and the HTTP/2 preface).
+const grpcHandshakeTimeout = 20 * time.Second
 
 // httpHandler composes the HTTP port, outermost first:
 //
 //	/livez, /readyz (bypass everything)
-//	otelhttp → recovery → drain → sanitize → access log → compression → CORS → user middlewares
+//	conn writer (for the gateway body deadline) → otelhttp → recovery → drain → sanitize → access log → compression → CORS → user middlewares
 //	  → user id → auth, rate limit (by matched pattern, not for "/") → ServeMux: HTTPRegistrar patterns, "/" → body limit → gateway
 func (s *Server) httpHandler() (http.Handler, error) {
 	gw := s.newGatewayMux()
@@ -196,13 +219,10 @@ func (s *Server) httpHandler() (http.Handler, error) {
 			}
 		}
 	}
-	mux := http.NewServeMux()
-	for _, svc := range s.cfg.services {
-		if h, ok := svc.(HTTPRegistrar); ok {
-			h.RegisterHTTP(mux)
-		}
+	mux, err := s.serveMux(gw)
+	if err != nil {
+		return nil, err
 	}
-	mux.Handle("/", s.limitBody(int64(s.cfg.maxMessageSize), gw))
 
 	h := s.userIDHTTP(s.guardHTTP(mux))
 	for i := len(s.cfg.httpMiddlewares) - 1; i >= 0; i-- {
@@ -229,6 +249,9 @@ func (s *Server) httpHandler() (http.Handler, error) {
 		otelOpts = append(otelOpts, otelhttp.WithMeterProvider(s.cfg.meterProvider))
 	}
 	h = otelx.HTTPHandler(h, "http.server", otelOpts...)
+	if s.cfg.gatewayBodyTimeout > 0 {
+		h = withConnWriter(h)
+	}
 
 	if !s.cfg.publicProbes {
 		return h, nil
@@ -245,6 +268,25 @@ func (s *Server) httpHandler() (http.Handler, error) {
 	}), nil
 }
 
+// serveMux registers the HTTPRegistrar patterns and the gateway at "/".
+// http.ServeMux panics on a conflicting pattern (two services, or a service
+// that registers "/"); that becomes New's error.
+func (s *Server) serveMux(gw http.Handler) (mux *http.ServeMux, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			mux, err = nil, fmt.Errorf("server: register HTTP routes: %v", p)
+		}
+	}()
+	mux = http.NewServeMux()
+	for _, svc := range s.cfg.services {
+		if h, ok := svc.(HTTPRegistrar); ok {
+			h.RegisterHTTP(mux)
+		}
+	}
+	mux.Handle("/", s.limitBody(int64(s.cfg.maxMessageSize), gw))
+	return mux, nil
+}
+
 // ShuttingDown reports whether Run has begun shutting down.
 func (s *Server) ShuttingDown() bool { return s.shuttingDown.Load() }
 
@@ -254,6 +296,9 @@ func (s *Server) ShuttingDown() bool { return s.shuttingDown.Load() }
 // Run may be called once.
 func (s *Server) Run(ctx context.Context) error {
 	if !s.started.CompareAndSwap(false, true) {
+		if s.closed.Load() {
+			return ErrClosed
+		}
 		return ErrAlreadyStarted
 	}
 	defer func() { _ = s.conn.Close() }()
@@ -274,21 +319,28 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	if lis.grpc != nil {
 		s.log.InfoContext(ctx, "grpc server listening", log.String("addr", lis.grpc.Addr().String()))
-		serve("grpc", func() error { return s.public.Serve(lis.grpc) })
+		serve("grpc", func() error { return ignoreStopped(s.public.Serve(lis.grpc)) })
 	}
-	serve("grpc in-process", func() error { return s.internal.Serve(s.inproc) })
+	serve("grpc in-process", func() error { return ignoreStopped(s.internal.Serve(s.inproc)) })
 	if lis.http != nil {
 		s.log.InfoContext(ctx, "http server listening", log.String("addr", lis.http.Addr().String()))
-		serve("http", func() error { return ignoreClosed(s.httpSrv.Serve(lis.http)) })
+		serve("http", func() error {
+			if s.httpSrv.TLSConfig != nil {
+				return ignoreClosed(s.httpSrv.ServeTLS(lis.http, "", ""))
+			}
+			return ignoreClosed(s.httpSrv.Serve(lis.http))
+		})
 	}
 	if lis.admin != nil {
 		serve("admin", func() error { return s.admin.serve(lis.admin) })
 	}
-	s.grpcHC.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	s.health.ready.Store(true)
 	stopSync := make(chan struct{})
 	if len(s.health.checks) > 0 {
+		// NOT_SERVING until the first run of the checks says otherwise.
 		wg.Go(func() { s.syncGRPCHealth(ctx, stopSync) })
+	} else {
+		s.grpcHC.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	}
 
 	var runErr error
@@ -324,7 +376,7 @@ func (s *Server) syncGRPCHealth(ctx context.Context, stop <-chan struct{}) {
 	}()
 	t := time.NewTicker(healthSyncInterval)
 	defer t.Stop()
-	last := healthpb.HealthCheckResponse_SERVING
+	last := healthpb.HealthCheckResponse_NOT_SERVING // set by New
 	for {
 		next := healthpb.HealthCheckResponse_SERVING
 		if len(s.health.failed(ctx)) > 0 {
@@ -397,6 +449,44 @@ func (s *Server) listen(ctx context.Context) (l listeners, err error) {
 
 func ignoreClosed(err error) error {
 	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+// ignoreStopped drops grpc.ErrServerStopped: shutdown may stop a gRPC server
+// before its goroutine reaches Serve (a ctx cancelled right after Run
+// started); Serve then closes the listener and returns that error.
+func ignoreStopped(err error) error {
+	if errors.Is(err, grpc.ErrServerStopped) {
+		return nil
+	}
+	return err
+}
+
+// Close releases a Server that will never run: the in-process gateway
+// connection that New opened. Run then returns ErrClosed. Close is
+// idempotent, and does nothing once Run has been called (Run releases
+// everything when its ctx is cancelled).
+func (s *Server) Close() error {
+	if !s.started.CompareAndSwap(false, true) {
+		return nil
+	}
+	s.closed.Store(true)
+	s.public.Stop()
+	s.internal.Stop()
+	err := s.conn.Close()
+	// The server owns the listeners it was given.
+	for _, l := range []net.Listener{s.cfg.grpcLis, s.cfg.httpLis, s.cfg.adminLis} {
+		if l != nil {
+			err = errors.Join(err, ignoreNetClosed(l.Close()))
+		}
+	}
+	return err
+}
+
+func ignoreNetClosed(err error) error {
+	if errors.Is(err, net.ErrClosed) {
 		return nil
 	}
 	return err

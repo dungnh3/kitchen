@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"strings"
 	"time"
@@ -124,11 +125,32 @@ func peerAddr(ctx context.Context) (netip.Addr, bool) {
 	if !ok || p.Addr == nil {
 		return netip.Addr{}, false
 	}
+	switch a := p.Addr.(type) {
+	case inprocAddr:
+		return netip.Addr{}, true
+	case *net.TCPAddr: // no String/parse round trip on the hot path
+		return a.AddrPort().Addr().Unmap(), false
+	}
 	if p.Addr.Network() == inprocNetwork {
 		return netip.Addr{}, true
 	}
 	return xcontext.AddrFromHostPort(p.Addr.String()), false
 }
+
+// identityKeys are xcontext.IdentityHeaders with their gRPC metadata keys.
+var identityKeys = func() []struct{ name, md string } {
+	hs := xcontext.IdentityHeaders()
+	ks := make([]struct{ name, md string }, len(hs))
+	for i, h := range hs {
+		ks[i].name, ks[i].md = h, strings.ToLower(h)
+	}
+	return ks
+}()
+
+var (
+	mdClientIP = strings.ToLower(xcontext.HeaderClientIP)
+	mdUserID   = strings.ToLower(xcontext.HeaderUserID)
+)
 
 // requestContext strips untrusted identity metadata and stores the request
 // Info (and, from trusted peers, the propagated user id) in ctx.
@@ -138,13 +160,13 @@ func (s *Server) requestContext(ctx context.Context) context.Context {
 	trusted := inproc || s.cfg.trustAllIdentity || s.cfg.trustedIdentityPeers.Contains(addr)
 	if !trusted {
 		var stripped metadata.MD
-		for _, h := range xcontext.IdentityHeaders() {
-			if len(md.Get(h)) > 0 {
-				s.warnStrippedIdentity(ctx, "grpc", addr, h)
+		for _, k := range identityKeys {
+			if len(md[k.md]) > 0 {
+				s.warnStrippedIdentity(ctx, "grpc", addr, k.name)
 				if stripped == nil {
 					stripped = md.Copy()
 				}
-				stripped.Delete(h)
+				stripped.Delete(k.md)
 			}
 		}
 		if stripped != nil {
@@ -154,7 +176,13 @@ func (s *Server) requestContext(ctx context.Context) context.Context {
 	}
 
 	info := xcontext.FromMetadata(md, s.infoOptions())
-	if ip := xcontext.AddrFromHostPort(firstMD(md, xcontext.HeaderClientIP)); trusted && ip.IsValid() {
+	var ip netip.Addr
+	if trusted {
+		if v := firstMD(md, mdClientIP); v != "" {
+			ip = xcontext.AddrFromHostPort(v)
+		}
+	}
+	if ip.IsValid() {
 		info.ClientIP = ip
 	} else if !inproc {
 		info.ClientIP = s.cfg.trustedProxies.ClientIP(addr, md.Get(s.cfg.trustedProxies.Header()))
@@ -164,15 +192,16 @@ func (s *Server) requestContext(ctx context.Context) context.Context {
 	}
 	ctx = xcontext.NewContext(ctx, info)
 	if trusted {
-		if uid := firstMD(md, xcontext.HeaderUserID); uid != "" {
+		if uid := firstMD(md, mdUserID); uid != "" {
 			ctx = xcontext.WithUserID(ctx, uid)
 		}
 	}
 	return ctx
 }
 
+// firstMD returns the first value of the lower-case key k.
 func firstMD(md metadata.MD, k string) string {
-	if v := md.Get(k); len(v) > 0 {
+	if v := md[k]; len(v) > 0 {
 		return strings.TrimSpace(v[0])
 	}
 	return ""
