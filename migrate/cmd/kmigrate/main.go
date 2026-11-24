@@ -20,7 +20,8 @@
 //	-allow-out-of-order  apply missing older migrations
 //
 // Connections use kitchen's pg/mysqlx defaults: TLS is required unless the
-// DSN disables it (sslmode=disable, tls=false).
+// DSN chooses another mode (e.g. sslmode=disable, tls=false) or, for
+// PostgreSQL, PGSSLMODE is set.
 package main
 
 import (
@@ -171,7 +172,7 @@ func cliLogger(stdout, stderr io.Writer) *log.Logger {
 		}
 	}
 	l, serr := log.Setup(opts)
-	if serr != nil { // invalid LOG_BACKEND/LOG_FORMAT: fall back to defaults
+	if serr != nil { // unknown backend or format: fall back to defaults
 		l, _ = log.Setup(log.Options{Format: log.FormatText, Output: stderr})
 	}
 	if err = errors.Join(err, serr); err != nil {

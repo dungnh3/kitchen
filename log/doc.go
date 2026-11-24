@@ -15,13 +15,14 @@
 // [Setup] (or [SetDefault]) makes [Default] write through it, also loggers
 // taken from Default before the call and loggers derived from them, and
 // installs it as log/slog's default and the standard library log package's
-// output. Library packages never call Setup. Without it, Default writes
-// kitchen JSON configured from the environment, never Go's text handler.
+// output. Library packages never call Setup. Without it, Default writes the
+// kitchen format configured from the environment ([OptionsFromEnv]), not
+// log/slog's default output.
 // [Discard] is for tests.
 //
-// Records written by this package's handlers are structured JSON for the
-// platform the service runs on, correlated with the active OpenTelemetry
-// span.
+// Records written by this package's handlers are structured JSON (unless
+// FormatText is selected) for the platform the service runs on, correlated
+// with the active OpenTelemetry span.
 //
 // # Backends
 //
@@ -60,7 +61,8 @@
 // Request-scoped attributes come from [WithAttrs] (package kitchen/context
 // stores request_id and user_id this way, so every record logged with a
 // request context carries them) and from Options.ContextAttrs. A context
-// attribute whose key the record already has is skipped.
+// attribute whose key the record's own attributes already have is skipped;
+// attributes added with Logger.With are not checked.
 //
 // A top-level user attribute whose key the schema owns is written as
 // "attr.<key>", so logged data cannot override the time, level, message or

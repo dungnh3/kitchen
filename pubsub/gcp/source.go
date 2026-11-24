@@ -104,7 +104,7 @@ const (
 // Acknowledgements: Ack and Nack never wait for Pub/Sub. On subscriptions
 // with exactly-once delivery the Source waits for the result in the
 // background (up to one minute) and logs a failed acknowledgement, which
-// means the message will be redelivered; Receive waits for those results
+// means the message may be redelivered; Receive waits for those results
 // before it returns.
 //
 // Trace context: messages carry the W3C trace context in the "traceparent"

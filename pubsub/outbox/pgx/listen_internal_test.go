@@ -14,7 +14,7 @@ import (
 
 // After LISTEN succeeds again, the reconnect backoff starts over: a
 // connection drop hours later must not wait as long as the failures that
-// preceded the last good connection (F11).
+// preceded the last good connection.
 func TestListenResetsBackoffAfterReconnect(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, err := New(&pgxpool.Pool{}, WithLogger(log.Discard()))

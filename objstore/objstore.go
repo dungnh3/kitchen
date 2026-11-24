@@ -102,9 +102,9 @@ type WriterOptions struct {
 //
 // Implementations must be safe for concurrent use.
 type Bucket interface {
-	// NewWriter starts writing key. The object becomes visible only after
-	// Close returns nil. Cancel ctx to abort an in-flight write; Close then
-	// returns an error and nothing is stored.
+	// NewWriter starts writing key. The object is not visible before Close
+	// and is visible once Close returns nil. Cancel ctx to abort an
+	// in-flight write; Close then returns an error and no object is created.
 	NewWriter(ctx context.Context, key string, opts *WriterOptions) (io.WriteCloser, error)
 	// NewReader opens key for reading. It returns ErrNotFound when missing.
 	NewReader(ctx context.Context, key string) (io.ReadCloser, error)
@@ -126,8 +126,9 @@ type SignOptions struct {
 	// ContentType must be sent by the client on PUT. Required for PUT unless
 	// AllowAnyContentType is set.
 	ContentType string
-	// MaxBytes bounds a PUT upload (the client must send the signed
-	// x-goog-content-length-range header). Zero means the signer default.
+	// MaxBytes bounds a PUT upload where the backend supports it (GCS: the
+	// client must send the signed x-goog-content-length-range header; S3
+	// cannot, see AllowUnboundedSize). Zero means the signer default.
 	MaxBytes int64
 	// AllowAnyContentType lets a PUT URL accept any content type. Uploads
 	// served from your CDN domain can then carry HTML or SVG (stored XSS):

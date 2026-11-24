@@ -12,7 +12,7 @@ import (
 
 // A publish that outlives the lease lets another relay re-claim the record.
 // The first relay's late settle must not touch the record any more, and it
-// must not fail the round (F9).
+// must not fail the round.
 func TestRelayLateSettleAfterReclaimIsNoop(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

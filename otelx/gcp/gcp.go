@@ -64,8 +64,9 @@ const Scope = "https://www.googleapis.com/auth/cloud-platform"
 // Config configures the exporters and the detector. The zero value uses ADC,
 // the project of the credentials or the metadata server, and DefaultEndpoint.
 type Config struct {
-	// ProjectID is the project that receives the traces. Empty means the
-	// credentials' project, then the GCE/GKE/Cloud Run metadata server.
+	// ProjectID is the project that receives the telemetry; ResourceDetector
+	// writes it as gcp.project_id. Empty means the credentials' project, then
+	// the GCE/GKE/Cloud Run metadata server.
 	ProjectID string
 	// CredentialsJSON is the content of a credentials file. It takes
 	// precedence over CredentialsFile. Only the service_account,
@@ -123,8 +124,8 @@ func newExportConn(ctx context.Context, cfg Config) (exportConn, error) {
 
 // TraceExporter returns an OTLP/gRPC span exporter for the Cloud Telemetry
 // API, authenticated with OAuth over TLS. The connection is established
-// lazily, so no network call happens here unless ADC needs the metadata
-// server to find a project.
+// lazily, so no export call happens here; finding Application Default
+// Credentials may still query the metadata server.
 func TraceExporter(ctx context.Context, cfg Config) (sdktrace.SpanExporter, error) {
 	c, err := newExportConn(ctx, cfg)
 	if err != nil {
@@ -196,8 +197,8 @@ func LogExporter(ctx context.Context, cfg Config) (sdklog.Exporter, error) {
 }
 
 // Credentials resolves the credentials described by cfg (explicit JSON, a
-// file, or ADC) with the trace-export scope. It is exported for exporters
-// that live in other modules, such as otelx/gcp/cloudtrace.
+// file, or ADC) with [Scope]. It is exported for exporters that live in
+// other modules, such as otelx/gcp/cloudtrace.
 func Credentials(ctx context.Context, cfg Config) (*google.Credentials, error) {
 	return findCredentials(ctx, cfg)
 }

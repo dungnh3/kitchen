@@ -11,7 +11,7 @@ import (
 )
 
 // An inlined group (empty key) must not smuggle schema-owned keys to the
-// top level (review 2026-11-21).
+// top level.
 func TestInlinedGroupCannotSpoof(t *testing.T) {
 	for _, backend := range []log.Backend{log.BackendZap, log.BackendSlog} {
 		var buf bytes.Buffer

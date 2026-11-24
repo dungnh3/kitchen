@@ -27,8 +27,9 @@ type BreakerConfig struct {
 	// ResetTimeout is both the sliding window and how long the breaker
 	// stays open. Default 30s.
 	ResetTimeout time.Duration
-	// IsFailure classifies a response. Default: status 5xx. Transport
-	// errors always count as failures.
+	// IsFailure classifies a response. Default: status 5xx. A transport
+	// error (no response) is not counted while the breaker is closed; it
+	// reopens a half-open breaker.
 	IsFailure func(*Response) bool
 	// OnStateChange is called with "closed", "open" or "half-open".
 	OnStateChange func(from, to string)

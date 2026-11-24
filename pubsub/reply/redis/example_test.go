@@ -32,6 +32,6 @@ func Example() {
 	// The worker, after rendering: broker.Reply(ctx, m.Attributes[reply.IDAttribute], result)
 	go func() { _ = broker.Reply(ctx, id, []byte("render #42 done")) }()
 
-	result, err := w.Wait(ctx) // blocks until the reply, ctx's deadline or Close
+	result, err := w.Wait(ctx) // blocks until the reply arrives or ctx is done
 	_, _ = result, err
 }

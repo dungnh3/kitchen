@@ -13,7 +13,7 @@ import (
 // Relay 1's lease lapses and relay 2 re-claims the row. A late settle by
 // relay 1 must leave relay 2's claim alone: no delete, no release (which
 // would let a third relay publish the row concurrently), no dead mark, and
-// no attempt taken back (F9).
+// no attempt taken back.
 func TestStaleSettleIsFenced(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -72,8 +72,8 @@ func TestStaleSettleIsFenced(t *testing.T) {
 	}
 }
 
-// Schema upgrades a table created by the previous version (no claim_token,
-// with _due_idx) in place, keeping its rows claimable and settleable.
+// Schema adds claim_token in place to an existing table that lacks it,
+// keeping its rows claimable and settleable.
 func TestSchemaUpgradesOldTable(t *testing.T) {
 	s, pool := newStore(t)
 	ctx := context.Background()

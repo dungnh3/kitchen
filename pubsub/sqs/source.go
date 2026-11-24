@@ -78,8 +78,8 @@ const (
 	// visibilityMargin is kept below the 12h limit: SQS starts the clock when
 	// it hands out the message, slightly before this Source sees it.
 	visibilityMargin = 5 * time.Second
-	// callTimeout bounds DeleteMessageBatch, ChangeMessageVisibility and
-	// GetQueueAttributes calls made outside the receive context.
+	// callTimeout bounds each DeleteMessageBatch, ChangeMessageVisibility,
+	// ChangeMessageVisibilityBatch and GetQueueAttributes call.
 	callTimeout = 10 * time.Second
 	// deleteAttempts and extendAttempts bound retries of failed deletes and
 	// visibility extensions.

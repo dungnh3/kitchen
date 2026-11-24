@@ -16,10 +16,12 @@ func IsCluster(c redis.UniversalClient) bool {
 }
 
 // ForEachShard calls fn once for every node that holds data: each master of
-// a Cluster client, each shard of a Ring, or c itself otherwise. Use it for
-// keyspace-wide commands (SCAN, FLUSH, INFO) that a Cluster or Ring client
-// would otherwise send to a single node. Calls are serialised, so fn may
-// update shared state without locking. It stops at the first error.
+// a Cluster client, each shard of a Ring that is not marked down, or c
+// itself otherwise. Use it for keyspace-wide commands (SCAN, FLUSH, INFO)
+// that a Cluster or Ring client would otherwise send to a single node.
+// Calls are serialised, so fn may update shared state without locking. On
+// a Cluster or Ring client an error does not stop the calls on the other
+// nodes; ForEachShard returns one of the errors.
 func ForEachShard(ctx context.Context, c redis.UniversalClient, fn func(ctx context.Context, shard redis.UniversalClient) error) error {
 	var mu sync.Mutex
 	serial := func(ctx context.Context, shard *redis.Client) error {

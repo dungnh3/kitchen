@@ -18,8 +18,8 @@
 // its claim_token is the one the caller claimed, so a relay whose lease
 // lapsed cannot settle a row another relay has claimed since. Enqueue
 // serialises writers of the same key with an advisory lock (see
-// [Store.KeyLockID]), so per-key order is commit order. Sent rows are deleted; dead rows (see
-// [outbox.Store]) are kept with dead_at set.
+// [Store.KeyLockID]), so per-key order is commit order. Sent rows are
+// deleted; dead rows (see [outbox.Store]) are kept with dead_at set.
 package pgx
 
 import (
@@ -112,12 +112,13 @@ func New(pool *pgxpool.Pool, opts ...Option) (*Store, error) {
 }
 
 // Schema returns the DDL for the outbox table and its indexes. It is
-// idempotent, so it also upgrades a table created by an older version.
+// idempotent: on an existing table it adds the claim_token column and any
+// missing index.
 //
-// Upgrading an existing table: apply the statements below before deploying
-// this version (the store reads and writes claim_token). Running Schema
-// again does the same, except that it builds the index with a lock that
-// blocks writes. On a large table run:
+// The store reads and writes claim_token, so the column must exist before
+// the store runs against the table. Schema builds indexes with a lock that
+// blocks writes; on a large existing table, add the column and the unkeyed
+// index without blocking writes:
 //
 //	ALTER TABLE <table> ADD COLUMN IF NOT EXISTS claim_token bigint NOT NULL DEFAULT 0;
 //	CREATE INDEX CONCURRENTLY IF NOT EXISTS <table>_free_idx ON <table> (id) WHERE ordering_key = '' AND dead_at IS NULL;
@@ -125,9 +126,9 @@ func New(pool *pgxpool.Pool, opts ...Option) (*Store, error) {
 //
 // Adding a column with a constant default does not rewrite the table
 // (Postgres 11+). claim_token fences settle calls to the claim (see
-// [outbox.Ref]); it protects claims made by this version only, so finish
-// the rollout before relying on it. <table>_free_idx serves unkeyed rows;
-// <table>_due_idx is no longer used.
+// [outbox.Ref]); only claims that incremented it are fenced.
+// <table>_free_idx serves unkeyed rows. The store does not use
+// <table>_due_idx; the DROP statement removes it where it exists.
 func (s *Store) Schema() string {
 	t := s.ident
 	base := strings.ReplaceAll(s.table, ".", "_")

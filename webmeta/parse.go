@@ -14,11 +14,12 @@ import (
 
 // Metadata is what a page says about itself.
 type Metadata struct {
-	// URL is the final URL after redirects.
+	// URL is the final URL after redirects, or the document's <base href>
+	// when it has one.
 	URL string `json:"url"`
 	// CanonicalURL is <link rel="canonical"> or og:url, if present.
 	CanonicalURL string `json:"canonical_url,omitempty"`
-	// Title is og:title, falling back to <title>.
+	// Title is og:title, falling back to <title>, then twitter:title.
 	Title string `json:"title,omitempty"`
 	// Description is og:description, falling back to <meta name="description">,
 	// twitter:description, then the first body paragraph of at least 30
@@ -26,7 +27,7 @@ type Metadata struct {
 	Description string `json:"description,omitempty"`
 	// SiteName is og:site_name.
 	SiteName string `json:"site_name,omitempty"`
-	// Image is og:image (or og:image:secure_url), falling back to twitter:image.
+	// Image is og:image:secure_url or og:image, falling back to twitter:image.
 	Image string `json:"image,omitempty"`
 	// Icon is apple-touch-icon, falling back to rel=icon, then /favicon.ico.
 	Icon string `json:"icon,omitempty"`

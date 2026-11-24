@@ -4,7 +4,7 @@
 //	b, err := gcs.Open(ctx, gcs.Config{Bucket: "media", CDNBaseURL: "https://cdn.example.com"})
 //	defer b.Close()
 //	err = objstore.Put(ctx, b, key, r, &objstore.WriterOptions{ContentType: "image/png"})
-//	pp, err := b.PostPolicy(ctx, key, objstore.PostPolicyOptions{MaxBytes: 20 << 20})
+//	pp, err := b.PostPolicy(ctx, key, objstore.PostPolicyOptions{MaxBytes: 20 << 20, ContentTypePrefix: "image/"})
 package gcs
 
 import (
@@ -35,7 +35,8 @@ type Config struct {
 	// SignExpiry is the default validity of signed URLs and POST policies
 	// (default 5m, max 7 days).
 	SignExpiry time.Duration
-	// MaxUploadBytes is the default POST policy size limit (default 20 MiB).
+	// MaxUploadBytes is the default size limit of PUT URLs and POST policies
+	// (default 20 MiB).
 	MaxUploadBytes int64
 	// GoogleAccessID and PrivateKey sign URLs locally with a service account
 	// key. When empty, the client signs with the attached service account

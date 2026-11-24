@@ -24,7 +24,7 @@ func data(recs []outbox.Record) []string {
 	return out
 }
 
-// Claim hands out the run of consecutive due records of a key (H6): it stops
+// Claim hands out the run of consecutive due records of a key: it stops
 // at a record that is backed off or of another topic, and no other relay gets
 // any record of the key while the run is leased.
 func TestClaimRunOfKey(t *testing.T) {
@@ -95,7 +95,7 @@ func TestReleaseDoesNotCountAttempt(t *testing.T) {
 }
 
 // A key with a backlog drains in one round instead of one record per poll
-// interval (H6). The poll interval is an hour and nothing wakes the relay.
+// interval. The poll interval is an hour and nothing wakes the relay.
 func TestRelayDrainsKeyBacklogWithoutPolling(t *testing.T) {
 	s, pool := newStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -132,7 +132,7 @@ func TestRelayDrainsKeyBacklogWithoutPolling(t *testing.T) {
 
 // Two transactions enqueue for one key; the one with the lower id commits
 // last. Enqueue serialises same-key writers, so ids follow commit order and
-// two relays never hold records of the key at once (M7).
+// two relays never hold records of the key at once.
 func TestEnqueueSerialisesSameKeyWriters(t *testing.T) {
 	s, pool := newStore(t)
 	ctx := context.Background()
@@ -208,7 +208,7 @@ wait:
 }
 
 // Enqueue takes the key locks in a stable order, so two transactions that
-// enqueue the same keys in opposite orders do not deadlock (M7).
+// enqueue the same keys in opposite orders do not deadlock.
 func TestEnqueueKeyLocksDoNotDeadlock(t *testing.T) {
 	s, pool := newStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -237,7 +237,7 @@ func TestEnqueueKeyLocksDoNotDeadlock(t *testing.T) {
 }
 
 // A publisher that hangs until its deadline must leave time to settle: the
-// row backs off with last_error set, and WithMaxAttempts applies (H5).
+// row backs off with last_error set, and WithMaxAttempts applies.
 func TestRelaySettlesAfterHungPublisher(t *testing.T) {
 	s, pool := newStore(t)
 	ctx := context.Background()

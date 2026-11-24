@@ -57,8 +57,9 @@ const (
 )
 
 // Config describes the database and pool. Either DSN or Addr+Database must be
-// given. With DSN, only User, Password and Database may override it; set the
-// address and TLS inside the DSN.
+// given. With DSN, set the address and TLS mode inside the DSN (Config.TLS is
+// allowed when the DSN has no tls parameter); User, Password, Database and
+// the other fields apply on top of the DSN when set.
 type Config struct {
 	// DSN is a go-sql-driver DSN:
 	// user:pass@tcp(host:3306)/db?tls=skip-verify. A DSN without a tls
@@ -87,11 +88,14 @@ type Config struct {
 	ConnMaxLifetime time.Duration
 	// ConnMaxIdleTime default 5m.
 	ConnMaxIdleTime time.Duration
-	// ConnectTimeout default 5s; also bounds the ping in Open.
+	// ConnectTimeout default: the DSN's timeout, else 5s; also bounds the
+	// ping in Open.
 	ConnectTimeout time.Duration
-	// ReadTimeout and WriteTimeout are I/O timeouts per packet (0: none).
+	// ReadTimeout and WriteTimeout are I/O timeouts per packet (0 keeps the
+	// DSN's readTimeout/writeTimeout; none by default).
 	ReadTimeout, WriteTimeout time.Duration
-	// Loc is the time zone for DATETIME values (default UTC).
+	// Loc is the time zone for DATETIME values (default: the DSN's loc,
+	// else UTC).
 	Loc *time.Location
 	// Params are session variables sent on connect, e.g.
 	// {"sql_mode": "'STRICT_ALL_TABLES'"}.

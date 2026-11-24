@@ -11,10 +11,10 @@ import (
 // nacked since: the failed message first, then each later message of the key
 // nacked to keep the order (handed over before or after the failure). Until
 // the broker has redelivered all of them, in that order, every other message
-// of the key is nacked and joins the list; so a message handed over early
-// (Kafka polls ahead, Pub/Sub ordered delivery sends later messages while
-// earlier ones are unacked) can never run before an earlier one that is on
-// its way back.
+// of the key is nacked and joins the list; so while the fence holds, a
+// message handed over early (Kafka polls ahead, Pub/Sub ordered delivery
+// sends later messages while earlier ones are unacked) does not run before
+// an earlier one that is on its way back.
 //
 // Kafka redelivers in process with the same IDs, so this is exact there; for
 // Pub/Sub ordered delivery it covers this process. A fence expires ttl after

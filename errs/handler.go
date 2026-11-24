@@ -71,7 +71,7 @@ func (h *Handler) logger() *log.Logger {
 //     *Error or one with code OK → INTERNAL (sanitized).
 //   - a foreign gRPC status anywhere in the chain (typically returned by a
 //     downstream service) → sanitizeForeign: client errors keep their code,
-//     message and details; server faults keep their code with the generic
+//     message and details; other codes keep their code with the generic
 //     message and only RetryInfo; Unauthenticated and PermissionDenied
 //     become INTERNAL, since they report this service's own credentials on
 //     an outgoing call, not the client's.
@@ -104,8 +104,9 @@ func ToStatus(err error) (st *status.Status, sanitized bool) {
 
 // Status converts err with ToStatus, logs it when it was sanitized or is a
 // server fault (Internal, Unknown, DataLoss), and completes the status: an
-// ErrorInfo with a domain is always present, and a LocalizedMessage is
-// added when the Localizer knows the reason. It returns nil for nil.
+// ErrorInfo is always present, its empty domain is set to Config.Domain, and
+// a LocalizedMessage is added when the Localizer knows the reason. It
+// returns nil for nil.
 func (h *Handler) Status(ctx context.Context, err error) *status.Status {
 	return h.status(ctx, err, "")
 }

@@ -1,10 +1,12 @@
 // Package lease provides named, expiring locks with fencing tokens and a
 // leader [Elector] built on them.
 //
-// A lease is held by one owner until it expires or is released. Every
-// successful Acquire returns a strictly increasing fencing token; downstream
-// systems should reject writes carrying a token lower than one they have
-// seen, which makes a paused, expired leader harmless.
+// A Locker grants a lease to one owner at a time until it expires or is
+// released. A Locker on replicated storage can break this after a failover
+// (see lease/redis). Every successful Acquire returns a strictly increasing
+// fencing token; downstream systems should reject writes carrying a token
+// lower than one they have seen, which makes a paused, expired leader
+// harmless.
 //
 // See [github.com/dungnh3/kitchen/lease/redis] for a Redis Locker. To split
 // work into shards, take one lease per shard name.
@@ -249,8 +251,8 @@ func DoLogger(l *log.Logger) DoOption { return func(o *doOptions) { o.log = l } 
 // wrapping ErrLeaseLost (joined with fn's error). The lease is released when
 // fn returns. Pass l.Token to the resource you protect as a fencing token.
 //
-// It replaces the old "SETNX key, do work, DEL key" pattern, which had no
-// renewal, no owner check on release and no fencing.
+// Unlike "SETNX key, do work, DEL key", Do renews the lease, checks the
+// owner on release and gives fn a fencing token.
 func Do(ctx context.Context, locker Locker, name string, ttl time.Duration, fn func(ctx context.Context, l Lease) error, opts ...DoOption) error {
 	o := doOptions{}
 	for _, opt := range opts {

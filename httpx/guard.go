@@ -17,8 +17,9 @@ import (
 
 // OriginGuard is a RequestHook that refuses an absolute request URL whose
 // origin (scheme, host, port) differs from the client's base URL, so
-// client-level credentials and headers never go to a host the client was
-// not built for. Clients without a base URL are not restricted. New
+// client-level credentials and headers are not sent to a host the client
+// was not built for. It checks the request URL only; redirects are left to
+// the RedirectPolicy. Clients without a base URL are not restricted. New
 // installs it first unless WithoutOriginGuard is given.
 func OriginGuard(r *Request) error {
 	b := r.c.base

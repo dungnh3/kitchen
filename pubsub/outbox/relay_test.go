@@ -70,7 +70,7 @@ func newRelay(t *testing.T, st outbox.Store, pub pubsub.Publisher, opts ...outbo
 
 // A publisher that hangs until its deadline must leave the relay enough time
 // to settle: the failure is recorded, the record backs off, and
-// WithMaxAttempts still applies (H5).
+// WithMaxAttempts still applies.
 func TestRelaySettlesAfterHungPublish(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -122,7 +122,7 @@ func TestRelaySettlesAfterHungPublish(t *testing.T) {
 }
 
 // A run of one key is published in one call; when a record fails, the later
-// records of the key are neither marked sent nor charged an attempt (H6).
+// records of the key are neither marked sent nor charged an attempt.
 func TestRelayRunOfKeyStopsAtFirstFailure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		st := &memStore{}
@@ -189,7 +189,7 @@ func TestRelayRunOfKeyStopsAtFirstFailure(t *testing.T) {
 
 // Run claims again at once after a round that made progress, so a store that
 // hands out one record per key per claim drains a key without waiting a poll
-// interval per record (H6).
+// interval per record.
 func TestRelayDrainsKeyWithoutWaitingForPoll(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		st := &memStore{maxRun: 1}
@@ -216,7 +216,7 @@ func TestRelayDrainsKeyWithoutWaitingForPoll(t *testing.T) {
 }
 
 // Transient broker failures back off without counting toward
-// WithMaxAttempts; other failures count (M10).
+// WithMaxAttempts; other failures count.
 func TestRelayTransientFailuresDoNotCount(t *testing.T) {
 	unavailable := errs.Wrap(errors.New("broker down"), errs.ErrDependencyUnavailable)
 	for _, tc := range []struct {
@@ -279,7 +279,7 @@ func TestRelayTransientFailuresDoNotCount(t *testing.T) {
 }
 
 // Every relayed message carries outbox-id (the record ID) unless the caller
-// set it; the stored message is not modified (M9).
+// set it, and keeps the caller's other attributes.
 func TestRelaySetsOutboxIDAttribute(t *testing.T) {
 	st := &memStore{}
 	st.add("t", &pubsub.Message{Data: []byte("plain")})

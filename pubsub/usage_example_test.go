@@ -91,8 +91,10 @@ func ExampleWithDeadLetter() {
 }
 
 // Publish errors carry kitchen/errs codes: ErrKeyPaused is
-// FailedPrecondition, ErrClosed is Unavailable, any other broker failure is
-// errs.ErrDependencyUnavailable (503), and bad input is InvalidArgument.
+// FailedPrecondition, ErrClosed is Unavailable, bad input is
+// InvalidArgument, a broker status that rejects the request (for example
+// InvalidArgument or NotFound) keeps its code, and any other broker failure
+// is errs.ErrDependencyUnavailable (503).
 func Example_errors() {
 	broker := memory.New()
 	_ = broker.Close(context.Background())

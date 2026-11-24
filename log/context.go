@@ -48,8 +48,9 @@ func AttrsFromContext(ctx context.Context) []slog.Attr {
 //   - the schema's trace-correlation attributes when the context carries a
 //     valid span;
 //   - the attributes returned by opts.ContextAttrs, then those stored with
-//     [WithAttrs]; one whose key the record already has at the top level is
-//     skipped, so a record never carries the same key twice;
+//     [WithAttrs]; one whose key the record's own attributes already have
+//     at the top level is skipped, so the record's value wins (attributes
+//     added with Logger.With are not checked);
 //   - a stack trace under Schema.StackKey when the level is at least
 //     opts.StackTraceLevel (default ERROR), unless opts.NoStackTrace.
 //

@@ -179,7 +179,7 @@ func TestToStatus(t *testing.T) {
 		}
 	}
 	// ...even with an ErrorInfo: a downstream service's TOKEN_EXPIRED is
-	// about this service's credentials (owner decision 2026-11-21).
+	// about this service's credentials.
 	st, sanitized = errs.ToStatus(status.Convert(errs.ErrTokenExpired).Err())
 	if !sanitized || st.Code() != codes.Internal {
 		t.Errorf("downstream structured 401: %v %v", st.Code(), sanitized)

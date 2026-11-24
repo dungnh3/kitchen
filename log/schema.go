@@ -107,9 +107,9 @@ var SchemaGCP = Schema{
 }
 
 // SchemaAWS is JSON for CloudWatch Logs in the shape of Lambda's JSON log
-// format: "timestamp", "level" (DEBUG, INFO, WARN, ERROR, FATAL), "message",
-// "location" ("file:line"). Trace correlation carries both the W3C ids
-// (trace_id, span_id, trace_flags) for OpenTelemetry and CloudWatch
+// format: "timestamp", "level" (TRACE, DEBUG, INFO, WARN, ERROR, FATAL),
+// "message", "location" ("file:line"). Trace correlation carries both the
+// W3C ids (trace_id, span_id, trace_flags) for OpenTelemetry and CloudWatch
 // Transaction Search, and xray_trace_id ("1-xxxxxxxx-yyyyyyyyyyyyyyyyyyyyyyyy")
 // for X-Ray-style queries. Stack traces go to "stack_trace".
 var SchemaAWS = Schema{

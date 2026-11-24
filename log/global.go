@@ -152,9 +152,9 @@ func (s *swapHandler) WithGroup(name string) slog.Handler {
 }
 
 // Default returns the process logger. Until main calls [Setup] or
-// [SetDefault] it writes kitchen JSON (from [OptionsFromEnv]) to stdout
-// (stderr with LOG_OUTPUT=stderr),
-// never Go's text handler. Packages use it when their Logger option is nil.
+// [SetDefault] it writes the kitchen format (from [OptionsFromEnv]) to
+// stdout (stderr with LOG_OUTPUT=stderr), not log/slog's default output.
+// Packages use it when their Logger option is nil.
 // It always returns the same *Logger, which follows the installed handler,
 // so a later Setup also reaches loggers taken from it earlier. It is safe
 // for concurrent use.
@@ -162,9 +162,8 @@ func Default() *Logger { return processLogger }
 
 // Setup builds the process logger from opts (typically from
 // [OptionsFromEnv]), writing to opts.Output (stdout when nil), installs it
-// with [SetDefault] and
-// returns [Default].
-// Call it once, early in main; library packages never call it.
+// with [SetDefault] and returns [Default]. Call it once, early in main;
+// library packages should not call it.
 //
 //	opts, err := log.OptionsFromEnv()
 //	logger, _ := log.Setup(opts)

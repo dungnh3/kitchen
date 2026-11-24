@@ -1,12 +1,12 @@
 // Package webmeta fetches a web page and extracts its title, description,
 // preview image and icon (Open Graph, Twitter cards and HTML fallbacks).
 //
-// The fetcher is safe to point at untrusted URLs (for example URLs produced by
-// an LLM). It fetches through kitchen's httpx client with the SSRF guard on:
-// only public addresses on ports 80 and 443 are dialled, checked after DNS
-// resolution and on every redirect, proxies are ignored, https is never
-// downgraded to http on a redirect, the body is capped and the request times
-// out. Errors are errs errors: httpx.ErrDestinationNotAllowed for a refused
+// The fetcher is meant for untrusted URLs (for example URLs produced by an
+// LLM). It fetches through kitchen's httpx client with the SSRF guard on:
+// by default only public addresses on ports 80 and 443 are dialled (see
+// Config.Ports and Config.Allow), checked after DNS resolution and on every
+// redirect, proxies are ignored, a redirect from https to http is refused,
+// the body is capped and the request times out. Errors are errs errors: httpx.ErrDestinationNotAllowed for a refused
 // address, the httpx status mapping (errs.ErrNotFound, ...) for non-2xx
 // responses, [ErrInvalidURL] and [ErrNotHTML].
 package webmeta
@@ -53,7 +53,8 @@ type Config struct {
 	Allow []netip.Prefix
 	// ClientOptions are extra httpx options (logger, tracer/meter
 	// providers, retry). httpx.WithTransport is rejected: it would bypass
-	// the SSRF guard.
+	// the SSRF guard. A transport middleware that does not call the
+	// transport it wraps bypasses the guard too.
 	ClientOptions []httpx.Option
 }
 
@@ -78,7 +79,7 @@ func New(cfg Config) (*Fetcher, error) {
 		cfg.MaxRedirects = 5
 	}
 	opts := append([]httpx.Option{}, cfg.ClientOptions...)
-	// Ours last, so ClientOptions cannot loosen them.
+	// Ours last, so they override the same options in ClientOptions.
 	opts = append(opts,
 		httpx.WithSSRFGuard(httpx.SSRFConfig{Ports: cfg.Ports, Allow: cfg.Allow}),
 		httpx.WithTimeout(cfg.Timeout),
@@ -98,7 +99,8 @@ func New(cfg Config) (*Fetcher, error) {
 func (f *Fetcher) Close() { f.client.CloseIdleConnections() }
 
 // Fetch downloads rawURL and parses its metadata. Metadata.URL is the final
-// URL after redirects, with query values redacted.
+// URL after redirects, with query values redacted, or the document's
+// <base href> when it has one.
 func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*Metadata, error) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
@@ -142,8 +144,8 @@ type Result struct {
 // FetchAll fetches urls with at most concurrency fetches in flight (4 when
 // concurrency <= 0) and returns one Result per URL, in input order. A failed
 // URL does not stop the others (best effort, e.g. citation previews). Once
-// ctx is done no new fetch starts and the remaining Results carry ctx's
-// error. FetchAll returns after every started fetch has finished, so no
+// ctx is done no new request is sent and the remaining Results carry ctx's
+// error, possibly wrapped. FetchAll returns after every started fetch has finished, so no
 // goroutine outlives it.
 func (f *Fetcher) FetchAll(ctx context.Context, urls []string, concurrency int) []Result {
 	if concurrency <= 0 {

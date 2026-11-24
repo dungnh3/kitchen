@@ -15,11 +15,12 @@ type Format string
 
 // Formats.
 const (
-	// FormatJSON writes one JSON object per line in the Cloud Logging schema.
-	// It is the default.
+	// FormatJSON writes one JSON object per line with the keys of
+	// Options.Schema. It is the default.
 	FormatJSON Format = "json"
-	// FormatText writes slog's key=value text, for local development. Keys
-	// keep slog's names (time, level, msg, source); levels use severity names.
+	// FormatText writes human-readable text, for local development. Keys
+	// keep slog's names (time, level, msg, source). Levels use the schema's
+	// level names with BackendSlog and zap's level names with BackendZap.
 	FormatText Format = "text"
 )
 

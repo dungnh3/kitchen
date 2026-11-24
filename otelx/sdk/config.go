@@ -100,7 +100,8 @@ type Config struct {
 	// otelx.PublicHTTPHandler.
 	IgnoreRemoteSampled bool
 	// ExcludeOperations are dropped by the sampler in addition to
-	// DefaultExcludedOperations (substring match on the span name).
+	// DefaultExcludedOperations (substring match on the span name or the
+	// rpc.method / rpc.service attribute).
 	ExcludeOperations []string
 
 	// SpanExporters are added, each behind a batch span processor.

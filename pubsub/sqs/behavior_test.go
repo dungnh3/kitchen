@@ -69,8 +69,8 @@ func drive(t *testing.T, f *fakeSQS, queue string, h pubsub.Handler, until func(
 	}
 }
 
-// C3: messages of one ReceiveMessage response waiting behind a blocked fn
-// must have their visibility extended too.
+// Messages of one ReceiveMessage response waiting behind a blocked fn must
+// have their visibility extended too.
 func TestHeldMessagesAreExtended(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"
@@ -102,8 +102,8 @@ func TestHeldMessagesAreExtended(t *testing.T) {
 	})
 }
 
-// H4a: valid UTF-8 outside the SQS character set is base64-encoded and
-// decoded back.
+// Valid UTF-8 outside the SQS character set is base64-encoded and decoded
+// back.
 func TestBodyOutsideSQSCharsetRoundTrips(t *testing.T) {
 	cases := []struct {
 		name string
@@ -144,7 +144,7 @@ func TestBodyOutsideSQSCharsetRoundTrips(t *testing.T) {
 	}
 }
 
-// H4b: SendMessageBatch requests stay within the 1 MiB total, attributes
+// SendMessageBatch requests stay within the 1 MiB total, attributes
 // included; one oversized message fails alone, permanently.
 func TestPublishSplitsBatchBySize(t *testing.T) {
 	big := func(n int) []byte { return []byte(strings.Repeat("x", n)) }
@@ -246,7 +246,7 @@ func TestPublishErrorClassification(t *testing.T) {
 	}
 }
 
-// M2: deletes run in parallel instead of one request at a time.
+// Acks are deleted by several DeleteMessageBatch requests in parallel.
 func TestAcksDeleteConcurrently(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"
@@ -283,7 +283,7 @@ func TestAcksDeleteConcurrently(t *testing.T) {
 	})
 }
 
-// M2: a delete entry that fails without sender fault is retried.
+// A delete entry that fails without sender fault is retried.
 func TestDeleteRetriesTransientEntryFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"
@@ -312,7 +312,7 @@ func TestDeleteRetriesTransientEntryFailures(t *testing.T) {
 	})
 }
 
-// M2: Receive flushes pending deletes before returning.
+// Receive flushes pending deletes before returning.
 func TestReceiveFlushesDeletesBeforeReturn(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"
@@ -328,8 +328,8 @@ func TestReceiveFlushesDeletesBeforeReturn(t *testing.T) {
 	})
 }
 
-// M3: during shutdown, visibility is extended until every in-flight
-// message is settled, not only for one visibility timeout.
+// During shutdown, visibility is extended until every in-flight message is
+// settled, even past one visibility timeout.
 func TestShutdownKeepsExtendingUntilSettled(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"
@@ -365,7 +365,7 @@ func TestShutdownKeepsExtendingUntilSettled(t *testing.T) {
 	})
 }
 
-// M12: receipts reported invalid are no longer extended.
+// A receipt that SQS reports invalid is not extended again.
 func TestHeartbeatDropsInvalidReceipts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"
@@ -401,7 +401,7 @@ func TestHeartbeatDropsInvalidReceipts(t *testing.T) {
 	})
 }
 
-// M12: a failed extension is retried before the next tick.
+// A failed extension is retried before the next tick.
 func TestHeartbeatRetriesFailedCall(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"
@@ -430,7 +430,7 @@ func TestHeartbeatRetriesFailedCall(t *testing.T) {
 	})
 }
 
-// M12: extensions never exceed 12 hours from receipt.
+// Extensions never exceed 12 hours from receipt.
 func TestHeartbeatStopsAt12Hours(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"
@@ -457,8 +457,7 @@ func TestHeartbeatStopsAt12Hours(t *testing.T) {
 	})
 }
 
-// M12: a heartbeat in flight while the message is nacked must not hide it
-// again.
+// A heartbeat in flight while the message is nacked must not hide it again.
 func TestHeartbeatDoesNotUndoNack(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const q = "https://sqs/q"

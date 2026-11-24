@@ -20,8 +20,8 @@
 // mcpkit never owns an [http.Server]: pass [Server.Service] to kitchen's
 // server package (server.WithServices), or mount [Server.Handler] on your own
 // mux. Tokens from your own IdP are verified by kitchen's auth package
-// through [Verifier]. Only *errs.Error messages from tools reach the model
-// (see [AddTool]).
+// through [Verifier]. Only the public messages of client-fault *errs.Error
+// values from tools reach the model (see [AddTool]).
 // Do not set http.Server.WriteTimeout: it would cut long-running streamed
 // tool responses; rely on ReadHeaderTimeout, IdleTimeout and per-tool
 // timeouts instead.

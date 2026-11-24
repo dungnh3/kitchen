@@ -51,7 +51,7 @@ func ExampleNew() {
 	logger := log.Discard() // in a service: the *log.Logger from main
 
 	err = lease.Do(ctx, locker, "invoice-batch", 30*time.Second, func(_ context.Context, l lease.Lease) error {
-		// Only one process runs this at a time. Long work must watch ctx.
+		// Only the lease holder runs this. Long work must watch ctx.
 		fmt.Println("running with token", l.Token)
 		return nil
 	}, lease.DoLogger(logger))

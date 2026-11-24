@@ -59,9 +59,11 @@ const (
 )
 
 // Config describes the database and pool. Either URL or Host+Database must be
-// given. With URL, only User, Password and Database may override the URL;
-// Host, Port and SSLMode must be set inside the URL (pgx derives TLS server
-// names and fallback hosts from it).
+// given. With URL, Host, Port and SSLMode must be set inside the URL (pgx
+// derives TLS server names and fallback hosts from it); User, Password,
+// Database and the other fields apply on top of the URL when set. The pool
+// durations and ConnectTimeout always replace the URL's values (e.g.
+// pool_max_conn_lifetime, connect_timeout), using the defaults below.
 type Config struct {
 	// URL is a postgres:// URL or key=value DSN.
 	URL string
@@ -77,9 +79,10 @@ type Config struct {
 	// (unless PGSSLMODE is set).
 	SSLMode string
 
-	// MaxConns default: pgx (max(4, runtime.NumCPU())).
+	// MaxConns default: the URL's pool_max_conns, else pgx's
+	// max(4, runtime.NumCPU()).
 	MaxConns int32
-	// MinConns default 0.
+	// MinConns default: the URL's pool_min_conns, else 0.
 	MinConns int32
 	// MaxConnLifetime default 30m; MaxConnLifetimeJitter default 5m.
 	MaxConnLifetime       time.Duration
@@ -97,7 +100,8 @@ type Config struct {
 	ApplicationName string
 	// RuntimeParams are extra session parameters, e.g. {"timezone": "UTC"}.
 	RuntimeParams map[string]string
-	// QueryExecMode default ExecModeCacheStatement.
+	// QueryExecMode default ExecModeCacheStatement; it always replaces the
+	// URL's default_query_exec_mode.
 	QueryExecMode QueryExecMode
 }
 

@@ -2,12 +2,14 @@
 //
 // A lease is the key "<prefix>{<name>}" holding "<owner>|<token>" with a
 // millisecond TTL. The fencing token comes from INCR on "<prefix>{<name>}:fence",
-// which never expires, so tokens strictly increase per name. Acquire, Renew
-// and Release are Lua scripts, so every check-and-set is atomic and
-// owner-checked. The hash tag keeps both keys in one Redis Cluster slot.
+// which has no TTL, so tokens strictly increase per name while that key
+// survives. Acquire, Renew and Release are Lua scripts, so each one is
+// atomic; Renew and Release check owner and token. The hash tag keeps both
+// keys in one Redis Cluster slot.
 //
 // Redis replication is asynchronous: after a failover a lease can be granted
-// twice. Always pass the fencing token to the resource you protect.
+// twice and a token can repeat. Always pass the fencing token to the
+// resource you protect.
 package redis
 
 import (

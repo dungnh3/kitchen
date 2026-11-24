@@ -37,10 +37,10 @@ func (l *lines) String() string {
 	return l.b.String()
 }
 
-// Owner decision 2026-11-22: one logger for the process. With only the
-// process logger installed in main (log.SetDefault, as log.Setup does), the
-// server, pubsub and cache, none given a Logger, write every line in the
-// same schema. (auth, a separate module, has the same check in its tests.)
+// The process has one logger. With only the process logger installed in
+// main (log.SetDefault, as log.Setup does), the server, pubsub and cache,
+// none given a Logger, write every line in the same schema. (auth, a
+// separate module, has the same check in its tests.)
 func TestOneLogFormat(t *testing.T) {
 	var out lines
 	log.SetDefault(log.New(&out, log.Options{Schema: log.SchemaGCP, Level: log.LevelDebug}))

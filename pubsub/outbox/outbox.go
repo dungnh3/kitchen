@@ -171,9 +171,10 @@ func WithLogger(l *log.Logger) RelayOption { return func(r *Relay) { r.log = l }
 // wrapping [pubsub.ErrPermanent] are dead at once regardless.
 //
 // Transient failures back off but do not count: errors whose errs code is
-// UNAVAILABLE or DEADLINE_EXCEEDED (such as [errs.ErrDependencyUnavailable],
-// which kitchen publishers return for broker failures), context deadline
-// and cancellation, and [pubsub.ErrKeyPaused]; the same holds per entry of a
+// UNAVAILABLE, DEADLINE_EXCEEDED or CANCELLED (such as
+// [errs.ErrDependencyUnavailable], which kitchen publishers return for
+// broker failures), context deadline and cancellation, and
+// [pubsub.ErrKeyPaused]; the same holds per entry of a
 // [*pubsub.PublishError]. An UNAVAILABLE error that wraps a more specific
 // gRPC or errs code (for example a broker's INVALID_ARGUMENT) counts. A
 // relay that was killed mid-publish also spends the attempt. While
@@ -418,8 +419,8 @@ func (r *Relay) backoff(attempts int) time.Duration {
 
 // isTransient reports whether a publish failure must not count toward
 // WithMaxAttempts: context errors, a paused key, and errors whose code is
-// UNAVAILABLE or DEADLINE_EXCEEDED unless a more specific code is wrapped
-// underneath. Permanent errors are never transient.
+// UNAVAILABLE, DEADLINE_EXCEEDED or CANCELLED unless a more specific code is
+// wrapped underneath. Permanent errors are never transient.
 func isTransient(err error) bool {
 	if err == nil || pubsub.IsPermanent(err) {
 		return false
@@ -430,8 +431,8 @@ func isTransient(err error) bool {
 	return transientCode(err)
 }
 
-// transientCode reports whether err's code is UNAVAILABLE or
-// DEADLINE_EXCEEDED and no cause under it carries a more specific code.
+// transientCode reports whether err's code is UNAVAILABLE, DEADLINE_EXCEEDED
+// or CANCELLED and no cause under it carries a more specific code.
 func transientCode(err error) bool {
 	switch errs.Code(err) {
 	case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:

@@ -20,10 +20,12 @@
 //
 // Ordering on receive: [pubsub.Subscriber] fences a key after one of its
 // messages is nacked and nacks the key's other messages until Pub/Sub
-// redelivers that message, so within one process B never runs before the
-// redelivered A. Across pods, ordering-key affinity keeps a key on one client
-// while it has outstanding messages, but affinity is not guaranteed for
-// StreamingPull, and a fence lives in one process. Make handlers of ordered
+// redelivers that message or the fence expires (a 5s TTL on ordered
+// subscriptions with the default [pubsub.KeyFenceAuto]), so within one
+// process B does not run before the redelivered A while the fence holds.
+// Across pods, ordering-key affinity keeps a key on one client while it has
+// outstanding messages, but affinity is not guaranteed for StreamingPull,
+// and a fence lives in one process. Make handlers of ordered
 // subscriptions tolerate a rare reorder, e.g. by checking a version or
 // sequence number stored with the data.
 //

@@ -236,8 +236,8 @@ func TestLogAttrs(t *testing.T) {
 	}
 }
 
-// Review 2026-11-21: identity headers are never returned by Header, even on
-// the metadata fallback path, and X-Request-Id is always the validated id.
+// Header never returns identity headers, even on the metadata fallback path,
+// and X-Request-Id is always the validated id.
 func TestHeaderIdentityAndRequestID(t *testing.T) {
 	md := metadata.Pairs("user-id", "admin", "x-kitchen-client-ip", "1.2.3.4", "x-request-id", "bad id", "x-tenant", "t1")
 	ctx := metadata.NewIncomingContext(context.Background(), md)

@@ -18,7 +18,7 @@ import (
 // TestClaimPlanUsesKeyIndex builds a backlog with a blocked hot key (the
 // head backed off, 50k rows behind it) plus many small keys, and checks the
 // claim statement's plan: the head-of-key check must probe the key index,
-// not walk the primary key once per candidate row (M8).
+// not walk the primary key once per candidate row.
 func TestClaimPlanUsesKeyIndex(t *testing.T) {
 	dsn := os.Getenv("KITCHEN_TEST_PG_DSN")
 	if dsn == "" {
@@ -72,7 +72,8 @@ func TestClaimPlanUsesKeyIndex(t *testing.T) {
 	if !strings.Contains(plan, base+"_key_idx") {
 		t.Errorf("the head-of-key check does not use %s_key_idx", base)
 	}
-	// The old statement's subplan walked the primary key with a key filter.
+	// A head-of-key check that walks the primary key with a key filter
+	// shows up as an index scan of _pkey aliased h.
 	if regexp.MustCompile(`Index (Only )?Scan using \S+_pkey on \S+ h\b`).MatchString(plan) {
 		t.Errorf("the head-of-key check walks the primary key")
 	}

@@ -302,7 +302,7 @@ func TestLevelVarRuntimeChange(t *testing.T) {
 	lv := new(slog.LevelVar)
 	logger := log.New(&buf, log.Options{Level: lv})
 	logger.Debug("hidden")
-	lv.Set(log.LevelDebug) // lowering works (the old SetLevel could only raise)
+	lv.Set(log.LevelDebug) // the level can be lowered at runtime
 	logger.Debug("shown")
 	lv.Set(log.LevelError)
 	logger.Warn("hidden")

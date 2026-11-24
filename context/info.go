@@ -46,8 +46,8 @@ type Info struct {
 	Timezone string
 	// Headers holds the first value of every captured header, keyed by
 	// canonical name: DefaultForwardHeaders plus Options.Headers, without
-	// identity headers, credentials and X-Request-Id (see RequestID). It is shared and must not be
-	// modified; read it with Header.
+	// identity headers, credentials and X-Request-Id (see RequestID). It is
+	// shared and must not be modified; read it with Header.
 	Headers map[string]string
 }
 

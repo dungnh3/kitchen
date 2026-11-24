@@ -5,16 +5,21 @@
 //   - SQL files are "<version>_<name>.sql" with "-- +goose Up" and
 //     "-- +goose Down" sections; Go migrations come from Config.GoMigrations.
 //   - Each migration runs in its own transaction (unless the file says
-//     "-- +goose NO TRANSACTION"), so a failed migration rolls back and the
-//     database is never left half-migrated ("dirty").
+//     "-- +goose NO TRANSACTION"), so a failed migration rolls back and is
+//     not recorded; goose has no "dirty" state. MySQL commits DDL
+//     implicitly, so a failed MySQL migration can leave some of its DDL
+//     applied, and so can a NO TRANSACTION migration.
 //   - Concurrent runs (several pods starting at once) are serialised: a
-//     Postgres advisory lock, or a lock table on MySQL.
-//   - Every method takes a context; cancelling it aborts the running
-//     migration's transaction.
-//   - Closing a Migrator never closes the caller's pool or *sql.DB.
+//     Postgres advisory lock, or a lock table on MySQL. A run waits up to
+//     Config.LockTimeout for the lock, then fails.
+//   - Every method except Close takes a context; cancelling it stops the
+//     run and rolls back the running migration's transaction, if any.
+//   - Closing a Migrator does not close a pool or *sql.DB passed to
+//     NewPostgres or NewMySQL.
 //
-// History is kept in goose_db_version (Config.Table). Databases migrated by
-// golang-migrate need a one-time conversion; see docs/migration/data-utils.md.
+// History is kept in goose_db_version (Config.Table). The schema_migrations
+// table of golang-migrate is not read; docs/migration/data-utils.md
+// describes a one-time conversion.
 package migrate
 
 import (

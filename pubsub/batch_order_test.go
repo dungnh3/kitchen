@@ -226,9 +226,8 @@ func TestKeyFenceLateHandover(t *testing.T) {
 			_ = stop()
 			mu.Lock()
 			defer mu.Unlock()
-			// k2 may run once before k1's failure is known (batch of k1 and
-			// k2 in single mode is sequential, so it does not); what matters
-			// is that k3 never runs before the redelivered k1.
+			// The test checks only k3: it must not run before the
+			// redelivered k1.
 			i1, i3 := index(src.order, "k1"), index(src.order, "k3")
 			if i3 >= 0 && (i1 < 0 || i3 < i1) {
 				t.Fatalf("k3 handled before k1: %v", src.order)

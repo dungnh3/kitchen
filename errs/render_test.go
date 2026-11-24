@@ -14,7 +14,7 @@ import (
 )
 
 // The hand-encoded details must decode to exactly what protojson writes for
-// the same status (the previous encoder).
+// the same status.
 func TestRenderMatchesProtojson(t *testing.T) {
 	delays := []time.Duration{0, time.Second, 1500 * time.Millisecond, 1500 * time.Microsecond, 1, 90 * time.Minute, -2500 * time.Millisecond}
 	for _, d := range delays {

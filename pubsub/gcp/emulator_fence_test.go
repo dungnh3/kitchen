@@ -21,8 +21,8 @@ import (
 // End to end on the emulator: an ordered subscription with a dead-letter
 // policy of 5 attempts, a poison message A, then C with the same key. Pub/Sub
 // moves A to the dead-letter topic; C must be processed, not nacked by the
-// key fence until Pub/Sub dead-letters it too (the review's C1: with the old
-// 1m fence the dead-letter topic received [A C] and the handler never saw C).
+// key fence until Pub/Sub dead-letters it too. The subscriber does not fence
+// on A's last delivery, so only A reaches the dead-letter topic.
 func TestEmulatorFenceDoesNotDeadLetterLaterMessages(t *testing.T) {
 	if os.Getenv("PUBSUB_EMULATOR_HOST") == "" {
 		t.Skip("PUBSUB_EMULATOR_HOST not set")

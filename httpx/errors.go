@@ -57,8 +57,8 @@ type ErrorMapper func(se *StatusError) error
 
 // DefaultErrorMapper maps an upstream status to an errs error wrapping se,
 // so a server built with kitchen answers its own clients with a sensible
-// code without leaking the upstream body (the cause never leaves the
-// process):
+// code without leaking the upstream body (errs keeps the cause for logs and
+// does not send it to clients):
 //
 //   - 404 → errs.ErrNotFound
 //   - 408, 504 → errs.ErrUpstreamTimeout (DeadlineExceeded)

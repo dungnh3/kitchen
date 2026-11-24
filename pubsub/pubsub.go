@@ -29,8 +29,8 @@ type KeyResumer interface {
 	ResumeKey(topic, key string)
 }
 
-// Delivery is a received message plus its settlement. Ack and Nack are called
-// exactly once, by the [Subscriber].
+// Delivery is a received message plus its settlement. The [Subscriber] calls
+// one of Ack or Nack, once.
 type Delivery interface {
 	Message() *Message
 	// Ack confirms processing; the broker will not redeliver the message.

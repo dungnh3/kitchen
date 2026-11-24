@@ -98,7 +98,8 @@ func EndOfYear(t time.Time) time.Time {
 }
 
 // Days yields the start of every calendar day from from's day to to's day,
-// inclusive, in from's location. It yields nothing when to is before from.
+// inclusive, in from's location. It yields nothing when to's day is before
+// from's day.
 func Days(from, to time.Time) iter.Seq[time.Time] {
 	return func(yield func(time.Time) bool) {
 		end := StartOfDay(to.In(from.Location()))

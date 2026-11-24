@@ -3,12 +3,13 @@
 // [Open] returns a plain *mongo.Client: use the official driver API
 // directly. Commands are traced and measured with OTel following the
 // database semantic conventions (operation, database, collection, server;
-// command bodies are never recorded) and pool connections are counted, until
-// the driver ships an official OTel integration for v2.
+// command bodies are not recorded) and pool connections are counted.
 //
-// TLS is required unless the URI chooses (tls=true/false, or mongodb+srv,
-// which implies TLS) or every host is a loopback address. The certificate is
-// verified. [MapError] turns driver errors into errs sentinels.
+// TLS is turned on unless the URI chooses (tls=true/false, or mongodb+srv,
+// which implies TLS) or every host is a loopback address. TLS turned on by
+// mongox verifies the certificate; TLS options in the URI (such as
+// tlsInsecure) are kept as given. [MapError] turns driver errors into errs
+// sentinels.
 //
 // For readiness: server.Check{Name: "mongo", Func: func(ctx context.Context)
 // error { return client.Ping(ctx, nil) }}.
@@ -36,7 +37,10 @@ import (
 )
 
 // Config describes the deployment and pool. Zero values use the defaults
-// stated per field.
+// stated per field. MaxConnIdleTime, ConnectTimeout and
+// ServerSelectionTimeout always replace the URI's values (maxIdleTimeMS,
+// connectTimeoutMS, serverSelectionTimeoutMS); the other fields replace them
+// only when set.
 type Config struct {
 	// URI is a mongodb:// or mongodb+srv:// connection string. Required.
 	URI string

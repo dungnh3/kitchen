@@ -77,7 +77,7 @@ func ExampleNewZap() {
 }
 
 func ExampleOptionsFromEnv() {
-	opts, err := log.OptionsFromEnv() // LOG_LEVEL, LOG_FORMAT, LOG_SCHEMA (else detected)
+	opts, err := log.OptionsFromEnv() // LOG_LEVEL, LOG_FORMAT, LOG_SCHEMA (else detected), LOG_BACKEND, LOG_OUTPUT
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "invalid log config:", err)
 	}

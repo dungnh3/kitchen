@@ -172,8 +172,8 @@ func (r *Request) MaxResponseBody(n int64) *Request { r.rr.SetResponseBodyLimit(
 func (r *Request) ErrorInto(v any) *Request { r.rr.SetResultError(v); return r }
 
 // Do performs the request. For a 2xx response it decodes the JSON body
-// into out when out is non-nil (a *[]byte receives the raw body; an empty
-// body leaves out unchanged). A non-2xx response returns an error (see
+// into out when out is non-nil (a *[]byte receives the raw body; for other
+// types an empty body leaves out unchanged). A non-2xx response returns an error (see
 // ErrorMapper); errors.AsType[*httpx.StatusError] gives its details.
 func (r *Request) Do(ctx context.Context, out any) error {
 	var raw *[]byte

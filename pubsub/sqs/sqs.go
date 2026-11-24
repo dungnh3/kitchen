@@ -322,5 +322,6 @@ func (p *Publisher) ResumeKey(topic, key string) {
 	}
 }
 
-// Close is a no-op: requests are not buffered.
+// Close is a no-op: requests are not buffered, and Publish keeps sending
+// after Close.
 func (p *Publisher) Close(context.Context) error { return nil }

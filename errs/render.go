@@ -26,7 +26,7 @@ import (
 type rendered struct {
 	code      codes.Code
 	message   string
-	info      *errdetails.ErrorInfo // first ErrorInfo; set by complete
+	info      *errdetails.ErrorInfo // first ErrorInfo; completeRendered adds one when missing
 	details   []proto.Message       // other details, in order
 	retry     *errdetails.RetryInfo // also in details
 	localized bool                  // details has a LocalizedMessage
@@ -46,8 +46,8 @@ func renderError(err error) (r rendered, sanitized bool) {
 	return renderStatus(st), sanitized
 }
 
-// renderOf renders a local *Error. info aliases nothing: complete copies it
-// before changing the domain.
+// renderOf renders a local *Error. info is a fresh ErrorInfo;
+// completeRendered replaces it, without modifying it, to set the domain.
 func renderOf(e *Error) rendered {
 	r := rendered{code: e.code, message: e.Message(), info: e.info(), details: e.details}
 	for _, d := range e.details {
@@ -86,8 +86,8 @@ func (r *rendered) note(m proto.Message) {
 	}
 }
 
-// complete ensures r has an ErrorInfo with a domain and, with a Localizer, a
-// LocalizedMessage (appended last).
+// completeRendered ensures r has an ErrorInfo, sets its empty domain to the
+// Handler's domain and, with a Localizer, appends a LocalizedMessage last.
 func (h *Handler) completeRendered(ctx context.Context, r *rendered) {
 	switch {
 	case r.info == nil:

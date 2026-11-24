@@ -39,7 +39,8 @@ func ExampleOpen() {
 	}
 }
 
-// Config fields with their defaults spelled out.
+// Config fields with their defaults spelled out, plus an operation Timeout
+// (default none).
 func ExampleOpen_config() {
 	ctx := context.Background()
 	client, err := mongox.Open(ctx, mongox.Config{
@@ -112,7 +113,7 @@ func ExampleClientOptions() {
 
 // A monitor set before Connect replaces the matching half of the OTel
 // bridge: here the command spans and duration metric stay, but
-// db.client.connection.count is no longer recorded.
+// db.client.connection.count is not recorded.
 func ExampleConnect_poolMonitor() {
 	ctx := context.Background()
 	logger := log.Default()

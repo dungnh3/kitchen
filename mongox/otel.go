@@ -24,8 +24,10 @@ const scope = "github.com/dungnh3/kitchen/mongox"
 
 // instrumentation turns driver command and pool events into OTel spans and
 // metrics following the database semantic conventions. Command bodies are
-// never recorded (they hold user data); only the operation, database,
-// collection and server are.
+// not recorded (they hold user data); spans carry the operation, database,
+// collection and server, and for a failed command the error type, code and
+// message. Server error messages can quote document values (a duplicate key
+// error names the key).
 type instrumentation struct {
 	tracer   trace.Tracer
 	duration dbconv.ClientOperationDuration

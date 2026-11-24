@@ -61,8 +61,8 @@ type config struct {
 type Option func(*config)
 
 // WithDefaults loads kitchen's built-in English and Vietnamese messages for
-// the generic errs reasons (NOT_FOUND, INTERNAL, ...). Later options can
-// override any of them.
+// every reason in errs.Catalog (plus the auth and ratelimit reasons). Later
+// options can override any of them.
 func WithDefaults() Option {
 	return WithFS(defaults, "langs/*.json")
 }

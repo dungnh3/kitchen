@@ -6,7 +6,7 @@ import (
 	"github.com/rs/cors"
 )
 
-// cors answers CORS for an exact-match origin allow-list with the headers the
+// corsHandler answers CORS for an exact-match origin allow-list with the headers the
 // MCP Streamable HTTP transport needs, using the same library as kitchen's
 // server package. An empty list disables CORS entirely (browsers then block
 // cross-origin calls).

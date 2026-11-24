@@ -32,11 +32,12 @@ func Timeout(d time.Duration) ToolOption {
 // `json` and `jsonschema` struct tags), validates arguments before the call
 // and returns Out as structured content. A returned error becomes a result
 // with IsError set, so the model can read it and recover; to keep internals
-// (SQL, hosts, stack details) away from clients, only *errs.Error messages
-// reach the model: return errs.New(codes.InvalidArgument, "BAD_DATE",
+// (SQL, hosts, stack details) away from clients, only the public messages
+// of *errs.Error values with a client-fault code reach the model: return
+// errs.New(codes.InvalidArgument, "BAD_DATE",
 // errs.Message("date must be YYYY-MM-DD")) for errors the model should see.
-// Any other error is logged with the tool name and replaced by
-// "internal error". Return a *jsonrpc.Error only for protocol-level
+// Any other error, including errs with code Internal, Unknown or DataLoss,
+// is logged with the tool name and replaced by "internal error". Return a *jsonrpc.Error only for protocol-level
 // failures.
 //
 // A deadline exceeded because of the tool timeout is reported as a tool

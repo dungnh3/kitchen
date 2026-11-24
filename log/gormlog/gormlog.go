@@ -4,8 +4,9 @@
 // Records carry the context passed to gorm (so trace ids and context
 // attributes are added by the slog handler) and the source location of the
 // first caller outside gorm. SQL is logged with placeholders unless
-// Config.LogParams is set, so query parameters (often personal data or
-// secrets) never reach the logs by default.
+// Config.LogParams is set, so query parameter values (often personal data or
+// secrets) are not written into the logged SQL by default. Driver error
+// messages may still contain values.
 //
 // For tracing: a gorm opened with github.com/dungnh3/kitchen/pg/gorm on a
 // pg.Open pool is already traced by the pool's otelpgx tracer (and uses this

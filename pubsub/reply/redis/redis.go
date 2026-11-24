@@ -120,7 +120,7 @@ const (
 	// blockMargin ends the server-side block this long before ctx's deadline
 	// and before the client's socket read timeout. It covers the round trip
 	// and Redis' timeout granularity (its event loop wakes at least every
-	// 1000/hz ms, 100ms by default), so the server always answers before
+	// 1000/hz ms, 100ms by default), so the server normally answers before
 	// the socket deadline: the pooled connection survives and the deadline
 	// is reported as context.DeadlineExceeded.
 	blockMargin = 150 * time.Millisecond

@@ -18,8 +18,8 @@
 // Safe defaults, each replaceable:
 //
 //   - [OriginGuard]: with a base URL, an absolute request URL on another
-//     origin is refused, so client credentials never reach a foreign host
-//     ([WithoutOriginGuard]).
+//     origin is refused, so client credentials are not sent to a foreign
+//     host ([WithoutOriginGuard]).
 //   - [SafeRedirectPolicy]: at most 10 redirects, no https→http downgrade,
 //     and only Accept*, Content-Type/Length and User-Agent survive a
 //     cross-origin redirect ([WithRedirectPolicy], [NoRedirects]).

@@ -17,9 +17,10 @@ import (
 // Auth configures bearer-token authentication for the HTTP handler.
 //
 // Every request must carry "Authorization: Bearer <token>". A missing or
-// rejected token gets 401 with a WWW-Authenticate header that points at the
-// protected-resource metadata, so spec-compliant clients can start the
-// OAuth flow by themselves. Leave [WithAuth] out to serve without auth.
+// rejected token gets 401 (a missing scope 403). When [Auth.Metadata] is
+// set, the WWW-Authenticate header points at the protected-resource
+// metadata, so spec-compliant clients can start the OAuth flow by
+// themselves. Leave [WithAuth] out to serve without auth.
 type Auth struct {
 	// Verifier checks the token. Use [Verifier] to adapt a kitchen
 	// auth.Verifier for tokens issued by your own IdP, or [PassThrough] when
@@ -33,8 +34,9 @@ type Auth struct {
 	// clients cannot discover the authorization server.
 	Metadata *oauthex.ProtectedResourceMetadata
 
-	// Scopes, if set, must all be present in the verified token. They are
-	// also advertised in the WWW-Authenticate challenge.
+	// Scopes, if set, must all be present in the verified token (403
+	// otherwise). They are also advertised in the WWW-Authenticate
+	// challenge.
 	Scopes []string
 
 	// AllowMissingExpiration accepts tokens whose TokenInfo has no

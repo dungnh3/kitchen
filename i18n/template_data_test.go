@@ -7,8 +7,8 @@ import (
 	"golang.org/x/text/language"
 )
 
-// A placeholder without data must not render "<no value>" (review
-// 2026-11-21): the message is reported as missing instead.
+// A placeholder without data must not render "<no value>": the message is
+// reported as missing instead.
 func TestMissingTemplateData(t *testing.T) {
 	b, err := i18n.New(language.English, i18n.WithMessages(language.English, map[string]string{"LIMIT": "Limit of {{.limit}} reached."}))
 	if err != nil {

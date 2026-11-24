@@ -7,6 +7,9 @@
 //   - Cluster or len(Addrs) > 1 → Redis Cluster
 //   - otherwise                → single node
 //
+// MasterName together with Cluster gives a *redis.ClusterClient whose
+// nodes are found through Sentinel.
+//
 // Tracing and metrics use redisotel with the given (or global) providers.
 package redisx
 
