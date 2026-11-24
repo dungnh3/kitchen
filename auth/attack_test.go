@@ -1,6 +1,7 @@
 package auth_test
 
-// Attack-style regression tests from the deep review of package auth.
+// Attack-style tests: key rotation under load, authority outages, Close,
+// critical headers, stream expiry, audience and key-size minimums.
 
 import (
 	"bytes"
@@ -143,7 +144,7 @@ func rsaKey(t *testing.T, bits int) *rsa.PrivateKey {
 	return k
 }
 
-// A1: while the IdP rotates its key, every concurrent request carrying the
+// While the IdP rotates its key, every concurrent request carrying the
 // new kid must wait for the one shared refresh, not get a 401.
 func TestJWKSRotationBurstSharesRefresh(t *testing.T) {
 	k1, k2 := rsaKey(t, 2048), rsaKey(t, 2048)
@@ -174,7 +175,7 @@ func TestJWKSRotationBurstSharesRefresh(t *testing.T) {
 	}
 }
 
-// A2: an unknown kid while the IdP is down is "authority unavailable"
+// An unknown kid while the IdP is down is "authority unavailable"
 // (503), never "invalid token" (401).
 func TestJWKSUnknownKidWhileAuthorityDown(t *testing.T) {
 	k1, k2 := rsaKey(t, 2048), rsaKey(t, 2048)
@@ -197,8 +198,8 @@ func TestJWKSUnknownKidWhileAuthorityDown(t *testing.T) {
 	}
 }
 
-// A3: Verify after Close fails fast with AUTH_UNAVAILABLE (it used to block
-// until the caller's deadline, forever without one). Close is idempotent.
+// Verify after Close fails fast with AUTH_UNAVAILABLE instead of waiting
+// for the caller's deadline. Close is idempotent.
 func TestJWKSVerifyAfterClose(t *testing.T) {
 	k1 := rsaKey(t, 2048)
 	m := newMemJWKS(publicJWK(t, k1, "k1"))
@@ -224,7 +225,7 @@ func TestJWKSVerifyAfterClose(t *testing.T) {
 	}
 }
 
-// A4/A5: the key set refreshes in the background on the Cache-Control
+// The key set refreshes in the background on the Cache-Control
 // schedule (clamped to Min/MaxRefresh), failures are logged and retried with
 // backoff, and Close stops everything.
 func TestJWKSBackgroundRefresh(t *testing.T) {
@@ -325,7 +326,7 @@ func TestJWKSKeyFiltering(t *testing.T) {
 	}
 }
 
-// A6: RFC 7515 section 4.1.11: a token naming a critical header extension
+// RFC 7515 section 4.1.11: a token naming a critical header extension
 // the verifier does not understand must be rejected, even if its signature
 // is valid.
 func TestCriticalHeaderRejected(t *testing.T) {
@@ -361,7 +362,7 @@ type recvStream struct {
 func (s *recvStream) RecvMsg(any) error { s.recv.Add(1); return nil }
 func (s *recvStream) SendMsg(any) error { return nil }
 
-// A7: a handler that never looks at its context still cannot receive or
+// A handler that never looks at its context still cannot receive or
 // send messages after the token expired.
 func TestStreamMessagesStopAtTokenExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -394,7 +395,7 @@ func TestStreamMessagesStopAtTokenExpiry(t *testing.T) {
 	})
 }
 
-// A8: audience is required: New refuses a config that checks no audience
+// Audience is required: New refuses a config that checks no audience
 // unless AnyAudience says so explicitly.
 func TestAudienceRequired(t *testing.T) {
 	if _, err := auth.New(auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA)}}); err == nil {
@@ -416,7 +417,7 @@ func TestAudienceRequired(t *testing.T) {
 	}
 }
 
-// A9: RFC 7518 minimums: HMAC secrets at least the hash size, RSA at least
+// RFC 7518 minimums: HMAC secrets at least the hash size, RSA at least
 // 2048 bits; leeway bounded.
 func TestKeyMinimums(t *testing.T) {
 	small := rsaKey(t, 1024)

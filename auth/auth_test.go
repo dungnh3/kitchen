@@ -121,8 +121,8 @@ func newAuthenticator(t *testing.T, cfg auth.Config) *auth.Authenticator {
 	return a
 }
 
-// TestSecurity covers the attacks the legacy guard was open to and the
-// usual JWT pitfalls. Every case must fail closed.
+// TestSecurity covers forged, unsigned and mis-keyed tokens and the usual
+// JWT pitfalls. Every case must fail closed.
 func TestSecurity(t *testing.T) {
 	rsaPriv, rsaV := newRSA(t)
 	a := newAuthenticator(t, auth.Config{Verifiers: []auth.Verifier{newHMAC(t, issuerA), rsaV}, Audience: audience})

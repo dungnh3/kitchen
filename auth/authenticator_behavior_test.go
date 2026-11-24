@@ -374,8 +374,8 @@ func TestIntrospectionAuthorityNotFoundIsUnavailable(t *testing.T) {
 	}
 }
 
-// Owner decision 2026-11-22: without a Logger, auth logs through
-// log.Default(), in the schema installed in main.
+// Without a Logger, auth logs through log.Default(), in the schema
+// installed in main.
 func TestLogsThroughKitchenLog(t *testing.T) {
 	var buf strings.Builder
 	var mu sync.Mutex
@@ -396,7 +396,7 @@ type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
-// D7: the JWKS is fetched through kitchen/httpx, so the caller's client
+// The JWKS is fetched through kitchen/httpx, so the caller's client
 // (hooks, tracing, SSRF policy) sees every fetch.
 func TestJWKSFetchesThroughHTTPX(t *testing.T) {
 	srv := newJWKSServer(t)
