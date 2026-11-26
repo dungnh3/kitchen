@@ -34,7 +34,7 @@ make tidy
 - For a single package: `go test -race -count=1 ./pubsub/...` (run it from the
   module that owns the package).
 - Postgres-backed tests skip unless `KITCHEN_TEST_PG_DSN` is set.
-- Scaffold golden files: `cd cmd/kitchen && go test ./... -update`.
+- Scaffold golden files: `cd cmd/zen && go test ./... -update`.
 - `consistency_test.go` at the root checks that server, pubsub and cache all
   log in one schema. Keep it green when you touch logging.
 

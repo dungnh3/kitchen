@@ -1,0 +1,18 @@
+# Managed by zen: "zen check" fails when this file differs from
+# the version zen wrote, and "zen check -write" updates it to the
+# current template. To own the file instead, remove it from "managed" in
+# .zen.yaml.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    # Reusable workflow pinned to a full commit SHA.
+    uses: acme/devops-workflows/.github/workflows/go.yml@0123456789abcdef0123456789abcdef01234567
+    secrets: inherit

@@ -164,11 +164,11 @@ Circuit breakers and rate limiters were unused interfaces in `nest`;
 
 | Old | New |
 |---|---|
-| MCP scaffolder (interactive, `bufio`) | `kitchen new mcp -module <path> [-yes]` (huh prompts on a TTY) |
-| gRPC service scaffolder | `kitchen new service -module <path> [-db postgres\|none] [-yes]` (§6) |
+| MCP scaffolder (interactive, `bufio`) | `zen new mcp -module <path> [-yes]` (huh prompts on a TTY) |
+| gRPC service scaffolder | `zen new service -module <path> [-db postgres\|none] [-yes]` (§6) |
 | `gen` (add CRUD model) | removed |
 
-Install: `go install github.com/dungnh3/kitchen/cmd/kitchen@latest`.
+Install: `go install github.com/dungnh3/kitchen/cmd/zen@latest`.
 
 Fixed in the generated output:
 
@@ -204,11 +204,11 @@ Fixed in the generated output:
 - **Prompt library:** survey is archived; prompts now use huh v2 and can be
   skipped with `-yes` for CI.
 
-## 6. Service scaffolder → `kitchen new service`
+## 6. Service scaffolder → `zen new service`
 
 ```bash
-kitchen new service -module github.com/acme/orders        # Postgres (default)
-kitchen new service -module github.com/acme/edge -db none
+zen new service -module github.com/acme/orders        # Postgres (default)
+zen new service -module github.com/acme/edge -db none
 ```
 
 The CLI writes the project and runs `go mod tidy -e`, `buf generate` and

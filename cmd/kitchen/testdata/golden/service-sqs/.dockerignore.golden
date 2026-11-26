@@ -1,9 +1,0 @@
-# Managed by kitchen: "kitchen check" fails when this file differs from
-# the version kitchen wrote, and "kitchen check -write" updates it to the
-# current template. To own the file instead, remove it from "managed" in
-# .kitchen.yaml.
-.git
-.github
-bin
-*.md
-Dockerfile

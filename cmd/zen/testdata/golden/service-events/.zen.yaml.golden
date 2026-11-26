@@ -1,0 +1,21 @@
+# Written by zen. Keep it in version control: "zen check" compares
+# the managed files with the hashes below and with the current template.
+# Remove a path from "managed" to take ownership of that file.
+zen: v0.1.0
+template: service
+answers:
+  module: github.com/acme/billing
+  name: billing
+  description: Billing.
+  db: postgres
+  auth: jwks
+  with: [lease, outbox, pubsub, redis]
+  pubsub: gcp
+  ci: standalone
+  kitchen_version: v0.1.0
+managed:
+  .dockerignore: sha256:37f8ea97d732a2a60bd118fa1d0e8368cc78c9c0899fd675bcae81d26e3ad0cf
+  .github/workflows/ci.yml: sha256:f872f454ac19c42a786822f97714d0a3896aa66d78f2bd0a9f76a6a20c608591
+  .golangci.yml: sha256:237498992e0bec82e5d83edfb1e61ec1aa1ae37a97923f36f0d6e8931c5557a6
+  Dockerfile: sha256:2cd0371f01883b1e1bc937c4c6cf1e7b7717fb609f53da51e7ef05afba094802
+  buf.gen.yaml: sha256:4c50b4b9e1acc6392f96f209712d2e03109f7d711b0a46c7c3308e6b11492364

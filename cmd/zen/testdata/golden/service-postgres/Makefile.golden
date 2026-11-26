@@ -1,0 +1,60 @@
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+IMAGE   ?= orders
+
+# Code generators and the linter run at pinned versions with "go run", so
+# nothing has to be installed. The protoc plugins are "tool" deps in go.mod.
+BUF           := go run github.com/bufbuild/buf/cmd/buf@v1.75.0
+SQLC          := go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+ZEN           := go run github.com/dungnh3/kitchen/cmd/zen@v0.1.0
+
+DB_URL ?= postgres://app:app@localhost:5432/app?sslmode=disable
+# Local runs: no auth, readable logs, the dependencies of compose.yaml.
+LOCAL_ENV := AUTH_DISABLED=true LOG_FORMAT=text DB_URL="$(DB_URL)"
+
+.PHONY: generate build test lint check breaking run tidy docker up down migrate-up migrate-down migrate-status
+
+# Regenerate gen/ from proto/ and internal/store/pgstore/sqlcdb from the SQL.
+# The generated code is committed; CI fails if it is stale.
+generate:
+	$(BUF) generate
+	$(SQLC) generate
+
+build:
+	go build -ldflags="-X main.version=$(VERSION)" -o bin/server ./cmd/server
+
+test:
+	go test -race -count=1 ./...
+
+lint:
+	$(GOLANGCI_LINT) run ./...
+	$(BUF) lint
+	$(SQLC) vet
+
+# Fail when a file managed by zen was edited (see .zen.yaml). Add
+# ARGS=-write to update the managed files to the current template.
+check:
+	$(ZEN) check $(ARGS)
+
+# Compare the API with main for breaking changes.
+breaking:
+	$(BUF) breaking --against '.git#branch=main'
+
+tidy:
+	go mod tidy
+
+run:
+	$(LOCAL_ENV) DB_MIGRATE_ON_START=true go run ./cmd/server serve
+
+migrate-up migrate-down migrate-status:
+	$(LOCAL_ENV) go run ./cmd/server migrate $(@:migrate-%=%)
+
+# Start the local dependencies of compose.yaml.
+up:
+	docker compose up -d --wait
+
+down:
+	docker compose down
+
+docker:
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .

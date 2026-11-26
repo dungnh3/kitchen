@@ -1,0 +1,9 @@
+# Managed by zen: "zen check" fails when this file differs from
+# the version zen wrote, and "zen check -write" updates it to the
+# current template. To own the file instead, remove it from "managed" in
+# .zen.yaml.
+.git
+.github
+bin
+*.md
+Dockerfile

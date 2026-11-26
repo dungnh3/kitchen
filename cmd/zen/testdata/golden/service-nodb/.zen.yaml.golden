@@ -1,0 +1,21 @@
+# Written by zen. Keep it in version control: "zen check" compares
+# the managed files with the hashes below and with the current template.
+# Remove a path from "managed" to take ownership of that file.
+zen: v0.1.0
+template: service
+answers:
+  module: example.com/team/edge-gateway
+  name: edge-gw
+  description: Edge gateway.
+  db: none
+  auth: jwks
+  with: []
+  ci: reusable
+  ci_workflow: acme/devops-workflows/.github/workflows/go.yml@0123456789abcdef0123456789abcdef01234567
+  kitchen_version: v0.1.0
+managed:
+  .dockerignore: sha256:37f8ea97d732a2a60bd118fa1d0e8368cc78c9c0899fd675bcae81d26e3ad0cf
+  .github/workflows/ci.yml: sha256:70833976b65f74225f276156108b0bdf5c8f890b110145019c24cbb0cde03aea
+  .golangci.yml: sha256:d278f0ed4315ff465e8d4bccb0da1295f2abc7e1e7004145978764c4c3bc6a7a
+  Dockerfile: sha256:2cd0371f01883b1e1bc937c4c6cf1e7b7717fb609f53da51e7ef05afba094802
+  buf.gen.yaml: sha256:2dd4a4e85eb8ced6aae485f68a102ee11c7ccd9f6b0b15ada2b63b1a72cdbfe7

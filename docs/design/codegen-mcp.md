@@ -1,4 +1,4 @@
-# Design: codegen-mcp (`mcpkit`, `cmd/kitchen`)
+# Design: codegen-mcp (`mcpkit`, `cmd/zen`)
 
 Status: accepted 2026-11-20. Old packages covered: `mcpkit`, `nest`, `gen`,
 and the two one-shot scaffolders (MCP server, gRPC service). Migration:
@@ -14,7 +14,7 @@ and the two one-shot scaffolders (MCP server, gRPC service). Migration:
 | – | `mcpkit/mcpkittest`: in-memory client for tool tests | same submodule |
 | `nest` (fluent HTTP client) | dropped; use kitchen `httpx` + `golang.org/x/oauth2` (owner, 2026-11-21) | – |
 | `gen` (add CRUD model) | dropped | – |
-| MCP scaffolder + service scaffolder | one CLI: `kitchen new mcp` and `kitchen new service` (§3a, 2026-11-22) | `github.com/dungnh3/kitchen/cmd/kitchen` (submodule) |
+| MCP scaffolder + service scaffolder | one CLI: `zen new mcp` and `zen new service` (§3a, 2026-11-22) | `github.com/dungnh3/kitchen/cmd/zen` (submodule) |
 
 Versions verified on 2026-11-20: go-sdk v1.8.0 (latest stable; v1.9.0-pre.1
 exists), MCP spec 2026-07-28 (SDK falls back to 2025-11-25 automatically),
@@ -120,19 +120,19 @@ error, and `Internal`/`Unknown`/`DataLoss` errs, is logged with the tool name
 and returned as "internal error", like `errs.Handler` does for HTTP and gRPC.
 `*jsonrpc.Error` passes through as a protocol error.
 
-## 3. `cmd/kitchen`
+## 3. `cmd/zen`
 
 ```
-kitchen new mcp -module github.com/acme/mcp-notes [-dir] [-name] [-description]
+zen new mcp -module github.com/acme/mcp-notes [-dir] [-name] [-description]
                 [-ci standalone|reusable] [-ci-workflow owner/repo/.github/workflows/x.yml@<sha>]
                 [-mcpkit-version v0.1.0] [-kitchen-version v0.1.0] [-yes]
-kitchen version
+zen version
 ```
 
 - **Prompts:** when stdin is a terminal, `-module` is missing and `-yes` is
   not set, the CLI asks for the missing values with huh v2. Otherwise it uses
   flags only and fails on missing values, which suits CI.
-- **Templates:** `embed.FS` under `cmd/kitchen/templates/<kind>/`, rendered with
+- **Templates:** `embed.FS` under `cmd/zen/templates/<kind>/`, rendered with
   `text/template` using `{%`/`%}` delimiters, so `${{ }}` in workflows needs
   no escaping. Only `*.tmpl` files are templated; `.go` output is gofmt'd and
   a format error fails generation.
@@ -143,7 +143,7 @@ kitchen version
   name with `^[a-z][a-z0-9-]*[a-z0-9]$`. A reusable workflow must be pinned to
   a 40-character commit SHA.
 
-Generated tree (`kitchen new mcp`):
+Generated tree (`zen new mcp`):
 
 ```
 go.mod                       go 1.26.0; mcpkit v0.1.0; go-sdk v1.8.0
@@ -162,10 +162,10 @@ Tests:
 - A build test generates both cases into a temp dir and runs `go build`, `go vet` and `go test` on each. It uses a `go.work` that replaces mcpkit with the local module and mcpkit's `go.sum`. It is skipped with `-short` or when offline.
 - Validation and CLI exit-code tables.
 
-## 3a. `kitchen new service` (owner, popups 2026-11-22)
+## 3a. `zen new service` (owner, popups 2026-11-22)
 
 ```
-kitchen new service -module github.com/acme/orders [-dir] [-name] [-description]
+zen new service -module github.com/acme/orders [-dir] [-name] [-description]
                     [-db postgres|none] [-ci standalone|reusable] [-ci-workflow ...]
                     [-kitchen-version v0.1.0] [-no-generate] [-yes]
 ```
@@ -222,7 +222,7 @@ traffic cannot force sampling); `SHUTDOWN_DELAY=5s`, `SHUTDOWN_TIMEOUT=30s`;
 package is the name with dashes as underscores, and the example service is
 always `ItemService` so the name never doubles (`OrdersServiceService`).
 
-Tests (`cmd/kitchen`):
+Tests (`cmd/zen`):
 - Golden trees `testdata/golden/service-postgres` and `service-nodb` (refresh with `-update`).
 - `TestGeneratedServiceBuilds` writes both cases, replaces the kitchen modules
   with the local checkout (they are not tagged yet), runs the CLI's
@@ -234,7 +234,7 @@ Tests (`cmd/kitchen`):
 ## 3b. Service features and the worker (owner, popups 2026-11-24)
 
 ```
-kitchen new service ... [-with redis,lease,pubsub,outbox] [-pubsub gcp|kafka|sqs]
+zen new service ... [-with redis,lease,pubsub,outbox] [-pubsub gcp|kafka|sqs]
 ```
 
 | # | Decision (owner) | Alternatives | Why |
@@ -244,7 +244,7 @@ kitchen new service ... [-with redis,lease,pubsub,outbox] [-pubsub gcp|kafka|sqs
 | F3 | Periodic jobs run in the worker under `lease.Elector` (one replica per job), interval only | a new `cron` package; Kubernetes CronJob only | No new concern or dependency |
 | F4 | Local dependencies in `compose.yaml` (`make up`/`down`, creates topics, subscriptions, queues) and every variable in `docs/ENV.md`; no Kubernetes or Helm files | kustomize; Helm | Manifests live with the platform; the env contract is what a deploy needs |
 | F5 | Upgrades of generated projects: a manifest plus a drift check first (§3c), a three-way `kitchen upgrade` later | upgrade now; none | Cheap and safe while templates still change |
-| F6 | Add-on generators `kitchen add domain`, `add consumer`, `add job` (§3d); no `add rpc` or `add migration` (buf and goose do that) | – | – |
+| F6 | Add-on generators `zen add domain`, `add consumer`, `add job` (§3d); no `add rpc` or `add migration` (buf and goose do that) | – | – |
 | F7 | Internal APIs: a per-method policy, deny by default | a second gRPC port | One mechanism, fail-closed |
 | F8 | MySQL template (§3e); MongoDB documented only | both; Postgres only | – |
 
@@ -260,26 +260,26 @@ after `PUBSUB_MAX_DELIVERY_ATTEMPTS`; the worker serves its probes on
 `ADMIN_ADDR`. The integration test uses miniredis and the in-memory broker.
 `cache` and `sse` features wait for the reviews of those packages.
 
-## 3c. Managed files and `kitchen check` (owner, popups 2026-11-24)
+## 3c. Managed files and `zen check` (owner, popups 2026-11-24)
 
 | # | Decision (owner) | Alternatives | Why |
 |---|---|---|---|
 | M1 | Managed files are the infrastructure files only: `.golangci.yml`, `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`, `buf.gen.yaml` | also Makefile and compose (with an include file); only `.golangci.yml` | They hold the D5/D7 rules and the supply-chain pins and are rarely edited |
-| M2 | `kitchen check -write` updates managed files that were not edited, and their hashes | report only | A fix is one command and never overwrites a hand edit |
+| M2 | `zen check -write` updates managed files that were not edited, and their hashes | report only | A fix is one command and never overwrites a hand edit |
 | M3 | CI fails on hand edits and only warns about a newer template or release | fail on both; no CI step | A kitchen release does not break every service's CI |
 
-Mechanics: `.kitchen.yaml` (YAML, `go.yaml.in/yaml/v3`, unknown fields
+Mechanics: `.zen.yaml` (YAML, `go.yaml.in/yaml/v3`, unknown fields
 rejected) records the CLI version, the template, the answers and
-`sha256:` hashes of the managed files. `kitchen check` re-renders the
+`sha256:` hashes of the managed files. `zen check` re-renders the
 template from the answers and compares; a managed file absent from both
 the manifest and the project is new in the template. The newer-release
 warning uses `go list -m <cli>@latest` outside any module and is silent on
 failure. The managed header goes after a Dockerfile `# syntax=` directive.
 Generated CI and `make check` pin the CLI at the version that generated the
-project (`v0.1.0` for development builds). `kitchen new service -dry-run`
+project (`v0.1.0` for development builds). `zen new service -dry-run`
 lists the files, marking the managed ones.
 
-## 3d. `kitchen add` (owner, popups 2026-11-24)
+## 3d. `zen add` (owner, popups 2026-11-24)
 
 | # | Decision (owner) | Alternatives | Why |
 |---|---|---|---|
@@ -287,12 +287,12 @@ lists the files, marking the managed ones.
 | A2 | One file per domain in the existing packages (`service`, `store`, `memstore`, `pgstore`, `queries/`) | a package per domain | Few packages; the example `item` domain uses the same layout |
 | A3 | A domain is a full CRUD vertical, rendered from the same `templates/domain` as `item` | an empty skeleton | It runs at once and is covered by the build tests |
 
-Mechanics: `kitchen add domain|consumer|job` reads `.kitchen.yaml`, renders
+Mechanics: `zen add domain|consumer|job` reads `.zen.yaml`, renders
 `templates/domain` or `templates/add/<kind>`, and inserts lines before
-marker comments (`// kitchen:stores`, `kitchen:services`, `kitchen:consumers`,
-`kitchen:subscriptions`, `kitchen:subscriptions-validate`,
-`kitchen:subscriptions-test`, `kitchen:subscriptions-env`, `kitchen:jobs`,
-`# kitchen:local-env`, `<!-- kitchen:subscriptions -->`), indented like the
+marker comments (`// zen:stores`, `zen:services`, `zen:consumers`,
+`zen:subscriptions`, `zen:subscriptions-validate`,
+`zen:subscriptions-test`, `zen:subscriptions-env`, `zen:jobs`,
+`# zen:local-env`, `<!-- zen:subscriptions -->`), indented like the
 marker; Go files are gofmt'd. All files and markers are checked first and
 nothing is written on any failure. `add domain` takes the next migration
 number and runs `buf generate` and `sqlc generate`. Names: singular kebab
@@ -329,7 +329,7 @@ this phase; `-with sse` and an HTTP client feature wait.
 
 1. **This PR:** mcpkit, jwtauth, mcpkittest, the CLI framework and `new mcp`
    (it needs mcpkit and kitchen core: log, server, errs, plus otelx/sdk).
-2. **Done 2026-11-22:** `kitchen new service` (§3a), after transport,
+2. **Done 2026-11-22:** `zen new service` (§3a), after transport,
    observability, errors-auth, data-utils and messaging merged.
 3. **When go-sdk v1.9.0 reaches GA:** bump `goSDKVersion` and mcpkit together.
 4. **After the first `mcpkit/v0.1.0` tag:** the generated `go.mod` resolves
@@ -365,8 +365,8 @@ below can be revisited.
 | A1 | A missing or invalid bearer token always gets **401 + WWW-Authenticate** when `WithAuth` is set. Without `WithAuth`, the server is public. | (b) an `Optional` flag that lets requests through; (c) always let them through, as before | Spec-compliant; OAuth clients discover the IdP by themselves; no unauthenticated path by accident | A server cannot mix public and private tools behind one handler (mount two handlers) |
 | A2 | **Stateless by default, `WithStateful(idle)` opt-in**, `SDK()` escape hatch | stateless only | Scales horizontally without sticky sessions (30K-connection target); stateful is still possible | One more configuration branch to test (covered by `TestHTTPStateful`) |
 | A3 | **Functional options** for `mcpkit.New` | `Config` struct | Extensible without breaking callers; clear defaults | Harder to dump the effective config |
-| A4 | **huh v2 prompt when TTY and flags are missing**; flags only with `-yes` or without a TTY | flags only | Friendly for people, still works in CI | Pulls bubbletea/lipgloss into `cmd/kitchen` (CLI-only module, not into libraries) |
-| A5 | Templates live in **`cmd/kitchen/templates/`**, not root `templates/` (D6) | root `templates/` + a separate embed module | `go:embed` cannot reach outside the module directory | Differs from the D6 table; no other area is affected |
+| A4 | **huh v2 prompt when TTY and flags are missing**; flags only with `-yes` or without a TTY | flags only | Friendly for people, still works in CI | Pulls bubbletea/lipgloss into `cmd/zen` (CLI-only module, not into libraries) |
+| A5 | Templates live in **`cmd/zen/templates/`**, not root `templates/` (D6) | root `templates/` + a separate embed module | `go:embed` cannot reach outside the module directory | Differs from the D6 table; no other area is affected |
 | A6 | ~~`jwtauth` on go-jose v4~~ → **kitchen `auth` via `mcpkit.Verifier`** (2026-11-21) | keep `jwtauth` | One token-verification stack (jwx) for gRPC, HTTP and MCP; introspection for opaque tokens comes for free | mcpkit requires the `auth` submodule; no JWKS discovery |
 | A7 | `PassThrough` needs an explicit `AllowMissingExpiration: true`; JWTs must carry `exp` | PassThrough fakes an expiry | Never weakens expiry checks silently | One more field to set (shown in the examples and the template) |
 | A8 | A tool panic returns a generic "internal error"; details go only to the log | return the panic text | No information leak to the model or client | Callers must read logs to debug |
@@ -383,7 +383,7 @@ below can be revisited.
 | A18 | The CLI does not run `go mod tidy`; it prints next steps | run tidy automatically | Works offline and before mcpkit is tagged; no network side effects | One manual step |
 | A21 | The generated `main` calls `log.Setup` first with `Output` defaulting to stderr (`LOG_OUTPUT` overrides), and the template's golangci config forbids `log/slog` and `slog.Default/New*` like kitchen's own (owner, 2026-11-22: one logger); since D7 it also denies, by depguard and forbidigo, the libraries and constructors behind every canonical kitchen package (raw Redis/SQL/Mongo clients, `http.Client`, `http.Server`, `status.New`, OTel SDK setup, ...) | stdout (Setup's default) | stdout carries the protocol in stdio mode | Logs written before `main` (package init) still go to stdout unless `LOG_OUTPUT=stderr` is set in the launch config |
 | A20 | The generated MCP server runs on kitchen's `server` (`srv.Service` + `WithGRPCAddr("")`), logs with kitchen `log` (`LOG_*`) and sets up `otelx/sdk` when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (owner, 2026-11-21) | hand-written `http.Server` + `/healthz` + `slog.NewJSONHandler`, no telemetry | One standard for probes, drain, access logs, log schema and telemetry; mcpkit's spans and metrics are exported | The generated `go.mod` also requires core and `otelx/sdk` (`-kitchen-version`) |
-| A19 | ~~`kitchen new service` returns "not available yet"~~ → **shipped 2026-11-22** (§3a) | hide the subcommand | – | – |
+| A19 | ~~`zen new service` returns "not available yet"~~ → **shipped 2026-11-22** (§3a) | hide the subcommand | – | – |
 | A20 | Telemetry uses semconv **v1.41.0** `mcpconv` (the newest with MCP metrics in OTel Go v1.47) | v1.43 attribute keys with hand-written metric | Generated instrument definitions | Bump when a newer semconv ships `mcpconv` |
 | A21 | `mcpkittest.Connect(t, srv, token)` is part of the public API | tests build in-memory transports by hand | Generated projects and users test tools in three lines | One more public package to keep stable |
 | A23 | Auth failures never echo the cause; `auth.ErrAuthUnavailable` is rewritten to the errs 503 response around the SDK's `RequireBearerToken` | keep the SDK's 500 with `err.Error()` body; reimplement bearer middleware | 503 matches `server`, no internal URLs or library errors leak; the SDK's `TokenInfo` context key (used to bind sessions to users) keeps working | Depends on the SDK deciding before it writes; drop the wrapper if the SDK gains a status hook |

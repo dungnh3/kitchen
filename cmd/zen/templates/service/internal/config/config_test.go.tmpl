@@ -1,0 +1,145 @@
+package config
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/caarlos0/env/v11"
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+func environ(kv ...string) env.Options {
+	m := map[string]string{
+{%- if .Postgres %}
+		"DB_URL": "postgres://app@localhost:5432/app?sslmode=disable",
+{%- else if .MySQL %}
+		"DB_URL": "app:app@tcp(localhost:3306)/app?tls=false",
+{%- end %}
+{%- if .Redis %}
+		"REDIS_ADDRS": "localhost:6379",
+{%- end %}
+{%- if .GCP %}
+		"PUBSUB_PROJECT": "local",
+{%- else if .Kafka %}
+		"PUBSUB_BROKERS": "localhost:9092",
+{%- else if .SQS %}
+		"PUBSUB_ITEMS_TOPIC": "http://localhost:9324/000000000000/items",
+{%- end %}
+{%- if .PubSub %}
+		// zen:subscriptions-env
+{%- end %}
+	}
+	for i := 0; i+1 < len(kv); i += 2 {
+		m[kv[i]] = kv[i+1]
+	}
+	return env.Options{Environment: m}
+}
+
+func TestDefaults(t *testing.T) {
+	c, err := load(environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GRPCAddr != ":10000" || c.HTTPAddr != ":8080" || c.AdminAddr != "" {
+		t.Errorf("addresses = %q %q %q", c.GRPCAddr, c.HTTPAddr, c.AdminAddr)
+	}
+	if c.ShutdownTimeout != 30*time.Second || c.ErrorDomain != "{% .Name %}" {
+		t.Errorf("defaults = %+v", c)
+	}
+}
+
+func TestLoadErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		opts env.Options
+		want string
+	}{
+{%- if .SQL %}
+		{"missing database", env.Options{Environment: map[string]string{}}, "DB_URL"},
+{%- end %}
+		{"bad duration", environ("SHUTDOWN_TIMEOUT", "soon"), "ShutdownTimeout"},
+		{"delay after timeout", environ("SHUTDOWN_DELAY", "1m"), "SHUTDOWN_DELAY"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := load(tt.opts)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateServer(t *testing.T) {
+{%- if .Introspection %}
+	valid := []string{
+		"AUTH_INTROSPECTION_URL", "https://idp.example.com/oauth2/introspect",
+		"AUTH_CLIENT_ID", "{% .Name %}", "AUTH_CLIENT_SECRET", "secret", "AUTH_AUDIENCE", "{% .Name %}",
+{%- if .Redis %}
+		"AUTH_INTROSPECTION_CACHE_KEY", "0123456789abcdef0123456789abcdef",
+{%- end %}
+	}
+{%- else %}
+	valid := []string{"AUTH_ISSUER", "https://issuer.example.com", "AUTH_JWKS_URL", "https://issuer.example.com/jwks", "AUTH_AUDIENCE", "{% .Name %}"}
+{%- end %}
+	with := func(kv ...string) []string { return append(append([]string{}, valid...), kv...) }
+	tests := []struct {
+		name string
+		kv   []string
+		want string // "" means valid
+	}{
+{%- if .Introspection %}
+		{"auth required by default", nil, "AUTH_INTROSPECTION_URL"},
+		{"introspection ok", valid, ""},
+		{"audience required", with("AUTH_AUDIENCE", ""), "AUTH_AUDIENCE"},
+		{"client required", with("AUTH_CLIENT_SECRET", ""), "AUTH_CLIENT_SECRET"},
+		{"https endpoint", with("AUTH_INTROSPECTION_URL", "http://idp.example.com/introspect"), "AUTH_INTROSPECTION_URL"},
+		{"http localhost endpoint", with("AUTH_INTROSPECTION_URL", "http://localhost:8081/introspect"), ""},
+{%- if .Redis %}
+		{"short cache key", with("AUTH_INTROSPECTION_CACHE_KEY", "short"), "AUTH_INTROSPECTION_CACHE_KEY"},
+{%- end %}
+{%- else %}
+		{"auth required by default", nil, "AUTH_ISSUER"},
+		{"jwt ok", valid, ""},
+		{"audience required", with("AUTH_AUDIENCE", ""), "AUTH_AUDIENCE"},
+		{"https jwks", with("AUTH_JWKS_URL", "http://issuer.example.com/jwks"), "AUTH_JWKS_URL"},
+		{"http localhost jwks", with("AUTH_JWKS_URL", "http://localhost:8081/jwks"), ""},
+{%- end %}
+		{"disabled in development", []string{"AUTH_DISABLED", "true"}, ""},
+		{"disabled in production", []string{"AUTH_DISABLED", "true", "APP_ENV", EnvProduction}, "not allowed"},
+{%- if .Redis %}
+		{"redis required", with("REDIS_ADDRS", ""), "REDIS_ADDRS"},
+{%- end %}
+{%- if .GCP %}
+		{"project required", with("PUBSUB_PROJECT", ""), "PUBSUB_PROJECT"},
+{%- else if .Kafka %}
+		{"brokers required", with("PUBSUB_BROKERS", ""), "PUBSUB_BROKERS"},
+{%- else if .SQS %}
+		{"queue required", with("PUBSUB_ITEMS_TOPIC", ""), "PUBSUB_ITEMS_TOPIC"},
+{%- end %}
+{%- if .PubSub %}
+		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
+{%- end %}
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := load(environ(tt.kv...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = c.ValidateServer()
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}

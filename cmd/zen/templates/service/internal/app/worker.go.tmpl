@@ -1,0 +1,151 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+
+{% if .Lease %}	leaseredis "github.com/dungnh3/kitchen/lease/redis"
+{% end %}	"github.com/dungnh3/kitchen/log"
+{%- if .PubSub %}
+	"github.com/dungnh3/kitchen/pubsub"
+{%- end %}
+{%- if .Outbox %}
+	"github.com/dungnh3/kitchen/pubsub/outbox"
+	outboxpgx "github.com/dungnh3/kitchen/pubsub/outbox/pgx"
+{%- end %}
+	"github.com/dungnh3/kitchen/server"
+
+	"{% .Module %}/internal/config"
+{%- if .PubSub %}
+	"{% .Module %}/internal/consumer"
+{%- end %}
+{%- if .Lease %}
+	"{% .Module %}/internal/job"
+{%- end %}
+)
+
+// RunWorker does the background work until ctx is cancelled, then stops
+// gracefully:
+{%- if .PubSub %}
+//   - consumes ItemCreated events (internal/consumer);
+{%- end %}
+{%- if .Outbox %}
+//   - relays the transactional outbox to the broker;
+{%- end %}
+{%- if .Lease %}
+//   - runs the periodic jobs (internal/job), each on one replica at a time;
+{%- end %}
+//   - serves the probes, metrics and pprof on ADMIN_ADDR when it is set.
+//
+// logger nil means log.Default().
+func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, version string, opts ...Option) (err error) {
+	if err := cfg.ValidateWorker(); err != nil {
+		return err
+	}
+	logger = log.OrDefault(logger)
+	var o options
+	for _, f := range opts {
+		f(&o)
+	}
+	d, err := openDeps(ctx, cfg, logger, version, o)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, d.close(ctx)) }()
+
+	var runners []func(context.Context) error
+{%- if .PubSub %}
+
+	// subscribe consumes topic through subscription with h.
+	subscribe := func(topic, subscription{% if .Kafka %}, deadLetterTopic{% end %} string, h pubsub.Handler) error {
+		src, err := d.broker.Source(topic, subscription)
+		if err != nil {
+			return err
+		}
+		sub, err := pubsub.NewSubscriber(src, h,
+			pubsub.WithConcurrency(cfg.PubSub.Concurrency),
+			pubsub.WithLogger(logger),
+{%- if .Kafka %}
+			pubsub.WithMaxDeliveryAttempts(cfg.PubSub.MaxDeliveryAttempts),
+			pubsub.WithDeadLetter(pubsub.DeadLetterTo(d.broker, deadLetterTopic)),
+{%- end %}
+		)
+		if err != nil {
+			return err
+		}
+		runners = append(runners, sub.Run)
+		return nil
+	}
+	// "zen add consumer" adds its subscription above "zen:consumers".
+	if err := subscribe(cfg.PubSub.ItemsTopic, {% if .SQS %}""{% else %}cfg.PubSub.ItemsSubscription{% end %}{% if .Kafka %}, cfg.PubSub.ItemsDeadLetterTopic{% end %}, consumer.NewItems(logger).Handler()); err != nil {
+		return fmt.Errorf("items consumer: %w", err)
+	}
+	// zen:consumers
+{%- end %}
+{%- if .Outbox %}
+
+	ob, err := outboxpgx.New(d.pool, outboxpgx.WithLogger(logger))
+	if err != nil {
+		return fmt.Errorf("outbox: %w", err)
+	}
+	relay, err := outbox.NewRelay(ob, d.broker, outbox.WithLogger(logger))
+	if err != nil {
+		return fmt.Errorf("outbox relay: %w", err)
+	}
+	// Listen wakes the relay as soon as a transaction enqueues an event.
+	runners = append(runners, ob.Listen, relay.Run)
+{%- end %}
+{%- if .Lease %}
+
+	locker, err := leaseredis.New(d.redis)
+	if err != nil {
+		return fmt.Errorf("lease: %w", err)
+	}
+	// "zen add job" adds its job above "zen:jobs".
+	jobs := []job.Job{
+		job.Heartbeat(logger),
+		// zen:jobs
+	}
+	runners = append(runners, func(ctx context.Context) error { return job.Run(ctx, locker, logger, jobs...) })
+{%- end %}
+
+	if cfg.AdminAddr != "" {
+		admin := server.NewAdmin(cfg.AdminAddr, append(d.adminOptions(),
+			server.WithAdminChecks(d.checks()...),
+			server.WithAdminLogger(logger),
+			server.WithAdminVersion(version),
+		)...)
+		runners = append(runners, admin.Run)
+	}
+	logger.InfoContext(ctx, "worker started")
+	err = runAll(ctx, runners...)
+	logger.InfoContext(ctx, "worker stopped")
+	return err
+}
+
+
+// runAll runs every runner until ctx is cancelled or one of them fails,
+// which cancels the others. It returns after all of them have returned.
+func runAll(ctx context.Context, runners ...func(context.Context) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
+	for _, run := range runners {
+		wg.Go(func() {
+			if err := run(ctx); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+				cancel()
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}

@@ -29,6 +29,6 @@ use the SDK; reach the rest through `Server.SDK`. Read `doc.go` and
     sanitised.
   - Tools keep panic recovery and the optional per-tool timeout.
   - Spans and metrics follow the MCP semantic conventions, through `otelx`.
-- **The scaffold depends on this package.** `cmd/kitchen` generates MCP
+- **The scaffold depends on this package.** `cmd/zen` generates MCP
   servers on top of `mcpkit`. After an API change, regenerate the scaffold's
   golden files there.

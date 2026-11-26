@@ -40,7 +40,7 @@ Start with [server](server/USAGE.md), which wires up a complete service.
 | Backoff and jitter | `timex` | [USAGE](timex/USAGE.md) |
 | Web page metadata | `webmeta` | [USAGE](webmeta/USAGE.md) |
 | MCP servers | `mcpkit` | [USAGE](mcpkit/USAGE.md) |
-| Project scaffolding (`kitchen new service`, `kitchen new mcp`) | `cmd/kitchen` | [USAGE](cmd/kitchen/USAGE.md) |
+| Project scaffolding (`zen new service`, `zen new mcp`) | `cmd/zen` | [USAGE](cmd/zen/USAGE.md) |
 
 There is one canonical package per concern; see D7 in
 [docs/decisions.md](docs/decisions.md).

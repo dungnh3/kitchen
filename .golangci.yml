@@ -234,7 +234,7 @@ linters:
             - pkg: golang.org/x/net/html
               desc: "D7 web metadata: kitchen/webmeta"
         d7-mcpkit:
-          files: ["$all", "!**/mcpkit/**", "!**/cmd/kitchen/**", "!$test"]
+          files: ["$all", "!**/mcpkit/**", "!**/cmd/zen/**", "!$test"]
           deny:
             - pkg: github.com/modelcontextprotocol/go-sdk
               desc: "D7 MCP servers: kitchen/mcpkit"
