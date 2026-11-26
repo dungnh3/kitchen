@@ -8,3 +8,4 @@ go.work.sum
 .claude/worktrees/
 *.test
 *.out
+/zen/bin/

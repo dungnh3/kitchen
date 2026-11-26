@@ -25,11 +25,16 @@ zen version
 `go install` puts the binary `zen` in `$(go env GOBIN)`, or in
 `$(go env GOPATH)/bin` (usually `~/go/bin`) when GOBIN is not set. Add that
 directory to `PATH` once, then open a new terminal and run `zen`. From a
-checkout of this repository, for example before the first tag exists:
+checkout of this repository, for example before the first tag exists, use
+the Makefile in `zen/`:
 
 ```bash
-cd zen && go install .
+cd zen
+make build      # bin/zen, without installing it
+make install    # zen in $(go env GOPATH)/bin
 ```
+
+`make test` runs the tests and `make clean` removes `bin/zen`.
 
 `zen` is its own module (`github.com/dungnh3/kitchen/zen`),
 so installing it does not pull the kitchen libraries. The generated
