@@ -1,0 +1,52 @@
+package app
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"os"
+
+	"github.com/dungnh3/kitchen/grpcx"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+
+	"github.com/acme/billing/internal/config"
+)
+
+// openLedgerClient opens the connection to the ledger service. It does not
+// connect: the first call does, so this service starts while ledger is down
+// and its readiness does not depend on it. Build the generated client from
+// d.ledger, for example ledgerv1.NewLedgerServiceClient(d.ledger), and pass it
+// to the services that need it.
+func openLedgerClient(cfg config.Client, logger *log.Logger, tel *sdk.Telemetry) (*grpcx.Conn, error) {
+	opts := []grpcx.Option{
+		grpcx.WithLogger(logger),
+		grpcx.WithTracerProvider(tel.TracerProvider()),
+		grpcx.WithMeterProvider(tel.MeterProvider()),
+		grpcx.WithPropagator(tel.Propagator()),
+		grpcx.WithTimeout(cfg.Timeout),
+		// Calls fail fast while ledger keeps failing, instead of
+		// waiting for their deadline.
+		grpcx.WithCircuitBreaker(grpcx.BreakerConfig{}),
+	}
+	switch {
+	case cfg.Insecure:
+		opts = append(opts, grpcx.WithInsecure())
+	case cfg.CAFile != "":
+		pem, err := os.ReadFile(cfg.CAFile) //nolint:gosec // path from the service's own configuration
+		if err != nil {
+			return nil, fmt.Errorf("ledger client: LEDGER_CA_FILE: %w", err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, errors.New("ledger client: LEDGER_CA_FILE holds no PEM certificate")
+		}
+		opts = append(opts, grpcx.WithTLSConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}))
+	}
+	conn, err := grpcx.New(cfg.Addr, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("ledger client: %w", err)
+	}
+	return conn, nil
+}

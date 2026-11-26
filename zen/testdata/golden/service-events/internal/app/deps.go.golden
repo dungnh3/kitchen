@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	// zen:client-imports
 	"github.com/dungnh3/kitchen/log"
 	kprom "github.com/dungnh3/kitchen/otelx/prometheus"
 	"github.com/dungnh3/kitchen/otelx/sdk"
@@ -47,7 +48,9 @@ type deps struct {
 	pool     *pgxpool.Pool
 	redis    redis.UniversalClient
 	broker   Broker
-	closers  []func(context.Context) error
+	// The gRPC clients that "zen add client" adds above "zen:client-fields".
+	// zen:client-fields
+	closers []func(context.Context) error
 }
 
 func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, version string, o options) (d *deps, err error) {
@@ -109,6 +112,7 @@ func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, versio
 		d.broker = b
 		d.onClose(b.Close)
 	}
+	// zen:client-open
 	return d, nil
 }
 

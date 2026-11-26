@@ -17,7 +17,7 @@ LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=
 	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=$(SQS_URL)/catalog-items
 # Queues that "make up" creates.
 LOCAL_QUEUES := catalog-items
-# "zen add consumer" adds the settings of its subscription here.
+# "zen add consumer" and "zen add client" add their local settings here.
 LOCAL_ENV += PUBSUB_ORDER_EVENTS_TOPIC=$(SQS_URL)/order-events
 LOCAL_QUEUES += order-events
 # zen:local-env

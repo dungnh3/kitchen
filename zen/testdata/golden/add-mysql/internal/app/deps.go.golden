@@ -1,0 +1,162 @@
+package app
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"slices"
+	"time"
+
+	"github.com/dungnh3/kitchen/grpcx"
+	// zen:client-imports
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/mysqlx"
+	kprom "github.com/dungnh3/kitchen/otelx/prometheus"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+	"github.com/dungnh3/kitchen/server"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/acme/shop/internal/config"
+)
+
+// Option changes how Run builds the service. Tests use
+// options to listen on random ports.
+type Option func(*options)
+
+type options struct {
+	server []server.Option
+}
+
+// WithServerOptions appends options to the server.
+func WithServerOptions(o ...server.Option) Option {
+	return func(c *options) { c.server = append(c.server, o...) }
+}
+
+// deps are the resources that the server share. close releases
+// them in reverse order.
+type deps struct {
+	tel      *sdk.Telemetry
+	registry *prometheus.Registry
+	db       *sql.DB
+	redis    redis.UniversalClient
+	// The gRPC clients that "zen add client" adds above "zen:client-fields".
+	billing     *grpcx.Conn
+	userProfile *grpcx.Conn
+	// zen:client-fields
+	closers []func(context.Context) error
+}
+
+func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, version string, o options) (d *deps, err error) {
+	d = &deps{registry: prometheus.NewRegistry()}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, d.close(ctx))
+		}
+	}()
+
+	// Traces go over OTLP when OTEL_EXPORTER_OTLP_ENDPOINT or
+	// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set; metrics go over OTLP only
+	// with OTEL_METRICS_EXPORTER=otlp. Metrics are also served in Prometheus
+	// format on the admin port.
+	otlp := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" || os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != ""
+	telCfg := sdk.Config{
+		Disabled:       !otlp && cfg.AdminAddr == "",
+		Logger:         logger,
+		ServiceName:    Name,
+		ServiceVersion: version,
+		Environment:    cfg.Env,
+		// Clients on the internet must not decide what is sampled.
+		IgnoreRemoteSampled: true,
+	}
+	if !otlp {
+		telCfg.Traces.Exporter = sdk.ExporterNone
+	}
+	if cfg.AdminAddr != "" {
+		r, err := kprom.NewReader(kprom.Options{Registerer: d.registry})
+		if err != nil {
+			return d, fmt.Errorf("prometheus: %w", err)
+		}
+		telCfg.MetricReaders = append(telCfg.MetricReaders, r)
+	}
+	d.tel, err = sdk.Setup(ctx, telCfg)
+	if err != nil {
+		return d, fmt.Errorf("telemetry: %w", err)
+	}
+	d.onClose(d.tel.Shutdown)
+
+	d.db, err = openDB(ctx, cfg, logger, d.tel)
+	if err != nil {
+		return d, err
+	}
+	d.onClose(func(context.Context) error { return d.db.Close() })
+
+	d.redis, err = openRedis(ctx, cfg.Redis, d.tel)
+	if err != nil {
+		return d, err
+	}
+	d.onClose(func(context.Context) error { return d.redis.Close() })
+
+	d.billing, err = openBillingClient(cfg.Clients.Billing, logger, d.tel)
+	if err != nil {
+		return d, err
+	}
+	d.onClose(d.billing.Close)
+
+	d.userProfile, err = openUserProfileClient(cfg.Clients.UserProfile, logger, d.tel)
+	if err != nil {
+		return d, err
+	}
+	d.onClose(d.userProfile.Close)
+	// zen:client-open
+	return d, nil
+}
+
+func (d *deps) onClose(f func(context.Context) error) { d.closers = append(d.closers, f) }
+
+// close releases the resources in reverse order of opening, within 10s
+// even when ctx is already cancelled.
+func (d *deps) close(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	var err error
+	for _, f := range slices.Backward(d.closers) {
+		err = errors.Join(err, f(ctx))
+	}
+	return err
+}
+
+// checks are the readiness checks of the external services.
+func (d *deps) checks() []server.Check {
+	var checks []server.Check
+	checks = append(checks, server.Check{Name: "mysql", Func: d.db.PingContext})
+	checks = append(checks, server.Check{Name: "redis", Func: func(ctx context.Context) error { return d.redis.Ping(ctx).Err() }})
+	return checks
+}
+
+// adminOptions configure the private admin port: probes with details,
+// pprof and Prometheus metrics.
+func (d *deps) adminOptions() []server.AdminOption {
+	return []server.AdminOption{
+		server.WithPprof(),
+		server.WithAdminHandler("GET /metrics", promhttp.HandlerFor(d.registry, promhttp.HandlerOpts{})),
+	}
+}
+
+func openDB(ctx context.Context, cfg config.Config, logger *log.Logger, tel *sdk.Telemetry) (*sql.DB, error) {
+	db, err := mysqlx.Open(ctx, mysqlx.Config{
+		DSN:          cfg.Database.URL,
+		MaxOpenConns: int(cfg.Database.MaxConns),
+	},
+		mysqlx.WithLogger(logger),
+		mysqlx.WithTracerProvider(tel.TracerProvider()),
+		mysqlx.WithMeterProvider(tel.MeterProvider()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("mysql: %w", err)
+	}
+	return db, nil
+}

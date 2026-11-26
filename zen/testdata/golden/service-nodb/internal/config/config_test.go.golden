@@ -12,7 +12,9 @@ import (
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 
 func environ(kv ...string) env.Options {
-	m := map[string]string{}
+	m := map[string]string{
+		// zen:clients-env
+	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
 	}
@@ -66,6 +68,7 @@ func TestValidateServer(t *testing.T) {
 		{"http localhost jwks", with("AUTH_JWKS_URL", "http://localhost:8081/jwks"), ""},
 		{"disabled in development", []string{"AUTH_DISABLED", "true"}, ""},
 		{"disabled in production", []string{"AUTH_DISABLED", "true", "APP_ENV", EnvProduction}, "not allowed"},
+		// zen:clients-validate-test
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

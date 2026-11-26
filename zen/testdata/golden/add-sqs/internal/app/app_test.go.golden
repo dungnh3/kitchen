@@ -49,6 +49,9 @@ func TestApp(t *testing.T) {
 			OrderEvents: config.Subscription{Topic: "order-events"},
 			// zen:subscriptions-test
 		},
+		Clients: config.Clients{
+			// zen:clients-test
+		},
 	}
 	// The broker is in process; the test reads the topic through its own
 	// subscription.

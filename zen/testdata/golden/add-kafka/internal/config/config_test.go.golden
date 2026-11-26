@@ -18,6 +18,7 @@ func environ(kv ...string) env.Options {
 		"PUBSUB_ORDER_EVENTS_SUBSCRIPTION":      "notify-order-events-worker",
 		"PUBSUB_ORDER_EVENTS_DEAD_LETTER_TOPIC": "order-events.dlq",
 		// zen:subscriptions-env
+		// zen:clients-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
@@ -74,6 +75,7 @@ func TestValidateServer(t *testing.T) {
 		{"disabled in production", []string{"AUTH_DISABLED", "true", "APP_ENV", EnvProduction}, "not allowed"},
 		{"brokers required", with("PUBSUB_BROKERS", ""), "PUBSUB_BROKERS"},
 		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
+		// zen:clients-validate-test
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

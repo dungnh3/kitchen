@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	// zen:client-imports
 	"github.com/dungnh3/kitchen/log"
 	kprom "github.com/dungnh3/kitchen/otelx/prometheus"
 	"github.com/dungnh3/kitchen/otelx/sdk"
@@ -39,7 +40,9 @@ type deps struct {
 	tel      *sdk.Telemetry
 	registry *prometheus.Registry
 	pool     *pgxpool.Pool
-	closers  []func(context.Context) error
+	// The gRPC clients that "zen add client" adds above "zen:client-fields".
+	// zen:client-fields
+	closers []func(context.Context) error
 }
 
 func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, version string, o options) (d *deps, err error) {
@@ -85,6 +88,7 @@ func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, versio
 		return d, err
 	}
 	d.onClose(func(context.Context) error { d.pool.Close(); return nil })
+	// zen:client-open
 	return d, nil
 }
 

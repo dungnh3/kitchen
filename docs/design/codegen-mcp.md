@@ -301,6 +301,13 @@ consumer gets a required `PUBSUB_<NAME>_*` subscription (`config.Subscription`
 with `Validate`) and its local topic, subscription or queue in the
 Makefile. `item` keeps its flat `PUBSUB_ITEMS_*` settings with defaults.
 
+`zen add client <name>` (design: [grpcx.md §6](grpcx.md#6-zen-add-client-name))
+opens a `grpcx.Conn` in `internal/app/client_<name>.go` with the markers
+`zen:clients`, `zen:clients-validate`, `zen:clients-env`,
+`zen:clients-validate-test`, `zen:clients-test`, `zen:client-imports`,
+`zen:client-fields`, `zen:client-open` and `<!-- zen:clients -->`. An
+insertion that several clients share (the `grpcx` import) is made once.
+
 ## 3e. MySQL, introspection and cache (owner, popup 2026-11-24)
 
 The owner chose `-db mysql`, `-auth introspection` and `-with cache` for

@@ -38,6 +38,9 @@ func TestApp(t *testing.T) {
 		Database:        config.Database{URL: startMySQL(t), MigrateOnStart: true},
 		Redis:           config.Redis{Addrs: []string{miniredis.RunT(t).Addr()}},
 		Cache:           config.Cache{TTL: time.Minute},
+		Clients:         config.Clients{
+			// zen:clients-test
+		},
 	}
 	var opts []Option
 

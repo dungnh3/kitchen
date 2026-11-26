@@ -31,6 +31,7 @@ func environ(kv ...string) env.Options {
 {%- if .PubSub %}
 		// zen:subscriptions-env
 {%- end %}
+		// zen:clients-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
@@ -123,6 +124,7 @@ func TestValidateServer(t *testing.T) {
 {%- if .PubSub %}
 		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
 {%- end %}
+		// zen:clients-validate-test
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,0 +1,230 @@
+// Package config loads the service configuration from environment variables.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"time"
+
+	"github.com/caarlos0/env/v11"
+)
+
+// EnvProduction is the APP_ENV value of production deployments. Unsafe
+// settings such as AUTH_DISABLED are refused there.
+const EnvProduction = "production"
+
+// Config is the service configuration. Logging is configured separately by
+// LOG_LEVEL, LOG_FORMAT, LOG_SCHEMA and LOG_OUTPUT, and telemetry by the standard OTEL_*
+// variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SDK_DISABLED, ...).
+type Config struct {
+	// Env names the deployment: development, staging, production, ...
+	Env string `env:"APP_ENV" envDefault:"development"`
+
+	GRPCAddr string `env:"GRPC_ADDR" envDefault:":10000"`
+	HTTPAddr string `env:"HTTP_ADDR" envDefault:":8080"`
+	// AdminAddr enables the admin port (/livez, /readyz with details,
+	// /version, /metrics, /debug/pprof/). Never expose it publicly.
+	AdminAddr string `env:"ADMIN_ADDR"`
+	// GRPCReflection registers gRPC server reflection (for grpcurl).
+	GRPCReflection bool `env:"GRPC_REFLECTION"`
+
+	// ShutdownDelay keeps serving after the server is marked not ready, so
+	// load balancers stop routing to it first. It is part of ShutdownTimeout.
+	ShutdownDelay   time.Duration `env:"SHUTDOWN_DELAY" envDefault:"5s"`
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s"`
+
+	// TrustedProxies lists the CIDRs of every proxy hop in front of the
+	// service (load balancer, ingress); it decides the client IP used by
+	// rate limits. Empty trusts no X-Forwarded-For header.
+	TrustedProxies []string `env:"TRUSTED_PROXIES"`
+	// ErrorDomain is the ErrorInfo.domain of API errors (AIP-193).
+	ErrorDomain string `env:"ERROR_DOMAIN" envDefault:"shop"`
+
+	Database  Database  `envPrefix:"DB_"`
+	Redis     Redis     `envPrefix:"REDIS_"`
+	Cache     Cache     `envPrefix:"CACHE_"`
+	Auth      Auth      `envPrefix:"AUTH_"`
+	RateLimit RateLimit `envPrefix:"RATE_LIMIT_"`
+	Clients   Clients
+}
+
+// Clients configures the gRPC services this service calls. "zen add
+// client" adds one above "zen:clients"; its variables start with its name,
+// for example BILLING_ADDR.
+type Clients struct {
+	Billing     Client `envPrefix:"BILLING_"`
+	UserProfile Client `envPrefix:"USER_PROFILE_"`
+	// zen:clients
+}
+
+// Client configures the connection to a gRPC service (see
+// github.com/dungnh3/kitchen/grpcx).
+type Client struct {
+	// Addr is the target, host:port or dns:///host:port. Point it at a
+	// headless Kubernetes service so that calls spread over every pod.
+	Addr string `env:"ADDR"`
+	// Timeout is the deadline of calls that have none of their own.
+	Timeout time.Duration `env:"TIMEOUT" envDefault:"10s"`
+	// Insecure sends the calls in plaintext. Use it only behind a service
+	// mesh that does mTLS, or for a local server.
+	Insecure bool `env:"INSECURE"`
+	// CAFile is a PEM file of the CAs that sign the server's certificate;
+	// empty means the system roots.
+	CAFile string `env:"CA_FILE"`
+}
+
+// Validate reports the invalid settings of c; prefix is the prefix of its
+// variables, for example BILLING_.
+func (c Client) Validate(prefix string) error {
+	var errs []error
+	if c.Addr == "" {
+		errs = append(errs, fmt.Errorf("%sADDR is required", prefix))
+	}
+	if c.Timeout < 0 {
+		errs = append(errs, fmt.Errorf("%sTIMEOUT must not be negative", prefix))
+	}
+	if c.Insecure && c.CAFile != "" {
+		errs = append(errs, fmt.Errorf("%sINSECURE and %sCA_FILE are exclusive", prefix, prefix))
+	}
+	return errors.Join(errs...)
+}
+
+// Database configures MySQL.
+type Database struct {
+	// URL is a MySQL DSN: user:pass@tcp(host:3306)/db. TLS is required
+	// unless the DSN sets tls, for example tls=false for a local database.
+	URL string `env:"URL,required"`
+	// MaxConns bounds the open connections; 0 means 25.
+	MaxConns int32 `env:"MAX_CONNS"`
+	// MigrateOnStart applies pending migrations before serving. Prefer
+	// running "server migrate up" as a separate deployment step.
+	MigrateOnStart bool `env:"MIGRATE_ON_START"`
+}
+
+// Redis configures the Redis client (see github.com/dungnh3/kitchen/redisx).
+type Redis struct {
+	// Addrs are host:port addresses. Several addresses select Cluster mode,
+	// or Sentinel mode with MasterName.
+	Addrs      []string `env:"ADDRS"`
+	MasterName string   `env:"MASTER_NAME"`
+	Username   string   `env:"USERNAME"`
+	Password   string   `env:"PASSWORD"`
+	DB         int      `env:"DB"`
+	// TLS encrypts the connections. Turn it off only for a local Redis.
+	TLS bool `env:"TLS" envDefault:"true"`
+}
+
+// Cache configures the Redis cache of the item store.
+type Cache struct {
+	// TTL is how long a cached item is served before it is read again.
+	TTL time.Duration `env:"TTL" envDefault:"5m"`
+}
+
+// Auth configures bearer-token authentication. Every method, except the
+// health service, needs an opaque token that the authorization server's
+// RFC 7662 introspection endpoint reports active for Audience.
+type Auth struct {
+	// Disabled turns authentication off. It is refused in production.
+	Disabled bool `env:"DISABLED"`
+	// IntrospectionURL is the introspection endpoint, for example
+	// https://idp.example.com/oauth2/introspect.
+	IntrospectionURL string `env:"INTROSPECTION_URL"`
+	// ClientID and ClientSecret authenticate this service to the endpoint
+	// (HTTP Basic).
+	ClientID     string `env:"CLIENT_ID"`
+	ClientSecret string `env:"CLIENT_SECRET"`
+	// Issuer, when set, must equal the iss of every introspection response.
+	Issuer   string `env:"ISSUER"`
+	Audience string `env:"AUDIENCE"`
+	// CacheKey authenticates the introspection results that the instances
+	// share through Redis: at least 32 random bytes, the same on every
+	// instance, kept secret.
+	CacheKey string `env:"INTROSPECTION_CACHE_KEY"`
+}
+
+// RateLimit configures the per-caller rate limits.
+type RateLimit struct {
+	Disabled bool `env:"DISABLED"`
+	// DryRun counts and logs but never rejects.
+	DryRun bool `env:"DRY_RUN"`
+	// Exempt lists identities that are never limited: user:<id>,
+	// ip:<address> or ip:<CIDR>.
+	Exempt []string `env:"EXEMPT"`
+}
+
+// Load reads and validates the configuration from the environment.
+func Load() (Config, error) { return load(env.Options{}) }
+
+func load(opts env.Options) (Config, error) {
+	c, err := env.ParseAsWithOptions[Config](opts)
+	if err != nil {
+		return c, err
+	}
+	return c, c.validate()
+}
+
+func (c Config) validate() error {
+	var errs []error
+	if c.ShutdownDelay < 0 || c.ShutdownTimeout <= 0 || c.ShutdownDelay >= c.ShutdownTimeout {
+		errs = append(errs, errors.New("SHUTDOWN_DELAY and SHUTDOWN_TIMEOUT: want 0 <= delay < timeout"))
+	}
+	if c.Database.MaxConns < 0 {
+		errs = append(errs, errors.New("DB_MAX_CONNS must not be negative"))
+	}
+	return errors.Join(errs...)
+}
+
+// ValidateServer checks the settings needed to serve requests. It is not
+// part of Load so that commands such as "migrate" run without them.
+func (c Config) ValidateServer() error {
+	return errors.Join(c.validateAuth(), c.validateDeps())
+}
+
+// validateDeps checks the settings of the external services that the
+// server and the worker connect to.
+func (c Config) validateDeps() error {
+	var errs []error
+	if len(c.Redis.Addrs) == 0 {
+		errs = append(errs, errors.New("REDIS_ADDRS is required"))
+	}
+	if c.Cache.TTL <= 0 {
+		errs = append(errs, errors.New("CACHE_TTL must be positive"))
+	}
+	errs = append(errs, c.Clients.Billing.Validate("BILLING_"))
+	errs = append(errs, c.Clients.UserProfile.Validate("USER_PROFILE_"))
+	// zen:clients-validate
+	return errors.Join(errs...)
+}
+
+func (c Config) validateAuth() error {
+	a := c.Auth
+	if a.Disabled {
+		if c.Env == EnvProduction {
+			return errors.New("AUTH_DISABLED is not allowed when APP_ENV=production")
+		}
+		return nil
+	}
+	var errs []error
+	if a.IntrospectionURL == "" {
+		errs = append(errs, errors.New("AUTH_INTROSPECTION_URL is required (or set AUTH_DISABLED=true outside production)"))
+	} else if !secureURL(a.IntrospectionURL) {
+		errs = append(errs, fmt.Errorf("AUTH_INTROSPECTION_URL: want an https URL (http only for localhost), got %q", a.IntrospectionURL))
+	}
+	if a.ClientID == "" || a.ClientSecret == "" {
+		errs = append(errs, errors.New("AUTH_CLIENT_ID and AUTH_CLIENT_SECRET are required: the introspection endpoint authenticates this service"))
+	}
+	if a.Audience == "" {
+		errs = append(errs, errors.New("AUTH_AUDIENCE is required: it stops tokens issued for other services from being accepted"))
+	}
+	if len(a.CacheKey) < 32 {
+		errs = append(errs, errors.New("AUTH_INTROSPECTION_CACHE_KEY: want at least 32 random bytes"))
+	}
+	return errors.Join(errs...)
+}
+
+// secureURL reports whether s is an https URL, or an http URL of localhost.
+func secureURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))
+}

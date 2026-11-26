@@ -300,7 +300,7 @@ files rather than copies here:
 - **Jobs.** Each job runs under its own `lease.Elector`, so one replica
   runs it at a time; a run is cancelled when the lease is lost.
 - **Lint.** `.golangci.yml` mirrors the repo's D5/D7 rules with depguard,
-  forbidigo and sloglint. It denies `log/slog`, raw Redis, SQL and HTTP
+  forbidigo and sloglint. It denies `log/slog`, raw Redis, SQL, HTTP and gRPC
   clients, `http.Server`, `status.New`, OTel SDK setup and so on. Tests may
   use the libraries directly. Keep the file when you change the project.
 
@@ -313,6 +313,7 @@ database and features. Names are lower-case words separated by dashes.
 zen add domain order-item          # or: -plural people for an irregular plural
 zen add consumer payments          # needs -with pubsub
 zen add job cleanup -every 5m      # needs -with lease
+zen add client billing             # a gRPC client of the billing service
 ```
 
 | Command | Writes | Changes |
@@ -320,6 +321,7 @@ zen add job cleanup -every 5m      # needs -with lease
 | `add domain <name>` | `proto/<pkg>/v1/<name>_service.proto` (same proto package; CRUD with protovalidate and REST at `/v1/<plural>`), `internal/service/<name>_service.go` and test, `internal/store/<name>.go`, `memstore/<name>.go`, and with Postgres `pgstore/<name>.go`, `pgstore/queries/<name>.sql` and the next migration | `internal/app/app.go` (store and service); then runs `buf generate` and `sqlc generate` (`-no-generate` to skip) |
 | `add consumer <name>` | `internal/consumer/<name>.go` (a `pubsub.JSON` handler over a message type to adapt) and test | `config.go` (a `PUBSUB_<NAME>_*` subscription, validated), `worker.go` (subscribe), the tests' config, `docs/ENV.md`, the `Makefile` local settings and the topic, subscription or queue that `make up` creates |
 | `add job <name>` | `internal/job/<name>.go` and test | `worker.go` (the job list) |
+| `add client <name>` | `internal/app/client_<name>.go` (opens a `grpcx.Conn`: TLS with the system roots or `<NAME>_CA_FILE`, plaintext only with `<NAME>_INSECURE=true`, the service's logger and telemetry, `<NAME>_TIMEOUT`, the circuit breaker on) and test | `config.go` (a `config.Client` under `Clients` with `<NAME>_ADDR` required, validated), `deps.go` (the `d.<name>` field, opened with the other dependencies and closed after them), the tests' config, `docs/ENV.md` and the `Makefile` local settings |
 
 Changes go before marker comments such as `// zen:services` in the
 generated files; keep the markers. Every file and marker is checked before
@@ -335,6 +337,16 @@ names of the services, stores, consumers and jobs come from `<name>`, so
 | `-plural` | `domain` | regular English plural | Plural for an irregular noun, for example `-plural people` |
 | `-no-generate` | `domain` | `false` | Skip `buf generate` and `sqlc generate`; run `make generate` later |
 | `-every` | `job` | `1m` | Time between two runs |
+
+`zen add client` does not touch readiness: the connection is made on the
+first call, so the service starts and stays ready while the downstream is
+down, and calls fail with `Unavailable` instead. Build the downstream's
+generated client from `d.<name>` (for example
+`billingv1.NewBillingServiceClient(d.billing)`) and pass it to your
+services. The `Makefile` points it at `localhost:10001` in plaintext for
+`make run`; change the port to your local server. Names that would clash
+with the service's own settings (`redis`, `db`, `grpc`, `auth`, ...) are
+refused. See [grpcx/USAGE.md](../grpcx/USAGE.md) for the defaults.
 
 Add an RPC to an existing service, or a migration, by hand: see below.
 `buf` and `goose` already do those, so there is no `zen add rpc` or
@@ -506,8 +518,8 @@ The check tests generate a service and edit, delete, own and age its
 managed files; the build tests also run `zen check` on every generated
 service after code generation. The add tests compare what `zen add`
 writes with `testdata/golden/add-*`, check every refusal, and that a missing
-marker writes nothing; the build tests run the adds on the events, Kafka
-and SQS services before building them.
+marker writes nothing; the build tests run the adds on the events, Kafka,
+SQS and MySQL services (two clients on MySQL) before building them.
 
 The build tests generate every golden variant, build, vet, test and lint
 them. They need the network and, for the service, Docker. A matrix test

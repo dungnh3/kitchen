@@ -48,6 +48,8 @@ linters:
               desc: "HTTP client: github.com/dungnh3/kitchen/httpx"
             - pkg: github.com/go-resty/resty
               desc: "HTTP client: github.com/dungnh3/kitchen/httpx"
+            - pkg: github.com/sony/gobreaker
+              desc: "gRPC client: github.com/dungnh3/kitchen/grpcx (WithCircuitBreaker)"
             - pkg: github.com/hashicorp/go-retryablehttp
               desc: "HTTP client: github.com/dungnh3/kitchen/httpx (WithRetry)"
             - pkg: github.com/golang-jwt/jwt
@@ -122,6 +124,9 @@ linters:
         - pattern: ^http\.(Server|ListenAndServe|ListenAndServeTLS|Serve|ServeTLS)$
           pkg: ^net/http$
           msg: "serve HTTP with kitchen/server"
+        - pattern: ^grpc\.(NewClient|Dial|DialContext)$
+          pkg: ^google\.golang\.org/grpc$
+          msg: "call gRPC services with kitchen/grpcx.New (TLS, retries, deadlines, errs mapping, OTel)"
         - pattern: ^grpc\.NewServer$
           pkg: ^google\.golang\.org/grpc$
           msg: "serve gRPC with kitchen/server"

@@ -39,6 +39,9 @@ func TestApp(t *testing.T) {
 		ShutdownTimeout: 5 * time.Second,
 		ErrorDomain:     Name,
 		Database:        config.Database{URL: startPostgres(t), MigrateOnStart: true},
+		Clients:         config.Clients{
+			// zen:clients-test
+		},
 	}
 	var opts []Option
 

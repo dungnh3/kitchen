@@ -87,6 +87,9 @@ func TestApp(t *testing.T) {
 			// zen:subscriptions-test
 		},
 {%- end %}
+		Clients: config.Clients{
+			// zen:clients-test
+		},
 	}
 {%- if .PubSub %}
 	// The broker is in process; the test reads the topic through its own

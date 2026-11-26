@@ -55,6 +55,10 @@ func TestApp(t *testing.T) {
 			Payments:            config.Subscription{Topic: "payments", Subscription: "billing-payments-worker"},
 			// zen:subscriptions-test
 		},
+		Clients: config.Clients{
+			Ledger: config.Client{Addr: "passthrough:///ledger", Insecure: true},
+			// zen:clients-test
+		},
 	}
 	// The broker is in process; the test reads the topic through its own
 	// subscription.

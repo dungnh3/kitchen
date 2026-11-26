@@ -35,6 +35,9 @@ func TestApp(t *testing.T) {
 		HTTPAddr:        "127.0.0.1:0",
 		ShutdownTimeout: 5 * time.Second,
 		ErrorDomain:     Name,
+		Clients:         config.Clients{
+			// zen:clients-test
+		},
 	}
 	var opts []Option
 

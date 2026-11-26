@@ -46,6 +46,46 @@ type Config struct {
 	PubSub    PubSub    `envPrefix:"PUBSUB_"`
 	Auth      Auth      `envPrefix:"AUTH_"`
 	RateLimit RateLimit `envPrefix:"RATE_LIMIT_"`
+	Clients   Clients
+}
+
+// Clients configures the gRPC services this service calls. "zen add
+// client" adds one above "zen:clients"; its variables start with its name,
+// for example BILLING_ADDR.
+type Clients struct {
+	// zen:clients
+}
+
+// Client configures the connection to a gRPC service (see
+// github.com/dungnh3/kitchen/grpcx).
+type Client struct {
+	// Addr is the target, host:port or dns:///host:port. Point it at a
+	// headless Kubernetes service so that calls spread over every pod.
+	Addr string `env:"ADDR"`
+	// Timeout is the deadline of calls that have none of their own.
+	Timeout time.Duration `env:"TIMEOUT" envDefault:"10s"`
+	// Insecure sends the calls in plaintext. Use it only behind a service
+	// mesh that does mTLS, or for a local server.
+	Insecure bool `env:"INSECURE"`
+	// CAFile is a PEM file of the CAs that sign the server's certificate;
+	// empty means the system roots.
+	CAFile string `env:"CA_FILE"`
+}
+
+// Validate reports the invalid settings of c; prefix is the prefix of its
+// variables, for example BILLING_.
+func (c Client) Validate(prefix string) error {
+	var errs []error
+	if c.Addr == "" {
+		errs = append(errs, fmt.Errorf("%sADDR is required", prefix))
+	}
+	if c.Timeout < 0 {
+		errs = append(errs, fmt.Errorf("%sTIMEOUT must not be negative", prefix))
+	}
+	if c.Insecure && c.CAFile != "" {
+		errs = append(errs, fmt.Errorf("%sINSECURE and %sCA_FILE are exclusive", prefix, prefix))
+	}
+	return errors.Join(errs...)
 }
 
 // Database configures PostgreSQL.
@@ -197,6 +237,7 @@ func (c Config) validateDeps() error {
 		errs = append(errs, errors.New("PUBSUB_CONCURRENCY must be at least 1"))
 	}
 	// zen:subscriptions-validate
+	// zen:clients-validate
 	return errors.Join(errs...)
 }
 

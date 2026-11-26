@@ -15,10 +15,10 @@ import (
 // serviceAdds are the add commands that the add golden and build tests run
 // on a golden service case.
 var serviceAdds = map[string][][]string{
-	"service-events": {{"domain", "order-item"}, {"consumer", "payments"}, {"job", "cleanup", "-every", "5m"}},
+	"service-events": {{"domain", "order-item"}, {"consumer", "payments"}, {"job", "cleanup", "-every", "5m"}, {"client", "ledger"}},
 	"service-kafka":  {{"domain", "category"}, {"consumer", "order-events"}},
 	"service-sqs":    {{"domain", "box"}, {"consumer", "order-events"}},
-	"service-mysql":  {{"domain", "order-item"}},
+	"service-mysql":  {{"domain", "order-item"}, {"client", "billing"}, {"client", "user-profile"}},
 }
 
 // runAdds writes the case into dir and runs its add commands without code
@@ -88,6 +88,10 @@ func TestAddRefusals(t *testing.T) {
 		{"same plural", []string{"domain", "sheep", "-plural", "sheep"}, 1, "must differ"},
 		{"consumer without pubsub", []string{"consumer", "orders"}, 1, "-with pubsub"},
 		{"job without lease", []string{"job", "cleanup"}, 1, "-with lease"},
+		{"client with a reserved name", []string{"client", "redis"}, 1, "name is taken"},
+		{"client named like a Go keyword", []string{"client", "type"}, 1, "name is taken"},
+		{"bad client name", []string{"client", "Billing"}, 1, "lower-case"},
+		{"client without name", []string{"client"}, 2, "missing <name>"},
 		{"missing name", []string{"domain"}, 2, "missing <name>"},
 		{"unknown kind", []string{"model", "x"}, 2, "zen add domain"},
 	}
@@ -179,5 +183,36 @@ func TestDurationCode(t *testing.T) {
 		if got := durationCode(d); got != want {
 			t.Errorf("durationCode(%v) = %q, want %q", d, got, want)
 		}
+	}
+}
+
+// TestAddClientTwice: a second client adds no second grpcx import, and the
+// same client cannot be added twice.
+func TestAddClientTwice(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "proj")
+	if err := scaffold.Write(dir, renderSvc(t, serviceGoldenCases["service-postgres"])); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		code int
+		want string
+	}{
+		{"billing", 0, "Added client billing"},
+		{"ledger", 0, "Added client ledger"},
+		{"billing", 1, "already exists"},
+	}
+	for _, tt := range tests {
+		var out bytes.Buffer
+		if code := run(t.Context(), []string{"add", "client", tt.name, "-dir", dir}, nil, &out, &out); code != tt.code || !strings.Contains(out.String(), tt.want) {
+			t.Fatalf("add client %s: exit %d, want %d; output %q lacks %q", tt.name, code, tt.code, out.String(), tt.want)
+		}
+	}
+	deps, err := os.ReadFile(filepath.Join(dir, "internal", "app", "deps.go")) //nolint:gosec // file in the test project
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(deps, []byte(`"github.com/dungnh3/kitchen/grpcx"`)); n != 1 {
+		t.Errorf("grpcx imported %d times", n)
 	}
 }

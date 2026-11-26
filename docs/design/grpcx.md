@@ -131,9 +131,13 @@ service, lower-case words with dashes (`billing`, `user-profile`). It:
 
 The service then builds its generated stub from `d.<name>`, for example
 `billingv1.NewBillingServiceClient(d.billing)`. New markers in the service
-template: `zen:clients` (config), `zen:clients-validate`, `zen:clients-env`,
-`zen:clients-test`, `zen:client-fields` and `zen:client-open` (deps) and the
-`docs/ENV.md` table. Services generated before these markers get the usual
+template: `zen:clients` and `zen:clients-validate` (config),
+`zen:clients-env` and `zen:clients-validate-test` (config test),
+`zen:clients-test` (app test), `zen:client-imports`, `zen:client-fields` and
+`zen:client-open` (deps) and `<!-- zen:clients -->` (`docs/ENV.md`);
+`# zen:local-env` in the Makefile is now present in every service. Names
+that clash with the service's own settings or fields (`redis`, `db`,
+`grpc`, `auth`, ...) or with Go keywords are refused. Services generated before these markers get the usual
 "add the change by hand" error.
 
 ## 7. What it does not do

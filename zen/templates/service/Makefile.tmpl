@@ -36,10 +36,8 @@ LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=
 # Queues that "make up" creates.
 LOCAL_QUEUES := {% .Name %}-items
 {%- end %}
-{%- if .PubSub %}
-# "zen add consumer" adds the settings of its subscription here.
+# "zen add consumer" and "zen add client" add their local settings here.
 # zen:local-env
-{%- end %}
 
 .PHONY: generate build test lint check breaking run tidy docker{% if .Worker %} run-worker{% end %}{% if .Compose %} up down{% end %}{% if .SQL %} migrate-up migrate-down migrate-status{% end %}
 

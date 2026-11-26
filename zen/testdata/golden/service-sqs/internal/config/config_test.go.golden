@@ -17,6 +17,7 @@ func environ(kv ...string) env.Options {
 		"REDIS_ADDRS":        "localhost:6379",
 		"PUBSUB_ITEMS_TOPIC": "http://localhost:9324/000000000000/items",
 		// zen:subscriptions-env
+		// zen:clients-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
@@ -75,6 +76,7 @@ func TestValidateServer(t *testing.T) {
 		{"redis required", with("REDIS_ADDRS", ""), "REDIS_ADDRS"},
 		{"queue required", with("PUBSUB_ITEMS_TOPIC", ""), "PUBSUB_ITEMS_TOPIC"},
 		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
+		// zen:clients-validate-test
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

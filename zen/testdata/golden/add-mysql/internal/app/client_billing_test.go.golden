@@ -1,0 +1,54 @@
+package app
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+
+	"github.com/acme/shop/internal/config"
+)
+
+func TestOpenBillingClient(t *testing.T) {
+	tel, err := sdk.Setup(t.Context(), sdk.Config{Disabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tel.Shutdown(t.Context()) })
+	dir := t.TempDir()
+	notPEM := filepath.Join(dir, "not.pem")
+	if err := os.WriteFile(notPEM, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		cfg  config.Client
+		want string // "" means no error
+	}{
+		{"tls", config.Client{Addr: "billing:443", Timeout: time.Second}, ""},
+		{"insecure", config.Client{Addr: "billing:10000", Insecure: true}, ""},
+		{"missing CA file", config.Client{Addr: "billing:443", CAFile: filepath.Join(dir, "missing.pem")}, "BILLING_CA_FILE"},
+		{"CA file without certificate", config.Client{Addr: "billing:443", CAFile: notPEM}, "no PEM certificate"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn, err := openBillingClient(tt.cfg, log.Discard(), tel)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := conn.Close(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}

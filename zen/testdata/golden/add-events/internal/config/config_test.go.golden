@@ -19,6 +19,8 @@ func environ(kv ...string) env.Options {
 		"PUBSUB_PAYMENTS_TOPIC":        "payments",
 		"PUBSUB_PAYMENTS_SUBSCRIPTION": "billing-payments-worker",
 		// zen:subscriptions-env
+		"LEDGER_ADDR": "ledger:443",
+		// zen:clients-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
@@ -77,6 +79,8 @@ func TestValidateServer(t *testing.T) {
 		{"redis required", with("REDIS_ADDRS", ""), "REDIS_ADDRS"},
 		{"project required", with("PUBSUB_PROJECT", ""), "PUBSUB_PROJECT"},
 		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
+		{"ledger address required", with("LEDGER_ADDR", ""), "LEDGER_ADDR"},
+		// zen:clients-validate-test
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
