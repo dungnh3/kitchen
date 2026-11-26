@@ -1,4 +1,4 @@
-package pggorm_test
+package pgxgorm_test
 
 import (
 	"context"
@@ -14,20 +14,20 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/dungnh3/kitchen/errs"
-	pggorm "github.com/dungnh3/kitchen/pg/gorm"
+	pgxgorm "github.com/dungnh3/kitchen/pgx/gorm"
 )
 
 func TestMapError(t *testing.T) {
-	if !errors.Is(pggorm.MapError(gorm.ErrRecordNotFound), errs.ErrNotFound) {
+	if !errors.Is(pgxgorm.MapError(gorm.ErrRecordNotFound), errs.ErrNotFound) {
 		t.Fatal("record not found")
 	}
-	if !errors.Is(pggorm.MapError(&pgconn.PgError{Code: "23505"}), errs.ErrAlreadyExists) {
+	if !errors.Is(pgxgorm.MapError(&pgconn.PgError{Code: "23505"}), errs.ErrAlreadyExists) {
 		t.Fatal("duplicate")
 	}
 }
 
 func TestOpenNilPool(t *testing.T) {
-	if _, err := pggorm.Open(nil, pggorm.Options{}); err == nil {
+	if _, err := pgxgorm.Open(nil, pgxgorm.Options{}); err == nil {
 		t.Fatal("want error")
 	}
 }
@@ -60,7 +60,7 @@ func TestSharedPool(t *testing.T) {
 	}
 	defer pool.Close()
 
-	db, err := pggorm.Open(pool, pggorm.Options{})
+	db, err := pgxgorm.Open(pool, pgxgorm.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

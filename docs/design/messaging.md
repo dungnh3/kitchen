@@ -203,7 +203,7 @@ func (r *Relay) Run(ctx context.Context) error
 
 // submodule: pubsub/outbox/pgx
 func New(pool *pgxpool.Pool, opts ...Option) (*Store, error)
-func (s *Store) Enqueue(ctx context.Context, tx pgx.Tx, topic string, msgs ...*pubsub.Message) error
+func (s *Store) Enqueue(ctx context.Context, tx jpgx.Tx, topic string, msgs ...*pubsub.Message) error
 func (s *Store) CreateTable(ctx context.Context) error
 ```
 
@@ -292,7 +292,7 @@ decision below can be revisited.
 | M12 | Lease on Redis with fencing tokens | Postgres; both; k8s Lease | light dep, fencing, testable with miniredis |
 | M13 | Drop scheduler; merge syncmsg into pubsub | redesign scheduler; keep syncmsg separate | one engine; schedulers are a solved problem elsewhere |
 | M14 | Layout `pubsub/*` + `lease/*` | top-level outbox/reply/lease; `messaging/*` | matches D6, short import paths |
-| M15 | Outbox driver pgx/v5, `Enqueue(ctx, pgx.Tx, …)` | database/sql; minimal Execer interface | LISTEN/NOTIFY, performance |
+| M15 | Outbox driver pgx/v5, `Enqueue(ctx, jpgx.Tx, …)` | database/sql; minimal Execer interface | LISTEN/NOTIFY, performance |
 | M16 | `Publish(ctx, topic, msgs...) ([]string, error)` only | + PublishAsync; single message | smallest stable interface; still batches |
 | M17 | `[]byte` payload + `JSON[T]` helper | generic Subscriber[T]; bytes only | no generics leaking into backends; typed handlers when wanted |
 | M18 | Outbox claims only the head row per key (2026-11-22: the head's run, see §5) | single active relay; advisory locks | race-free per-key order with N relays (security/correctness) |
@@ -318,7 +318,7 @@ decision below can be revisited.
 | G2-11 | gcp: messages traced by the Google client's built-in tracing (`googclient_traceparent`) broke the trace. | Fixed: Source maps `googclient_` trace fields when `traceparent` is absent; keep the built-in tracing off. |
 | G2-12 (found by group 3) | Batch mode forgot a failed key as soon as a batch without it arrived, so a message of that key handed over before the nack (Kafka hands records over eagerly) ran before the redelivery. A narrower race (a Source hands a message over right around the nack) also hit the single path. | Fixed (owner): per-Run key fence. A keyed message that is finally nacked fences its key; every other message of the key is nacked (at receive, in the key queue and in batches) until the broker redelivers that message (same ID), or after `WithKeyFenceTTL` (default 1m; 0 disables). Exact for Kafka and SQS FIFO (one consumer per partition/group, same ID on redelivery); for Pub/Sub it also removes G2-1 within one process. |
 | G2-4 | Panic log lacked ctx (no trace correlation); pgx `last_error` could be cut inside a UTF-8 rune (rejected by Postgres). | Fixed. |
-| G2-13 (D7) | pubsub returned plain errors, so a failed Publish surfaced as a 500 and `ErrKeyPaused`/`ErrClosed` had no code; JWKS fetched with a bare `*http.Client`. | Fixed (owner rule: reuse kitchen packages). `ErrKeyPaused`, `ErrClosed`, `reply.ErrInvalidID` are errs sentinels; `Telemetry.Publish` (shared by every adapter) wraps broker failures as `errs.ErrDependencyUnavailable` unless they already carry an errs code or are context errors; validation errors carry InvalidArgument; outbox/pgx uses `pg.MapError`; JWKS GETs go through `httpx` (jwx's cache still schedules refreshes). OTLP exporters keep their own HTTP/gRPC clients: exporting through `httpx` would trace the exporter's own requests. |
+| G2-13 (D7) | pubsub returned plain errors, so a failed Publish surfaced as a 500 and `ErrKeyPaused`/`ErrClosed` had no code; JWKS fetched with a bare `*http.Client`. | Fixed (owner rule: reuse kitchen packages). `ErrKeyPaused`, `ErrClosed`, `reply.ErrInvalidID` are errs sentinels; `Telemetry.Publish` (shared by every adapter) wraps broker failures as `errs.ErrDependencyUnavailable` unless they already carry an errs code or are context errors; validation errors carry InvalidArgument; outbox/pgx uses `pgx.MapError`; JWKS GETs go through `httpx` (jwx's cache still schedules refreshes). OTLP exporters keep their own HTTP/gRPC clients: exporting through `httpx` would trace the exporter's own requests. |
 
 ### 8.3 Deep review of 2026-11-22
 
@@ -364,5 +364,5 @@ session. Owner decisions:
 | Watermill (v1.5.1, last release 2025-09) instead of the engine | Keep the engine (owner): Watermill has no parallel-across-keys/FIFO-within-key processing, no per-message batch results, its official Kafka adapter is Sarama (franz-go only community), OTel is a separate older package. Core pubsub stays OTel-API-only. |
 | Five copies of the exponential backoff (subscriber, outbox, outbox/pgx, kafka, sqs) | Replaced by `timex.Backoff` (equal jitter); the reconnect loops of sqs and outbox/pgx gained jitter. |
 | Span error recording re-implemented in `pubsub/telemetry.go` | Uses `otelx.RecordError`. Note: pubsub now links package otelx (which also holds the otelgrpc/otelhttp helpers). |
-| Client construction | Examples and docs of `reply/redis`, `lease/redis`, `outbox/pgx` use `redisx.Open` / `pg.Open`. |
+| Client construction | Examples and docs of `reply/redis`, `lease/redis`, `outbox/pgx` use `redisx.Open` / `pgx.Open`. |
 

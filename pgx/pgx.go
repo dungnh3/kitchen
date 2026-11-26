@@ -1,7 +1,7 @@
-// Package pg opens an instrumented pgx connection pool for PostgreSQL.
+// Package pgx opens an instrumented pgx connection pool for PostgreSQL.
 //
 // [Open] returns a plain *pgxpool.Pool: use it directly, with sqlc, or wrap it
-// in gorm with the github.com/dungnh3/kitchen/pg/gorm submodule (same pool,
+// in gorm with the github.com/dungnh3/kitchen/pgx/gorm submodule (same pool,
 // same tracing). Queries are traced and measured with otelpgx; pool
 // statistics are exported as OTel metrics.
 //
@@ -14,7 +14,7 @@
 // [WithoutPoolStats]). For readiness use the pool's own Ping, e.g.
 // server.Check{Name: "postgres", Func: pool.Ping}. [MapError] turns Postgres
 // errors into errs sentinels.
-package pg
+package pgx
 
 import (
 	"cmp"
@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"github.com/exaring/otelpgx"
-	"github.com/jackc/pgx/v5"
+	jpgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -39,7 +39,7 @@ import (
 	"github.com/dungnh3/kitchen/log"
 )
 
-// QueryExecMode selects how pgx sends queries. See pgx.QueryExecMode.
+// QueryExecMode selects how pgx sends queries. See jpgx.QueryExecMode.
 type QueryExecMode string
 
 const (
@@ -136,7 +136,7 @@ func (cfg Config) connString() (string, error) {
 		return withDefaultSSLMode(cfg.URL), nil
 	}
 	if cfg.Host == "" || cfg.Database == "" {
-		return "", errors.New("pg: URL or Host and Database are required")
+		return "", errors.New("pgx: URL or Host and Database are required")
 	}
 	port := cmp.Or(cfg.Port, 5432)
 	u := url.URL{
@@ -183,7 +183,7 @@ func withDefaultSSLMode(cs string) string {
 // registration) and then call OpenConfig.
 func ParseConfig(cfg Config) (*pgxpool.Config, error) {
 	if cfg.Port < 0 || cfg.Port > 65535 {
-		return nil, fmt.Errorf("pg: port %d out of range", cfg.Port)
+		return nil, fmt.Errorf("pgx: port %d out of range", cfg.Port)
 	}
 	if cfg.URL != "" {
 		// pgx derives TLS ServerName and the fallback (e.g. sslmode=prefer
@@ -191,9 +191,9 @@ func ParseConfig(cfg Config) (*pgxpool.Config, error) {
 		// parsing would leave them pointing at the URL's host.
 		switch {
 		case cfg.Host != "" || cfg.Port != 0:
-			return nil, errors.New("pg: set host and port inside URL when URL is used")
+			return nil, errors.New("pgx: set host and port inside URL when URL is used")
 		case cfg.SSLMode != "":
-			return nil, errors.New("pg: set sslmode inside URL when URL is used")
+			return nil, errors.New("pgx: set sslmode inside URL when URL is used")
 		}
 	}
 	cs, err := cfg.connString()
@@ -202,7 +202,7 @@ func ParseConfig(cfg Config) (*pgxpool.Config, error) {
 	}
 	pc, err := pgxpool.ParseConfig(cs)
 	if err != nil {
-		return nil, fmt.Errorf("pg: parse config: %w", err)
+		return nil, fmt.Errorf("pgx: parse config: %w", err)
 	}
 	cc := pc.ConnConfig
 	if cfg.URL != "" { // credential and database overrides on top of a URL
@@ -224,7 +224,7 @@ func ParseConfig(cfg Config) (*pgxpool.Config, error) {
 		pc.MinConns = cfg.MinConns
 	}
 	if pc.MinConns > pc.MaxConns {
-		return nil, fmt.Errorf("pg: MinConns %d > MaxConns %d", pc.MinConns, pc.MaxConns)
+		return nil, fmt.Errorf("pgx: MinConns %d > MaxConns %d", pc.MinConns, pc.MaxConns)
 	}
 	pc.MaxConnLifetime = durOr(cfg.MaxConnLifetime, 30*time.Minute)
 	pc.MaxConnLifetimeJitter = durOr(cfg.MaxConnLifetimeJitter, 5*time.Minute)
@@ -244,17 +244,17 @@ func ParseConfig(cfg Config) (*pgxpool.Config, error) {
 
 	switch cfg.QueryExecMode {
 	case "", ExecModeCacheStatement:
-		cc.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+		cc.DefaultQueryExecMode = jpgx.QueryExecModeCacheStatement
 	case ExecModeCacheDescribe:
-		cc.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
+		cc.DefaultQueryExecMode = jpgx.QueryExecModeCacheDescribe
 	case ExecModeDescribeExec:
-		cc.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+		cc.DefaultQueryExecMode = jpgx.QueryExecModeDescribeExec
 	case ExecModeExec:
-		cc.DefaultQueryExecMode = pgx.QueryExecModeExec
+		cc.DefaultQueryExecMode = jpgx.QueryExecModeExec
 	case ExecModeSimpleProtocol:
-		cc.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+		cc.DefaultQueryExecMode = jpgx.QueryExecModeSimpleProtocol
 	default:
-		return nil, fmt.Errorf("pg: unknown QueryExecMode %q", cfg.QueryExecMode)
+		return nil, fmt.Errorf("pgx: unknown QueryExecMode %q", cfg.QueryExecMode)
 	}
 	return pc, nil
 }
@@ -293,21 +293,21 @@ func OpenConfig(ctx context.Context, pc *pgxpool.Config, opts ...Option) (*pgxpo
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
-		return nil, fmt.Errorf("pg: new pool: %w", err)
+		return nil, fmt.Errorf("pgx: new pool: %w", err)
 	}
 	pctx, cancel := context.WithTimeout(ctx, durOr(pc.ConnConfig.ConnectTimeout, 5*time.Second))
 	defer cancel()
 	if err := pool.Ping(pctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("pg: ping %s:%d/%s: %w", pc.ConnConfig.Host, pc.ConnConfig.Port, pc.ConnConfig.Database, err)
+		return nil, fmt.Errorf("pgx: ping %s:%d/%s: %w", pc.ConnConfig.Host, pc.ConnConfig.Port, pc.ConnConfig.Database, err)
 	}
 	if !o.noStats {
 		if err := otelpgx.RecordStats(pool, otelpgx.WithStatsMeterProvider(o.mp)); err != nil {
 			pool.Close()
-			return nil, fmt.Errorf("pg: record pool stats: %w", err)
+			return nil, fmt.Errorf("pgx: record pool stats: %w", err)
 		}
 	}
-	o.logger.InfoContext(ctx, "pg: connected",
+	o.logger.InfoContext(ctx, "pgx: connected",
 		"host", pc.ConnConfig.Host, "database", pc.ConnConfig.Database, "max_conns", pc.MaxConns)
 	return pool, nil
 }

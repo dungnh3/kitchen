@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/dungnh3/kitchen/errs"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/acme/billing/internal/store"
@@ -27,9 +27,9 @@ func NewOrderItems(pool *pgxpool.Pool) *OrderItems {
 func (s *OrderItems) GetOrderItem(ctx context.Context, id string) (store.OrderItem, error) {
 	row, err := s.q.GetOrderItem(ctx, id)
 	if err != nil {
-		// pg.MapError turns pgx.ErrNoRows into errs.ErrNotFound, constraint
+		// pgx.MapError turns jpgx.ErrNoRows into errs.ErrNotFound, constraint
 		// violations into the matching errs sentinel, and so on.
-		return store.OrderItem{}, pg.MapError(err)
+		return store.OrderItem{}, pgx.MapError(err)
 	}
 	return orderItemFromRow(row), nil
 }
@@ -41,7 +41,7 @@ func (s *OrderItems) ListOrderItems(ctx context.Context, after string, limit int
 	}
 	rows, err := s.q.ListOrderItems(ctx, sqlcdb.ListOrderItemsParams{After: after, PageLimit: limit})
 	if err != nil {
-		return nil, pg.MapError(err)
+		return nil, pgx.MapError(err)
 	}
 	out := make([]store.OrderItem, len(rows))
 	for i, r := range rows {
@@ -54,7 +54,7 @@ func (s *OrderItems) ListOrderItems(ctx context.Context, after string, limit int
 func (s *OrderItems) CreateOrderItem(ctx context.Context, title string) (store.OrderItem, error) {
 	row, err := s.q.CreateOrderItem(ctx, title)
 	if err != nil {
-		return store.OrderItem{}, pg.MapError(err)
+		return store.OrderItem{}, pgx.MapError(err)
 	}
 	return orderItemFromRow(row), nil
 }
@@ -63,7 +63,7 @@ func (s *OrderItems) CreateOrderItem(ctx context.Context, title string) (store.O
 func (s *OrderItems) DeleteOrderItem(ctx context.Context, id string) error {
 	n, err := s.q.DeleteOrderItem(ctx, id)
 	if err != nil {
-		return pg.MapError(err)
+		return pgx.MapError(err)
 	}
 	if n == 0 {
 		return errs.ErrNotFound

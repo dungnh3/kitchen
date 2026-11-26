@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/dungnh3/kitchen/errs"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/acme/catalog/internal/store"
@@ -27,9 +27,9 @@ func NewItems(pool *pgxpool.Pool) *Items {
 func (s *Items) GetItem(ctx context.Context, id string) (store.Item, error) {
 	row, err := s.q.GetItem(ctx, id)
 	if err != nil {
-		// pg.MapError turns pgx.ErrNoRows into errs.ErrNotFound, constraint
+		// pgx.MapError turns jpgx.ErrNoRows into errs.ErrNotFound, constraint
 		// violations into the matching errs sentinel, and so on.
-		return store.Item{}, pg.MapError(err)
+		return store.Item{}, pgx.MapError(err)
 	}
 	return itemFromRow(row), nil
 }
@@ -41,7 +41,7 @@ func (s *Items) ListItems(ctx context.Context, after string, limit int32) ([]sto
 	}
 	rows, err := s.q.ListItems(ctx, sqlcdb.ListItemsParams{After: after, PageLimit: limit})
 	if err != nil {
-		return nil, pg.MapError(err)
+		return nil, pgx.MapError(err)
 	}
 	out := make([]store.Item, len(rows))
 	for i, r := range rows {
@@ -54,7 +54,7 @@ func (s *Items) ListItems(ctx context.Context, after string, limit int32) ([]sto
 func (s *Items) CreateItem(ctx context.Context, title string) (store.Item, error) {
 	row, err := s.q.CreateItem(ctx, title)
 	if err != nil {
-		return store.Item{}, pg.MapError(err)
+		return store.Item{}, pgx.MapError(err)
 	}
 	return itemFromRow(row), nil
 }
@@ -63,7 +63,7 @@ func (s *Items) CreateItem(ctx context.Context, title string) (store.Item, error
 func (s *Items) DeleteItem(ctx context.Context, id string) error {
 	n, err := s.q.DeleteItem(ctx, id)
 	if err != nil {
-		return pg.MapError(err)
+		return pgx.MapError(err)
 	}
 	if n == 0 {
 		return errs.ErrNotFound

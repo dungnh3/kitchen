@@ -132,7 +132,7 @@ func run() error {
 		logger.WarnContext(ctx, "invalid log config, using defaults", log.Err(envErr))
 	}
 
-	// 3. Telemetry (OTEL_* env vars). The server, httpx, pg and redisx use
+	// 3. Telemetry (OTEL_* env vars). The server, httpx, pgx and redisx use
 	// the global providers it installs. Logs also go to OTLP.
 	tel, err := sdk.Setup(ctx, sdk.Config{ServiceName: "agents", ServiceVersion: "1.0.0"})
 	if err != nil {
@@ -145,7 +145,7 @@ func run() error {
 	}
 
 	// 4. Dependencies, opened with their canonical packages.
-	db, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")})
+	db, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")})
 	if err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ How each piece plugs in (workers without a server use `server.NewAdmin`):
   language and headers in any handler ([context](../context/USAGE.md)).
 - **otelx**: spans and metrics use the `otelx/sdk` providers. For Prometheus,
   pass `server.WithAdminHandler("GET /metrics", h)` to `WithAdmin`.
-- **pg, redisx, mongox**: a failing `Ping` check turns `/readyz` and
+- **pgx, redisx, mongox**: a failing `Ping` check turns `/readyz` and
   `grpc.health.v1` to `NOT_SERVING` (cached 1s, bounded by a timeout).
 
 ## Advanced

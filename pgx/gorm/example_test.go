@@ -1,4 +1,4 @@
-package pggorm_test
+package pgxgorm_test
 
 import (
 	"context"
@@ -12,19 +12,19 @@ import (
 	"github.com/dungnh3/kitchen/errs"
 	"github.com/dungnh3/kitchen/log"
 	"github.com/dungnh3/kitchen/log/gormlog"
-	"github.com/dungnh3/kitchen/pg"
-	pggorm "github.com/dungnh3/kitchen/pg/gorm"
+	"github.com/dungnh3/kitchen/pgx"
+	pgxgorm "github.com/dungnh3/kitchen/pgx/gorm"
 )
 
 func ExampleOpen() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")})
+	pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")})
 	if err != nil {
 		return
 	}
-	defer pool.Close() // pggorm never closes the pool
+	defer pool.Close() // pgxgorm never closes the pool
 
-	db, err := pggorm.Open(pool, pggorm.Options{Log: &gormlog.Config{
+	db, err := pgxgorm.Open(pool, pgxgorm.Options{Log: &gormlog.Config{
 		Logger:               log.Default(),
 		SlowThreshold:        500 * time.Millisecond,
 		IgnoreRecordNotFound: true,
@@ -36,9 +36,9 @@ func ExampleOpen() {
 	db.WithContext(ctx).Table("orders").Count(&count)
 }
 
-// pggorm.MapError adds gorm.ErrRecordNotFound to pg.MapError.
+// pgxgorm.MapError adds gorm.ErrRecordNotFound to pgx.MapError.
 func ExampleMapError() {
-	err := pggorm.MapError(fmt.Errorf("first order: %w", gorm.ErrRecordNotFound))
+	err := pgxgorm.MapError(fmt.Errorf("first order: %w", gorm.ErrRecordNotFound))
 	fmt.Println(errors.Is(err, errs.ErrNotFound))
 	// Output: true
 }

@@ -231,7 +231,7 @@ OTEL_RESOURCE_ATTRIBUTES="cx.application.name=<app>,cx.subsystem.name=orders"
 
 | Old | New |
 |---|---|
-| `GormTracingPlugin`, `NewGormTracingPlugin`, `GormDatabaseWrapper`, `*WithTracing` | Postgres: `pggorm.Open(pool, ...)` on a `pg.Open` pool (otelpgx traces it). Other drivers: `db.Use(tracing.NewPlugin())` from `gorm.io/plugin/opentelemetry/tracing` |
+| `GormTracingPlugin`, `NewGormTracingPlugin`, `GormDatabaseWrapper`, `*WithTracing` | Postgres: `pgxgorm.Open(pool, ...)` on a `pgx.Open` pool (otelpgx traces it). Other drivers: `db.Use(tracing.NewPlugin())` from `gorm.io/plugin/opentelemetry/tracing` |
 | `log.NewGormLogger(...)` | `gormlog.New(gormlog.Config{...})` |
 
 ### Metrics (new)

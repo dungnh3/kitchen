@@ -14,7 +14,7 @@ in the root `CLAUDE.md` and `docs/decisions.md`.
   - `auth` (fail-closed)
   - `otelx/sdk`
   - `redisx`
-  - `pg` / `mysqlx`
+  - `pgx` / `mysqlx`
   - `httpx`
   - others as they come up
 - Ship a `.golangci.yml` with the same depguard/forbidigo D5/D7 rules as the

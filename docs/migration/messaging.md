@@ -140,7 +140,7 @@ Semantics:
   FIFO without Key, too many attributes) carry InvalidArgument; any other
   broker failure from Publish, and reply/redis Redis failures, are wrapped as
   `errs.ErrDependencyUnavailable` (503) with the broker error as the cause.
-  outbox/pgx maps database errors with `pg.MapError`. `ErrPermanent` stays a
+  outbox/pgx maps database errors with `pgx.MapError`. `ErrPermanent` stays a
   plain marker between handlers and the engine.
 - sqs: `WithVisibilityTimeout` above 12h (the SQS limit) is rejected.
 - SQS standard queues: `Message.Key` is sent as MessageGroupId (fair queues);

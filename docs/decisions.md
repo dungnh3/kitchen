@@ -19,7 +19,7 @@ started. Per-area decisions live in `docs/design/<area>.md`.
 - **Tag order** (a submodule's required versions must exist first):
   1. core `vX.Y.Z`;
   2. `log/gormlog/vX.Y.Z` (requires core) and `auth/vX.Y.Z`;
-  3. submodules that require them: `pg/gorm` and `mysqlx/gorm` (core +
+  3. submodules that require them: `pgx/gorm` and `mysqlx/gorm` (core +
      `log/gormlog`), `mongox`, `migrate` (core), `objstore/gcs`,
      `objstore/s3`, `sse`, and every other submodule requiring core.
 
@@ -102,7 +102,7 @@ started. Per-area decisions live in `docs/design/<area>.md`.
 | messaging | `pubsub`, `syncmsg`, `syncbrokers`, `coordinators`, `queue`, `scheduler` | `pubsub/`, `pubsub/gcp/`, other messaging dirs |
 | sse | `sse` | `sse/` (submodule) |
 | errors-auth | `ecode`, `errors`, `localization`, `guard`, `rlimit`, `pb`/`proto` (errors) | `errs/`, `i18n/`, `auth/`, `ratelimit/`, `proto/kitchen/errors/` |
-| data-utils | `cache`, `storage`, `migrations`, `uploader`, `utils`, `parallel`, `crawl` | `cache/`, `pg/`, `mysqlx/`, `mongox/`, `migrate/`, `objstore/` (was `blob/`), `vn/`, `timex/`, `webmeta/` |
+| data-utils | `cache`, `storage`, `migrations`, `uploader`, `utils`, `parallel`, `crawl` | `cache/`, `pgx/`, `mysqlx/`, `mongox/`, `migrate/`, `objstore/` (was `blob/`), `vn/`, `timex/`, `webmeta/` |
 | codegen-mcp | `mcpkit`, `nest`, `gen`, MCP and service scaffolders | `mcpkit/` (submodule), `zen/` (submodule), `templates/` |
 
 Final directory names are decided in each area's design doc. An area must not
@@ -133,7 +133,7 @@ every caller follows.
 | Concern | Canonical package | Library inside | Not allowed outside it |
 |---|---|---|---|
 | Logging | `log` (+ `log/gormlog` for gorm) | slog, zap | `log/slog`, `log`, zap, zerolog, logrus; `slog.New`/`Default`/`SetDefault` (D5) |
-| Errors, gRPC/HTTP status mapping | `errs`; DB adapters map into `errs` (`pg`, `mysqlx`, `mongox`) | grpc status, errdetails | `status.New`/`Newf`/`Error`/`Errorf`/`FromProto`; `pkg/errors`, multierr (use `errors.Join`) |
+| Errors, gRPC/HTTP status mapping | `errs`; DB adapters map into `errs` (`pgx`, `mysqlx`, `mongox`) | grpc status, errdetails | `status.New`/`Newf`/`Error`/`Errorf`/`FromProto`; `pkg/errors`, multierr (use `errors.Join`) |
 | Request validation | `errs/validation`, `server` (validates every request by default) | protovalidate | protovalidate, go-playground/validator |
 | Request metadata (request id, user id, client IP, headers) | `context` (import as `xcontext`) | realclientip-go | realclientip-go |
 | i18n | `i18n` | go-i18n | go-i18n |
@@ -149,7 +149,7 @@ every caller follows.
 | Auth: JWT, JWKS, introspection | `auth` | jwx v3 | jwx, httprc, golang-jwt, go-jose |
 | Messaging | `pubsub` (+ `gcp`, `sqs`, `kafka`, `outbox`, `outbox/pgx`, `reply/redis`) | cloud pubsub, SQS, franz-go | those SDKs, other Kafka clients, watermill |
 | Object storage | `objstore` (+ `gcs`, `s3`) | GCS, S3 SDKs | those SDKs, gocloud.dev |
-| PostgreSQL | `pg` (`pg.Open`, + `pg/gorm`) | pgx v5 | `pgxpool.New`/`NewWithConfig`, `pgx.Connect`, `sql.Open`, lib/pq, gorm postgres driver |
+| PostgreSQL | `pgx` (`pgx.Open`, + `pgx/gorm`); import jackc/pgx as `jpgx` next to it | jackc/pgx v5 | `pgxpool.New`/`NewWithConfig`, jackc `pgx.Connect`, `sql.Open`, lib/pq, gorm postgres driver |
 | MySQL | `mysqlx` (`mysqlx.Open`, + `mysqlx/gorm`) | go-sql-driver | go-sql-driver/mysql, gorm mysql driver, `sql.Open` |
 | MongoDB | `mongox` | mongo-driver v2 | mongo-driver |
 | Migrations | `migrate` | goose | goose, golang-migrate |

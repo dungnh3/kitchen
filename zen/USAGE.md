@@ -279,9 +279,9 @@ files rather than copies here:
 - **Auth.** The service verifies JWTs with `auth.NewJWKS`, or with
   `-auth introspection` opaque tokens with `auth.NewIntrospection` and
   `auth.RFC7662`; both are fail-closed. The MCP server enables auth when `MCP_RESOURCE_URL` is set.
-- **Database.** The service opens Postgres with `pg.Open` (TLS required
+- **Database.** The service opens Postgres with `pgx.Open` (TLS required
   unless the URL sets `sslmode`, UTC session time zone) and maps errors
-  with `pg.MapError`, or MySQL with `mysqlx.Open` (TLS required unless the
+  with `pgx.MapError`, or MySQL with `mysqlx.Open` (TLS required unless the
   DSN sets `tls`) and `mysqlx.MapError`. Migrations run through
   `migrate.NewPostgres` (advisory lock) or `migrate.NewMySQL` (lock table).
 - **Cache.** `cache.New` on the Redis client; `cachestore.Items` serves

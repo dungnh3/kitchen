@@ -187,7 +187,7 @@ proto/<name_snake>/v1/item_service.proto   AIP CRUD example (Get/List/Create/Del
 gen/                           generated pb, grpc, gateway, openapiv2 (committed)
 cmd/server/main.go             log.Setup (kitchen/log), config, serve | migrate up|down|status*
 internal/config/               caarlos0/env v11; Load + ValidateServer (auth fail-closed)
-internal/app/app.go            otelx/sdk (OTLP when an endpoint is set), pg*, migrate on start*, i18n + errs.Handler, ratelimit,
+internal/app/app.go            otelx/sdk (OTLP when an endpoint is set), pgx*, migrate on start*, i18n + errs.Handler, ratelimit,
                                auth (JWKS), admin port (pprof, Prometheus /metrics), server.Run
 internal/app/migrate.go*       goose via kitchen migrate, advisory lock, status table
 internal/app/app_test.go       whole service on random ports (+ testcontainers postgres*): REST CRUD,
@@ -204,7 +204,7 @@ README.md .gitignore .dockerignore
 |---|---|---|---|
 | S1 | Embedded `text/template`, same engine as `new mcp` | template module + gonew rewrite (gonew is still "highly experimental", last release 2024, no conditionals); copier/cookiecutter (Python) | One pattern, conditionals (`-db`), golden + build tests |
 | S2 | The CLI runs generation; `-no-generate` opts out | print next steps only (A18) | The project builds right away; on failure the files stay and the manual steps are printed |
-| S3 | `pg` (pgx) + sqlc v1.31.1 | `pg/gorm`; both behind a flag | Typed SQL, no reflection, `pg.MapError`; one template to maintain |
+| S3 | `pgx` (pgx) + sqlc v1.31.1 | `pgx/gorm`; both behind a flag | Typed SQL, no reflection, `pgx.MapError`; one template to maintain |
 | S4 | caarlos0/env v11.4.2 | stdlib (as `new mcp`), sethvargo/go-envconfig | A service has ~25 variables; zero-dependency, MIT |
 | S5 | `server migrate up\|down\|status` + `DB_MIGRATE_ON_START` (default false) | always on start; kmigrate only | Production runs migrations as a separate step; local runs stay one command |
 | S6 | Auth `auth.NewJWKS`, fail-closed: `AUTH_ISSUER`, `AUTH_JWKS_URL` (https, http only for localhost), `AUTH_AUDIENCE` required; `AUTH_DISABLED=true` is explicit and refused when `APP_ENV=production`; only `/grpc.health.v1.Health/` is public | add introspection; no auth | Secure by default; an unreachable JWKS stops startup |

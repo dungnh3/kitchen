@@ -1,4 +1,4 @@
-module github.com/dungnh3/kitchen/pg/gorm
+module github.com/dungnh3/kitchen/pgx/gorm
 
 go 1.26.0
 

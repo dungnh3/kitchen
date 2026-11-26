@@ -1,7 +1,7 @@
 # Migration: data-utils
 
 From the old library's `cache`, `storage`, `migrations`, `uploader`, `utils`,
-`parallel` and `crawl` packages to `cache`, `redisx`, `pg`, `pg/gorm`,
+`parallel` and `crawl` packages to `cache`, `redisx`, `pgx`, `pgx/gorm`,
 `migrate`, `objstore`, `objstore/gcs`, `objstore/s3`, `timex` and `webmeta`; slice and map helpers move to [`github.com/samber/lo`](https://github.com/samber/lo) (owner, 2026-11-21: reuse a mature library instead of kitchen's own `xslices`/`xmaps`).
 Design and rationale: [`docs/design/data-utils.md`](../design/data-utils.md).
 
@@ -9,8 +9,8 @@ Module paths (D1):
 
 | Import | Module |
 |---|---|
-| `github.com/dungnh3/kitchen/{cache,redisx,pg,mysqlx,objstore,objstore/memstore,timex,webmeta}` | core `github.com/dungnh3/kitchen` |
-| `github.com/dungnh3/kitchen/pg/gorm` (package `pggorm`) | submodule |
+| `github.com/dungnh3/kitchen/{cache,redisx,pgx,mysqlx,objstore,objstore/memstore,timex,webmeta}` | core `github.com/dungnh3/kitchen` |
+| `github.com/dungnh3/kitchen/pgx/gorm` (package `pgxgorm`) | submodule |
 | `github.com/dungnh3/kitchen/mysqlx/gorm` (package `mysqlgorm`) | submodule |
 | `github.com/dungnh3/kitchen/mongox` | submodule |
 | `github.com/dungnh3/kitchen/migrate` (+ `cmd/kmigrate`) | submodule |
@@ -39,7 +39,7 @@ the API that had it. None is carried over.
 | storage | DSN hardcoded `TimeZone=Asia/Ho_Chi_Minh` | no default; `RuntimeParams["timezone"]` |
 | storage | password not escaped (spaces/quotes broke the DSN) | built with `url.UserPassword` |
 | storage | no pool settings | MaxConns, lifetimes, idle time, health check, timeouts |
-| storage | package named `config` in dir `storage`; `GormLogLevel` duplicated | packages `pg`, `pggorm`, `redisx` |
+| storage | package named `config` in dir `storage`; `GormLogLevel` duplicated | packages `pgx`, `pgxgorm`, `redisx` |
 | storage | MySQL `Loc *time.Location` not loadable from config; `GoogleAuthFile` ignored; plaintext by default; no pool limits | `mysqlx`: `Loc` default UTC, TLS required by default, pool defaults, otelsql tracing |
 | uploader | V1 `CreateFileUploadURL` ignored the per-file size limit | `PostPolicyOptions.MaxBytes` per call, default from config |
 | uploader | V1 constructor called `log.Fatal` | constructors return errors |
@@ -70,36 +70,36 @@ the API that had it. None is carried over.
 | crawl | logo chosen by document order | fixed priority (og:image > twitter:image; apple-touch-icon > icon > /favicon.ico) |
 | crawl | skipped extensions returned an empty result with nil error | non-HTML → `ErrNotHTML` |
 
-## storage → pg, pg/gorm, redisx
+## storage → pgx, pgx/gorm, redisx
 
 | Old | New |
 |---|---|
-| `config.Postgres{...}.FormatDSN()` + `gorm.Open(postgres.Open(dsn))` | `pool, err := pg.Open(ctx, pg.Config{...})` then `pggorm.Open(pool, pggorm.Options{Log: &gormlog.Config{Logger: log}})` |
-| `config.Postgres.GormLogLevel` | `pggorm.Options{Log: &gormlog.Config{Level: logger.Warn, SlowThreshold: ...}}` (kitchen `log`, `log/gormlog`) |
+| `config.Postgres{...}.FormatDSN()` + `gorm.Open(postgres.Open(dsn))` | `pool, err := pgx.Open(ctx, pgx.Config{...})` then `pgxgorm.Open(pool, pgxgorm.Options{Log: &gormlog.Config{Logger: log}})` |
+| `config.Postgres.GormLogLevel` | `pgxgorm.Options{Log: &gormlog.Config{Level: logger.Warn, SlowThreshold: ...}}` (kitchen `log`, `log/gormlog`) |
 | `config.Redis{...}` + `redis.NewClient` | `rdb, err := redisx.Open(ctx, redisx.Config{Addrs: ..., Password: ...})` |
 | `config.MySQL{...}.FormatDSN()` + `gorm.Open(mysql.Open(dsn))` | `db, err := mysqlx.Open(ctx, mysqlx.Config{DSN: dsn})` (or `Addr`/`User`/...) then `mysqlgorm.Open(db, mysqlgorm.Options{})`. `ParseTime` is always on; TLS defaults to `skip-verify` — add `?tls=false` / `TLSMode: mysqlx.TLSDisable` for a server without TLS. |
 | hand-written `mongo.Connect` (driver v1) | `mongox.Open(ctx, mongox.Config{URI: uri})` on driver **v2** (see the driver's v1→v2 guide); errors via `mongox.MapError` |
 
 Behaviour changes:
 
-- **TLS:** the old DSN forced `sslmode=disable`. `pg.Config.SSLMode` defaults
+- **TLS:** the old DSN forced `sslmode=disable`. `pgx.Config.SSLMode` defaults
   to `require` (TLS always, never a plaintext fallback). A server without TLS
   (local Docker) fails to connect until you set `SSLMode: "disable"` (or
   `?sslmode=disable` in `URL`). A `URL` without `sslmode` also gets
   `require` (unless `PGSSLMODE` is set).
 - **URL + fields:** with `URL`, only `User`, `Password` and `Database` may
   override it; `Host`, `Port` or `SSLMode` next to `URL` is an error.
-- **Errors:** wrap repository errors with `pg.MapError(err)` to get `errs`
+- **Errors:** wrap repository errors with `pgx.MapError(err)` to get `errs`
   codes (`ErrNotFound`, `ErrAlreadyExists`, `ErrAborted`, ...) instead of
-  hand-written `pgx.ErrNoRows`/`23505` checks.
+  hand-written `jpgx.ErrNoRows`/`23505` checks.
 - **Readiness:** `server.Check{Name: "postgres", Func: pool.Ping}`.
-- **Time zone:** the old DSN forced `TimeZone=Asia/Ho_Chi_Minh`. `pg` sets no
+- **Time zone:** the old DSN forced `TimeZone=Asia/Ho_Chi_Minh`. `pgx` sets no
   time zone. To keep it: `RuntimeParams: map[string]string{"timezone": "Asia/Ho_Chi_Minh"}`.
 - **Password escaping:** passwords with spaces, quotes or `@` now work.
 - **Pool:** defaults are MaxConnLifetime 30m (+5m jitter), MaxConnIdleTime 5m,
   HealthCheckPeriod 30s, ConnectTimeout 5s, MaxConns = pgx default. `Open`
   pings before returning and returns errors instead of calling `log.Fatal`.
-- **Behind PgBouncer (transaction mode):** set `QueryExecMode: pg.ExecModeExec`
+- **Behind PgBouncer (transaction mode):** set `QueryExecMode: pgx.ExecModeExec`
   (or `ExecModeSimpleProtocol`); the default caches prepared statements.
 - gorm and pgx share one pool, so `MaxConns` is the only connection limit.
   Tracing comes from otelpgx on the pool; drop any gorm OTel plugin.
@@ -129,7 +129,7 @@ Behaviour changes:
 - Migrations are read from any `fs.FS` (use `embed.FS`).
 - Concurrent runs wait on a lock for `LockTimeout` (default 1m): a Postgres
   advisory lock, or the `goose_lock` table on MySQL.
-- `Open`/`kmigrate` connect with `pg.Open`/`mysqlx.Open`, so TLS is required
+- `Open`/`kmigrate` connect with `pgx.Open`/`mysqlx.Open`, so TLS is required
   unless the DSN disables it (`sslmode=disable`, `tls=false`).
 - Each migration runs in a transaction: **remove explicit `BEGIN`/`COMMIT`**
   from files, and mark statements that cannot run in a transaction
@@ -301,7 +301,7 @@ returned the zero time).
 
 ## Logging (owner, 2026-11-22)
 
-`pg`, `mysqlx`, `mongox`, `migrate` and `pggorm`/`mysqlgorm` take a
+`pgx`, `mysqlx`, `mongox`, `migrate` and `pgxgorm`/`mysqlgorm` take a
 `*log.Logger` from `github.com/dungnh3/kitchen/log` (an alias of
 `*slog.Logger`); nil means `log.Default()`, the process logger `main`
 installs with `log.Setup`. They no longer fall back to `slog.Default()`.

@@ -4,10 +4,10 @@ import (
 	"context"
 
 	"github.com/dungnh3/kitchen/errs"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 {%- if .Outbox %}
 	outboxpgx "github.com/dungnh3/kitchen/pubsub/outbox/pgx"
-	"github.com/jackc/pgx/v5"
+	jpgx "github.com/jackc/pgx/v5"
 {%- end %}
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -46,9 +46,9 @@ func New{% .E.Names %}(pool *pgxpool.Pool) *{% .E.Names %} {
 func (s *{% .E.Names %}) Get{% .E.Name %}(ctx context.Context, id string) (store.{% .E.Name %}, error) {
 	row, err := s.q.Get{% .E.Name %}(ctx, id)
 	if err != nil {
-		// pg.MapError turns pgx.ErrNoRows into errs.ErrNotFound, constraint
+		// pgx.MapError turns jpgx.ErrNoRows into errs.ErrNotFound, constraint
 		// violations into the matching errs sentinel, and so on.
-		return store.{% .E.Name %}{}, pg.MapError(err)
+		return store.{% .E.Name %}{}, pgx.MapError(err)
 	}
 	return {% .E.Lower %}FromRow(row), nil
 }
@@ -60,7 +60,7 @@ func (s *{% .E.Names %}) List{% .E.Names %}(ctx context.Context, after string, l
 	}
 	rows, err := s.q.List{% .E.Names %}(ctx, sqlcdb.List{% .E.Names %}Params{After: after, PageLimit: limit})
 	if err != nil {
-		return nil, pg.MapError(err)
+		return nil, pgx.MapError(err)
 	}
 	out := make([]store.{% .E.Name %}, len(rows))
 	for i, r := range rows {
@@ -75,7 +75,7 @@ func (s *{% .E.Names %}) List{% .E.Names %}(ctx context.Context, after string, l
 // {% .E.Words %} is stored; the worker's relay then publishes it.
 func (s *{% .E.Names %}) Create{% .E.Name %}(ctx context.Context, title string) (store.{% .E.Name %}, error) {
 	var v store.{% .E.Name %}
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err := jpgx.BeginFunc(ctx, s.pool, func(tx jpgx.Tx) error {
 		row, err := s.q.WithTx(tx).Create{% .E.Name %}(ctx, title)
 		if err != nil {
 			return err
@@ -88,7 +88,7 @@ func (s *{% .E.Names %}) Create{% .E.Name %}(ctx context.Context, title string) 
 		return s.outbox.Enqueue(ctx, tx, s.topic, m)
 	})
 	if err != nil {
-		return store.{% .E.Name %}{}, pg.MapError(err)
+		return store.{% .E.Name %}{}, pgx.MapError(err)
 	}
 	return v, nil
 }
@@ -98,7 +98,7 @@ func (s *{% .E.Names %}) Create{% .E.Name %}(ctx context.Context, title string) 
 func (s *{% .E.Names %}) Create{% .E.Name %}(ctx context.Context, title string) (store.{% .E.Name %}, error) {
 	row, err := s.q.Create{% .E.Name %}(ctx, title)
 	if err != nil {
-		return store.{% .E.Name %}{}, pg.MapError(err)
+		return store.{% .E.Name %}{}, pgx.MapError(err)
 	}
 	return {% .E.Lower %}FromRow(row), nil
 }
@@ -108,7 +108,7 @@ func (s *{% .E.Names %}) Create{% .E.Name %}(ctx context.Context, title string) 
 func (s *{% .E.Names %}) Delete{% .E.Name %}(ctx context.Context, id string) error {
 	n, err := s.q.Delete{% .E.Name %}(ctx, id)
 	if err != nil {
-		return pg.MapError(err)
+		return pgx.MapError(err)
 	}
 	if n == 0 {
 		return errs.ErrNotFound

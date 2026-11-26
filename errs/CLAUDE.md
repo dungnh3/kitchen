@@ -22,5 +22,5 @@ output, so every change here is an API change. Read `doc.go` and
   `Wrap`/`With`. Keep both behaviours covered by tests.
 - **Single construction point.** Other packages build client-facing errors
   only through `errs`. Constructing gRPC `status` values directly is banned by
-  D7 lint. Database adapters map their errors through `pg.MapError`,
+  D7 lint. Database adapters map their errors through `pgx.MapError`,
   `mysqlx` and `mongox`.

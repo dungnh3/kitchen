@@ -1,7 +1,7 @@
 # mongox: package rules
 
 `mongox` is the canonical MongoDB entry point (D7). Its defaults must stay
-aligned with `pg` and `mysqlx`.
+aligned with `pgx` and `mysqlx`.
 
 ## TLS
 

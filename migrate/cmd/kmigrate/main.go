@@ -19,7 +19,7 @@
 //	-lock-timeout D   migration lock wait (default 1m)
 //	-allow-out-of-order  apply missing older migrations
 //
-// Connections use kitchen's pg/mysqlx defaults: TLS is required unless the
+// Connections use kitchen's pgx/mysqlx defaults: TLS is required unless the
 // DSN chooses another mode (e.g. sslmode=disable, tls=false) or, for
 // PostgreSQL, PGSSLMODE is set.
 package main

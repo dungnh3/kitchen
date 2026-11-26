@@ -65,7 +65,7 @@ and do not call the library behind it.
 | Auth/JWT | `auth` |
 | Messaging | `pubsub` |
 | Object storage | `objstore` |
-| PostgreSQL / MySQL / MongoDB | `pg` / `mysqlx` / `mongox` |
+| PostgreSQL / MySQL / MongoDB | `pgx` / `mysqlx` / `mongox` |
 | Migrations | `migrate` |
 | SSE | `sse` |
 | Web page metadata | `webmeta` |

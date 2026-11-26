@@ -161,8 +161,8 @@ the `LocalizedMessage` detail. See [i18n/USAGE.md](../i18n/USAGE.md).
 The adapters map library errors to `errs` sentinels. The SQL text, table and
 column names, and upstream bodies stay in the wrapped cause:
 
-- **`pg.MapError(err)`**:
-  - `pgx.ErrNoRows` → `ErrNotFound`;
+- **`pgx.MapError(err)`**:
+  - `jpgx.ErrNoRows` → `ErrNotFound`;
   - unique violation → `ErrAlreadyExists`;
   - other integrity errors → `ErrFailedPrecondition`;
   - serialization failure or deadlock → `ErrAborted`;
@@ -366,7 +366,7 @@ instrumentation in `server` records the status code.
 - Add English and Vietnamese text for every new reason.
 - Never put SQL, tokens, stack traces or upstream bodies in `Message` or
   `Meta`. Wrap them as the cause instead.
-- Map database errors with `pg.MapError`, `mysqlx.MapError` or
+- Map database errors with `pgx.MapError`, `mysqlx.MapError` or
   `mongox.MapError` before returning them.
 - Do not forward downstream statuses by hand; let `ToStatus` sanitize them.
 

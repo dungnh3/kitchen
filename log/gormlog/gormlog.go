@@ -9,7 +9,7 @@
 // messages may still contain values.
 //
 // For tracing: a gorm opened with github.com/dungnh3/kitchen/pg/gorm on a
-// pg.Open pool is already traced by the pool's otelpgx tracer (and uses this
+// pgx.Open pool is already traced by the pool's otelpgx tracer (and uses this
 // logger by default); for other drivers use gorm.io/plugin/opentelemetry.
 package gormlog
 

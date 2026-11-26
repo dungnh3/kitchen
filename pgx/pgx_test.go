@@ -1,4 +1,4 @@
-package pg_test
+package pgx_test
 
 import (
 	"context"
@@ -7,18 +7,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	jpgx "github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 )
 
 func TestParseConfigFields(t *testing.T) {
-	pc, err := pg.ParseConfig(pg.Config{ //nolint:gosec // test fixture.
+	pc, err := pgx.ParseConfig(pgx.Config{ //nolint:gosec // test fixture.
 		Host: "db.internal", User: "app", Password: "p@ss w'rd/?", Database: "orders",
 		MaxConns: 20, MinConns: 2, StatementTimeout: 3 * time.Second, ApplicationName: "svc",
-		RuntimeParams: map[string]string{"timezone": "UTC"}, QueryExecMode: pg.ExecModeExec,
+		RuntimeParams: map[string]string{"timezone": "UTC"}, QueryExecMode: pgx.ExecModeExec,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestParseConfigFields(t *testing.T) {
 	if cc.RuntimeParams["statement_timeout"] != "3000" || cc.RuntimeParams["application_name"] != "svc" || cc.RuntimeParams["timezone"] != "UTC" {
 		t.Fatalf("runtime params = %v", cc.RuntimeParams)
 	}
-	if cc.DefaultQueryExecMode != pgx.QueryExecModeExec {
+	if cc.DefaultQueryExecMode != jpgx.QueryExecModeExec {
 		t.Fatalf("exec mode = %v", cc.DefaultQueryExecMode)
 	}
 	if cc.TLSConfig == nil || len(cc.Fallbacks) != 0 {
@@ -42,7 +42,7 @@ func TestParseConfigFields(t *testing.T) {
 }
 
 func TestParseConfigURLOverrides(t *testing.T) {
-	pc, err := pg.ParseConfig(pg.Config{URL: "postgres://u:p@h1:6543/d1?sslmode=disable", Database: "d2", Password: "secret"}) //nolint:gosec // test fixture.
+	pc, err := pgx.ParseConfig(pgx.Config{URL: "postgres://u:p@h1:6543/d1?sslmode=disable", Database: "d2", Password: "secret"}) //nolint:gosec // test fixture.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestParseConfigURLDefaultsToRequire(t *testing.T) {
 		"postgres://u:p@h1:6543/d1",
 		"host=h1 port=6543 user=u dbname=d1",
 	} {
-		pc, err := pg.ParseConfig(pg.Config{URL: cs})
+		pc, err := pgx.ParseConfig(pgx.Config{URL: cs})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,14 +69,14 @@ func TestParseConfigURLDefaultsToRequire(t *testing.T) {
 		}
 	}
 	// An explicit choice is kept.
-	pc, err := pg.ParseConfig(pg.Config{URL: "host=h1 dbname=d1 sslmode=disable"})
+	pc, err := pgx.ParseConfig(pgx.Config{URL: "host=h1 dbname=d1 sslmode=disable"})
 	if err != nil || pc.ConnConfig.TLSConfig != nil {
 		t.Fatalf("sslmode=disable not kept: %v", err)
 	}
 }
 
 func TestParseConfigErrors(t *testing.T) {
-	bad := []pg.Config{
+	bad := []pgx.Config{
 		{},
 		{Host: "h"},
 		{URL: "postgres://h/d", SSLMode: "require"},
@@ -91,15 +91,15 @@ func TestParseConfigErrors(t *testing.T) {
 		{URL: "::not a url::"},
 	}
 	for i, cfg := range bad {
-		if _, err := pg.ParseConfig(cfg); err == nil {
+		if _, err := pgx.ParseConfig(cfg); err == nil {
 			t.Errorf("case %d: want error", i)
 		}
 	}
 }
 
 func TestOpenUnreachable(t *testing.T) {
-	_, err := pg.Open(context.Background(), pg.Config{URL: "postgres://u:p@127.0.0.1:1/d?sslmode=disable", ConnectTimeout: 500 * time.Millisecond}) //nolint:gosec // test fixture.
-	if err == nil || !strings.Contains(err.Error(), "pg:") {
+	_, err := pgx.Open(context.Background(), pgx.Config{URL: "postgres://u:p@127.0.0.1:1/d?sslmode=disable", ConnectTimeout: 500 * time.Millisecond}) //nolint:gosec // test fixture.
+	if err == nil || !strings.Contains(err.Error(), "pgx:") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -129,7 +129,7 @@ func startPostgres(t *testing.T) string {
 func TestOpenIntegration(t *testing.T) {
 	url := startPostgres(t)
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{URL: url, MaxConns: 4, RuntimeParams: map[string]string{"timezone": "Asia/Ho_Chi_Minh"}})
+	pool, err := pgx.Open(ctx, pgx.Config{URL: url, MaxConns: 4, RuntimeParams: map[string]string{"timezone": "Asia/Ho_Chi_Minh"}})
 	if err != nil {
 		t.Fatal(err)
 	}

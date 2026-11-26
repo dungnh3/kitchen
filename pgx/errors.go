@@ -1,10 +1,10 @@
-package pg
+package pgx
 
 import (
 	"errors"
 
 	"github.com/jackc/pgerrcode"
-	"github.com/jackc/pgx/v5"
+	jpgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/dungnh3/kitchen/errs"
@@ -17,7 +17,7 @@ import (
 // with no meaningful mapping (including context errors, which errs already
 // classifies) are returned unchanged.
 //
-//	pgx.ErrNoRows                         → errs.ErrNotFound
+//	jpgx.ErrNoRows                         → errs.ErrNotFound
 //	23505 unique, 23P01 exclusion         → errs.ErrAlreadyExists
 //	other class 23 (FK, check, not null)  → errs.ErrFailedPrecondition
 //	class 22 data exception               → errs.ErrInvalidArgument
@@ -31,7 +31,7 @@ func MapError(err error) error {
 	if _, ok := errors.AsType[*errs.Error](err); ok {
 		return err
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, jpgx.ErrNoRows) {
 		return errs.Wrap(err, errs.ErrNotFound)
 	}
 	pe, ok := errors.AsType[*pgconn.PgError](err)

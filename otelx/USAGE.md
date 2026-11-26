@@ -1,7 +1,7 @@
 # otelx
 
 OpenTelemetry for kitchen services. `main` sets it up once with
-`otelx/sdk`; every other package (server, httpx, pubsub, redisx, pg, ...)
+`otelx/sdk`; every other package (server, httpx, pubsub, redisx, pgx, ...)
 then traces and meters through the global providers without extra wiring.
 The core `otelx` package adds span helpers and HTTP/gRPC instrumentation.
 It is the canonical telemetry package (D7 in
@@ -106,7 +106,7 @@ up:
 - `server` instruments its gRPC and HTTP ports;
 - `httpx` traces outgoing requests;
 - `pubsub` follows the messaging conventions;
-- `redisx` and `pg` trace commands and queries;
+- `redisx` and `pgx` trace commands and queries;
 - `log` adds `trace_id`/`span_id` to every `*Context` log call.
 
 Each of them also takes explicit providers (`WithTracerProvider` and

@@ -12,19 +12,19 @@ the data-utils session). Dependency versions verified the same day via
 
 | # | Topic | Decision |
 |---|---|---|
-| DU1 | MySQL | ~~Dropped~~ → **reinstated (owner, 2026-11-21)** as core `mysqlx` (go-sql-driver v1.10.2 + XSAM/otelsql v0.44.0 → `*sql.DB`) and submodule `mysqlx/gorm`, mirroring `pg`/`pg/gorm`. TLS required by default (`skip-verify`, encrypted like pg `require`). |
+| DU1 | MySQL | ~~Dropped~~ → **reinstated (owner, 2026-11-21)** as core `mysqlx` (go-sql-driver v1.10.2 + XSAM/otelsql v0.44.0 → `*sql.DB`) and submodule `mysqlx/gorm`, mirroring `pgx`/`pgx/gorm`. TLS required by default (`skip-verify`, encrypted like pg `require`). |
 | DU1b | MongoDB | **Added (owner, 2026-11-21)**: submodule `mongox` on driver v2 (v2.10.1). No official otelmongo for v2 exists (contrib only ships v1), so kitchen has a small CommandMonitor/PoolMonitor → OTel bridge (DB semconv, no command bodies); replace it when an official v2 integration ships. TLS required unless the URI chooses or all hosts are loopback. No repository wrapper: use the driver API. |
-| DU2 | DB API | **pgxpool is the core** (`pg.Open` → `*pgxpool.Pool`). gorm is an adapter submodule `pg/gorm` that opens `*gorm.DB` **on the same pool**. |
+| DU2 | DB API | **pgxpool is the core** (`pgx.Open` → `*pgxpool.Pool`). gorm is an adapter submodule `pgx/gorm` that opens `*gorm.DB` **on the same pool**. |
 | DU3 | Migration tool | **goose v3.30.1** (owner, 2026-11-21; replaces golang-migrate v4.20.1). The old reason for golang-migrate — no state migration for existing service databases — no longer applies (kitchen is a personal library). goose runs each migration in a transaction (no dirty state), has a context/slog Provider API, Go migrations, and Postgres + MySQL lockers. Files: `<version>_<name>.sql` with `-- +goose Up/Down`; history table `goose_db_version`. |
 | DU4 | Who runs migrations | **Library + CLI sharing one code path**: `migrate` package (embed.FS, at service start) and `migrate/cmd/kmigrate` binary (for a separate migrations repo or job). |
-| DU5 | Migrate locking / failures | Postgres: goose session advisory lock; MySQL: goose lock table (`goose_lock`); both bounded by `LockTimeout` (default 1m). A failed migration rolls back its transaction, so there is no dirty state, `DirtyError` or `Force`. Nothing pending → nil. Dialects: Postgres and MySQL (owner, 2026-11-21). `Open` connects via `pg.Open` / `mysqlx.Open` (same TLS defaults). |
+| DU5 | Migrate locking / failures | Postgres: goose session advisory lock; MySQL: goose lock table (`goose_lock`); both bounded by `LockTimeout` (default 1m). A failed migration rolls back its transaction, so there is no dirty state, `DirtyError` or `Force`. Nothing pending → nil. Dialects: Postgres and MySQL (owner, 2026-11-21). `Open` connects via `pgx.Open` / `mysqlx.Open` (same TLS defaults). |
 | DU6 | Object storage | Thin interface in core (`objstore.Bucket`, `objstore.Signer`, `objstore/memstore` fake); GCS in submodule `objstore/gcs`, S3 in `objstore/s3` (owner, 2026-11-21). No gocloud.dev. Renamed from `blob` (owner, 2026-11-21). |
 | DU7 | objstore extras | Keep `objstore.NewObjectKey` (same `category/20060102/<xid>.ext` layout, `path.Join`) and `PublicURL` (CDN base, escaped). Drop `uploader.File` DTO, `KB/MB`, V1 `Engine`. MIME→ext via stdlib `mime` + small table. |
 | DU8 | Cache tiers | Generic `cache.Cache[V]`: optional L1 (otter v2, short TTL, size-bounded) + optional L2 (Redis `UniversalClient`), `GetOrLoad` with singleflight. L1 cross-pod invalidation = TTL only (no pub/sub). |
 | DU9 | Cache failure | **Fail-open**: Redis error → log + metric, call loader, skip L2 write. Optional `NegativeTTL` (default 0 = off) for `ErrNotFound`. TTL jitter (default ±10%). |
 | DU10 | Cache API | `Get`, `Set`, `Delete(keys...)`, `GetOrLoad`, `GetMany`, `GetOrLoadMany` (MGET + batch loader), `DeleteByPrefix` (SCAN + UNLINK on every shard via `redisx.ForEachShard`: Cluster masters, Ring shards). `Codec[V]`, default `encoding/json`. Raw ops (SetNX/H*/Incr) → use go-redis directly. |
 | DU11 | Redis open | New package `redisx`: `Config` → `redis.NewUniversalClient` (standalone/Cluster/Sentinel) + OTel (redisotel) + Ping. |
-| DU12 | pg defaults | pgx defaults + explicit overrides; `SSLMode` default `require` (owner, 2026-11-21: never plaintext unless `disable` is explicit); no default `TimeZone`; password escaped; ping before return; `QueryExecMode` selectable (PgBouncer → `simple_protocol`/`exec`). |
+| DU12 | pgx defaults | pgx defaults + explicit overrides; `SSLMode` default `require` (owner, 2026-11-21: never plaintext unless `disable` is explicit); no default `TimeZone`; password escaped; ping before return; `QueryExecMode` selectable (PgBouncer → `simple_protocol`/`exec`). |
 | DU13 | utils | Drop `vn` entirely (0 call sites). `timex`: `Parse`/`MustParse` + start/end helpers that keep the input location; no VN constant, no embedded tzdata. Slice/map helpers: **use `github.com/samber/lo` directly** (owner, 2026-11-21, reuse rule: zero-dependency, widely used, already in 5 services); kitchen's `xslices`/`xmaps` were removed. `ParseTemplate` stays dropped: services use `text/template` (the old `html/template` escaped quotes in LLM prompts). Drop everything stdlib covers. |
 | DU14 | parallel / crawl | `parallel` **dropped** (use `errgroup.SetLimit`); its only real use, best-effort crawling of citation URLs, became `webmeta.FetchAll` (owner, 2026-11-21; conc v0.3.0 is stale, pond v2 adds a dependency errgroup makes unnecessary). `crawl` → `webmeta` with SSRF-safe defaults, x/net/html parser (goquery dropped; owner re-confirmed 2026-11-21 after comparing otiai10/opengraph v2.2.0, dyatlov/go-opengraph v1.0.1 (stale) and goquery v1.14.0). Fetching goes through **`httpx` with `WithSSRFGuard`** (owner, 2026-11-21: one SSRF guard in kitchen; webmeta's own guard allowed any port and missed Teredo/fec0). |
 
@@ -34,25 +34,25 @@ the data-utils session). Dependency versions verified the same day via
 |---|---|---|
 | `cache/` | core | go-redis v9.23.0, otter v2.4.0, x/sync (singleflight) |
 | `redisx/` | core | go-redis v9.23.0, redisotel v9.23.0 |
-| `pg/` | core | pgx v5.13.0, otelpgx v0.13.0, pgerrcode |
+| `pgx/` | core | pgx v5.13.0, otelpgx v0.13.0, pgerrcode |
 | `objstore/`, `objstore/memstore/` | core | rs/xid v1.6.0 |
 | `timex/` | core | none |
 | `webmeta/` | core | golang.org/x/net (html, html/charset), `httpx` |
 | `mysqlx/` | core | go-sql-driver/mysql v1.10.2, XSAM/otelsql v0.44.0 |
 | `mysqlx/gorm/` | **submodule** `github.com/dungnh3/kitchen/mysqlx/gorm` | gorm v1.31.2, gorm mysql v1.6.0, core, `log/gormlog` |
 | `mongox/` | **submodule** `github.com/dungnh3/kitchen/mongox` | mongo-driver v2.10.1, core (errs) |
-| `pg/gorm/` | **submodule** `github.com/dungnh3/kitchen/pg/gorm` | gorm v1.31.2, gorm postgres v1.6.3, pgx, `log/gormlog` (tag it first) |
-| `migrate/` (+ `cmd/kmigrate`) | **submodule** `github.com/dungnh3/kitchen/migrate` | goose v3.30.1, pgx, core (`pg`, `mysqlx`) |
+| `pgx/gorm/` | **submodule** `github.com/dungnh3/kitchen/pgx/gorm` | gorm v1.31.2, gorm postgres v1.6.3, pgx, `log/gormlog` (tag it first) |
+| `migrate/` (+ `cmd/kmigrate`) | **submodule** `github.com/dungnh3/kitchen/migrate` | goose v3.30.1, pgx, core (`pgx`, `mysqlx`) |
 | `objstore/gcs/` | **submodule** `github.com/dungnh3/kitchen/objstore/gcs` | cloud.google.com/go/storage v1.71.0 |
 | `objstore/s3/` | **submodule** `github.com/dungnh3/kitchen/objstore/s3` | aws-sdk-go-v2 service/s3 v1.116.0 |
 
 Submodules depend on core only where they need its types (`objstore/gcs`, `objstore/s3` →
-`objstore`). `pg/gorm` and `migrate` take a `*pgxpool.Pool` and do not import
-`pg`, so they can be versioned independently.
+`objstore`). `pgx/gorm` and `migrate` take a `*pgxpool.Pool` and do not import
+`pgx`, so they can be versioned independently.
 
 ## Package APIs
 
-### `pg`
+### `pgx`
 
 ```go
 type Config struct {
@@ -79,25 +79,25 @@ func WithoutPoolStats() Option                        // otelpgx never unregiste
 func MapError(err error) error // pgx/Postgres error → errs sentinel (cause kept for logs)
 ```
 Readiness uses the pool's own `Ping`: `server.Check{Name: "postgres", Func: pool.Ping}`
-(`pg.Ping` was removed as a duplicate, owner 2026-11-21). One pool per database
+(`pgx.Ping` was removed as a duplicate, owner 2026-11-21). One pool per database
 per process: otelpgx's stats callbacks live as long as the MeterProvider.
 
 `MapError` (owner, 2026-11-21) uses `jackc/pgerrcode` constants:
-`pgx.ErrNoRows` → `ErrNotFound`; 23505/23P01 → `ErrAlreadyExists`; other class 23 →
+`jpgx.ErrNoRows` → `ErrNotFound`; 23505/23P01 → `ErrAlreadyExists`; other class 23 →
 `ErrFailedPrecondition`; class 22 → `ErrInvalidArgument`; 40001/40P01 → `ErrAborted`;
 57014 → `ErrDeadlineExceeded`; class 08, 53300, 57P01–57P03 → `ErrUnavailable`;
 anything else unchanged. Clients see only the sentinel message, so constraint
 names do not leak.
 
-### `pg/gorm` (package `pggorm`)
+### `pgx/gorm` (package `pgxgorm`)
 
 ```go
 type Options struct { Log *gormlog.Config; Config *gorm.Config }
 func Open(pool *pgxpool.Pool, opts Options) (*gorm.DB, error)
 ```
 Uses `stdlib.OpenDBFromPool(pool)` (closing it never closes the pool) and
-`gorm.io/driver/postgres` with `Conn:`. `pggorm.MapError` = `pg.MapError` +
-`gorm.ErrRecordNotFound` → `ErrNotFound` (so pg/gorm now requires core). Logging via `log/gormlog` (owner, 2026-11-21:
+`gorm.io/driver/postgres` with `Conn:`. `pgxgorm.MapError` = `pgx.MapError` +
+`gorm.ErrRecordNotFound` → `ErrNotFound` (so pgx/gorm now requires core). Logging via `log/gormlog` (owner, 2026-11-21:
 one gorm logger; gorm's built-in `NewSlogLogger` formats SQL for every query and
 ignores the level for slow queries). `Log == nil` → gormlog defaults +
 `IgnoreRecordNotFound`.
@@ -165,7 +165,7 @@ type Config struct {
 }
 func NewPostgres(pool *pgxpool.Pool, cfg Config) (*Migrator, error) // never closes pool
 func NewMySQL(db *sql.DB, cfg Config) (*Migrator, error)           // never closes db
-func Open(ctx, d Dialect, dsn string, cfg Config) (*Migrator, error) // via pg.Open/mysqlx.Open, owns the connection (CLI)
+func Open(ctx, d Dialect, dsn string, cfg Config) (*Migrator, error) // via pgx.Open/mysqlx.Open, owns the connection (CLI)
 func (m *Migrator) Up(ctx) error
 func (m *Migrator) Down(ctx, n int) error        // exactly n steps, n>=1; stops when nothing is left
 func (m *Migrator) To(ctx, version int64) error  // up or down; 0 reverts everything
@@ -365,13 +365,13 @@ old crawl fallback. `Metadata.URL` is the final URL with query values redacted.
 Until core is tagged `v0.1.0`, develop it with an uncommitted `go.work` that
 also contains `replace github.com/dungnh3/kitchen v0.1.0 => ./` (the go
 command reads the required version's go.mod even in workspace mode).
-`pg/gorm`, `mysqlx/gorm`, `mongox` and `migrate` require core `v0.1.0` (and `log/gormlog v0.1.0` for the gorm adapters).
+`pgx/gorm`, `mysqlx/gorm`, `mongox` and `migrate` require core `v0.1.0` (and `log/gormlog v0.1.0` for the gorm adapters).
 
 ## Testing
 
 - `-race` everywhere, `goleak.VerifyTestMain` in packages with goroutines.
 - `cache`, `redisx`: miniredis v2.40.0 (+ L1 TTL with `testing/synctest` where possible).
-- `pg`, `pg/gorm`, `migrate`, `mysqlx`, `mysqlx/gorm`, `mongox`: testcontainers-go v0.45.0 (postgres:18-alpine, mysql:8.4, mongo:8); skipped
+- `pgx`, `pgx/gorm`, `migrate`, `mysqlx`, `mysqlx/gorm`, `mongox`: testcontainers-go v0.45.0 (postgres:18-alpine, mysql:8.4, mongo:8); skipped
   with `t.Skip` when Docker is unavailable or `-short`.
 - `objstore/s3`: gofakes3 in-process (multipart, abort, If-None-Match, presign).
 - `objstore/gcs`: fake-gcs-server in-process for read/write; signing tested with
@@ -388,7 +388,7 @@ recommended / best system-and-security option without asking.
 
 | # | Decision | Alternatives | Pros | Cons |
 |---|---|---|---|---|
-| DD1 | `migrate.NewPostgres` takes `*pgxpool.Pool` (wrapped with `stdlib.OpenDBFromPool`); `NewMySQL` takes `*sql.DB` and never calls goose's `Provider.Close` | pass the caller's `*sql.DB` to goose and close it | goose's `Provider.Close` closes the DB it was given; the caller's pool must survive | gorm-only Postgres callers pass the pool (they have it via `pg.Open`) |
+| DD1 | `migrate.NewPostgres` takes `*pgxpool.Pool` (wrapped with `stdlib.OpenDBFromPool`); `NewMySQL` takes `*sql.DB` and never calls goose's `Provider.Close` | pass the caller's `*sql.DB` to goose and close it | goose's `Provider.Close` closes the DB it was given; the caller's pool must survive | gorm-only Postgres callers pass the pool (they have it via `pgx.Open`) |
 | DD2 | No `DownAll`; reverting everything is the explicit `To(ctx, 0)` | add `DownAll` | an accidental full drop needs an explicit target | — |
 | DD3 | `cache` emits a metric counter but no spans | span per lookup | Redis spans already come from redisotel; no span noise on hot paths | L1 hits are not visible in traces |
 | DD4 | Cache Redis payload = 1-byte tag + codec bytes | plain JSON + separate negative marker key | one GET resolves value vs negative entry | not readable by old clients (new prefix needed) |
@@ -399,9 +399,9 @@ recommended / best system-and-security option without asking.
 | DD7 | `webmeta` parses a truncated body instead of rejecting large pages | `ErrTooLarge` | metadata lives in `<head>`; big pages still work | none significant |
 | DD8 | `webmeta` uses `httpx`'s SSRF guard (non-public ranges incl. CGNAT, NAT64, 6to4, Teredo; ports 80/443 only); forbids URL credentials; ignores proxies | own guard (removed 2026-11-21) | one guard to maintain; closes port-scan and Teredo bypasses | internal targets need `Config.Allow` (+ `Ports`) |
 | DD9 | `webmeta` has no custom-transport escape hatch (httpx rejects `WithTransport` with the guard) | `Config.Transport` (removed 2026-11-21) | the guard cannot be bypassed by configuration | customise via `ClientOptions` only |
-| DD10 | `pg.Config.SSLMode`, `Host` or `Port` is an error when `URL` is also set | rewrite the URL / patch pgx fallbacks | pgx derives TLS ServerName and fallback hosts from the URL; a late Host override sent the `prefer` plaintext fallback (and `verify-full` name check) to the URL host | set host, port, sslmode inside URL |
+| DD10 | `pgx.Config.SSLMode`, `Host` or `Port` is an error when `URL` is also set | rewrite the URL / patch pgx fallbacks | pgx derives TLS ServerName and fallback hosts from the URL; a late Host override sent the `prefer` plaintext fallback (and `verify-full` name check) to the URL host | set host, port, sslmode inside URL |
 | DD11 | otelpgx with SQL text excluded from span attributes | include SQL | avoids leaking literals/PII into traces | less detail in traces |
-| DD12 | `pggorm` logs with parameterized queries by default | log full SQL with values | no PII in logs | `Log: &gormlog.Config{LogParams: true}` to debug |
+| DD12 | `pgxgorm` logs with parameterized queries by default | log full SQL with values | no PII in logs | `Log: &gormlog.Config{LogParams: true}` to debug |
 | DD13 | `objstore/gcs` and `objstore/s3` require core `v0.1.0` (not a pseudo-version) | depend on an unpublished pseudo-version | matches D1 tagging | CI tidy for them fails until core `v0.1.0` is tagged |
 | DD14 | `objstore.ExtensionByType("image/jpeg")` = `.jpg` | `.jpeg` (old map) | conventional extension | object names differ from old keys |
 | DD15 | Integration tests use testcontainers `postgres:18-alpine`, skipped with `-short` or `KITCHEN_SKIP_DOCKER` | env-provided DSN | hermetic | needs Docker locally/CI |

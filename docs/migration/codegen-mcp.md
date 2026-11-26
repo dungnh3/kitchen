@@ -224,7 +224,7 @@ The CLI writes the project and runs `go mod tidy -e`, `buf generate` and
 | `internal/middleware` (recovery, tracing, auth selector regex, App Check, guest, mock user, blacklist) | kitchen `server` (recovery, request info, errors, validation, tracing) + `auth` + `ratelimit` |
 | Auth through gRPC calls to the user service | `auth.NewJWKS` (fail-closed); for opaque tokens add `auth.NewIntrospection` |
 | `localization` + `internal/errors/langs/en.json` | `errs` + `i18n` (built-in catalog; add messages with `i18n.WithFS`) |
-| gorm + dbresolver + lib/pq, `internal/repositories` errors | `pg` (pgx, TLS required) + sqlc; `pg.MapError` gives `errs` sentinels |
+| gorm + dbresolver + lib/pq, `internal/repositories` errors | `pgx` (pgx, TLS required) + sqlc; `pgx.MapError` gives `errs` sentinels |
 | `migrate` CLI in the Makefile | `server migrate up\|down\|status` (goose, embedded, advisory lock) or `DB_MIGRATE_ON_START=true` |
 | zap global logger, Coralogix tracing code | `log` (slog) and `otelx/sdk` (standard `OTEL_*` variables) |
 | `pkg/gcppubsub` publisher + retry-go | `pubsub` adapters; transactional outbox `pubsub/outbox/pgx` |

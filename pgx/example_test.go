@@ -1,4 +1,4 @@
-package pg_test
+package pgx_test
 
 import (
 	"context"
@@ -9,12 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	jpgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/dungnh3/kitchen/errs"
 	"github.com/dungnh3/kitchen/log"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/dungnh3/kitchen/server"
 )
 
@@ -26,11 +26,11 @@ func Example() {
 	opts, _ := log.OptionsFromEnv()
 	logger, _ := log.Setup(opts)
 
-	pool, err := pg.Open(ctx, pg.Config{
+	pool, err := pgx.Open(ctx, pgx.Config{
 		URL:             os.Getenv("DATABASE_URL"),
 		ApplicationName: "orders",
 		RuntimeParams:   map[string]string{"timezone": "UTC"},
-	}, pg.WithLogger(logger))
+	}, pgx.WithLogger(logger))
 	if err != nil {
 		logger.ErrorContext(ctx, "postgres", log.Err(err))
 		return
@@ -53,13 +53,13 @@ func Example() {
 
 func ExampleOpen() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{
+	pool, err := pgx.Open(ctx, pgx.Config{
 		URL:             os.Getenv("DATABASE_URL"),
 		MaxConns:        50,
 		ApplicationName: "orders",
 		// Behind PgBouncer in transaction mode:
-		// QueryExecMode: pg.ExecModeExec,
-	}, pg.WithLogger(log.Default()))
+		// QueryExecMode: pgx.ExecModeExec,
+	}, pgx.WithLogger(log.Default()))
 	if err != nil {
 		return
 	}
@@ -72,7 +72,7 @@ func ExampleOpen() {
 // Fields instead of a URL. The password is escaped for you.
 func ExampleOpen_fields() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{
+	pool, err := pgx.Open(ctx, pgx.Config{
 		Host:     "db.internal",
 		User:     "orders",
 		Password: os.Getenv("PG_PASSWORD"),
@@ -89,7 +89,7 @@ func ExampleOpen_fields() {
 // credentials and data in plaintext.
 func ExampleOpen_localNoTLS() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{
+	pool, err := pgx.Open(ctx, pgx.Config{
 		Host:     "localhost",
 		User:     "app",
 		Password: os.Getenv("PG_PASSWORD"),
@@ -105,7 +105,7 @@ func ExampleOpen_localNoTLS() {
 // Readiness: the pool's own Ping is a server.Check func.
 func ExampleOpen_readiness() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")})
+	pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")})
 	if err != nil {
 		return
 	}
@@ -114,11 +114,11 @@ func ExampleOpen_readiness() {
 }
 
 // DBTX is the interface sqlc generates for sql_package "pgx/v5".
-// *pgxpool.Pool and pgx.Tx both satisfy it.
+// *pgxpool.Pool and jpgx.Tx both satisfy it.
 type DBTX interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (jpgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) jpgx.Row
 }
 
 // Queries stands in for sqlc's generated type (db.New(pool), q.WithTx(tx)).
@@ -126,7 +126,7 @@ type Queries struct{ db DBTX }
 
 func New(db DBTX) *Queries { return &Queries{db: db} }
 
-func (q *Queries) WithTx(tx pgx.Tx) *Queries { return &Queries{db: tx} }
+func (q *Queries) WithTx(tx jpgx.Tx) *Queries { return &Queries{db: tx} }
 
 func (q *Queries) MarkPaid(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, "UPDATE orders SET paid = true WHERE id = $1", id)
@@ -136,31 +136,31 @@ func (q *Queries) MarkPaid(ctx context.Context, id int64) error {
 // sqlc on the pool, with a transaction and MapError at the repository edge.
 func ExampleOpen_sqlc() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")})
+	pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")})
 	if err != nil {
 		return
 	}
 	defer pool.Close()
 
 	q := New(pool)
-	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+	err = jpgx.BeginFunc(ctx, pool, func(tx jpgx.Tx) error {
 		return q.WithTx(tx).MarkPaid(ctx, 42)
 	})
-	if err = pg.MapError(err); errors.Is(err, errs.ErrAborted) {
+	if err = pgx.MapError(err); errors.Is(err, errs.ErrAborted) {
 		// serialization failure or deadlock: retry the transaction
 		return
 	}
 }
 
 func ExampleMapError() {
-	err := pg.MapError(&pgconn.PgError{Code: "23505", ConstraintName: "users_email_key"})
+	err := pgx.MapError(&pgconn.PgError{Code: "23505", ConstraintName: "users_email_key"})
 	fmt.Println(errors.Is(err, errs.ErrAlreadyExists), errs.Code(err))
 	// Output: true AlreadyExists
 }
 
 // A repository maps errors once; handlers return them as they are.
 func ExampleMapError_notFound() {
-	err := pg.MapError(fmt.Errorf("get order 42: %w", pgx.ErrNoRows))
+	err := pgx.MapError(fmt.Errorf("get order 42: %w", jpgx.ErrNoRows))
 	fmt.Println(errors.Is(err, errs.ErrNotFound))
 	fmt.Println(errs.Code(err))
 	// Output:
@@ -171,18 +171,18 @@ func ExampleMapError_notFound() {
 // ParseConfig plus OpenConfig, for pgx hooks such as AfterConnect.
 func ExampleParseConfig() {
 	ctx := context.Background()
-	pc, err := pg.ParseConfig(pg.Config{
+	pc, err := pgx.ParseConfig(pgx.Config{
 		URL:              os.Getenv("DATABASE_URL"),
 		StatementTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		return
 	}
-	pc.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+	pc.AfterConnect = func(ctx context.Context, c *jpgx.Conn) error {
 		_, err := c.Exec(ctx, "SET search_path TO orders, public")
 		return err
 	}
-	pool, err := pg.OpenConfig(ctx, pc)
+	pool, err := pgx.OpenConfig(ctx, pc)
 	if err != nil {
 		return
 	}
@@ -193,8 +193,8 @@ func ExampleParseConfig() {
 // which are never unregistered from the MeterProvider.
 func ExampleWithoutPoolStats() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("TENANT_DATABASE_URL")},
-		pg.WithoutPoolStats())
+	pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("TENANT_DATABASE_URL")},
+		pgx.WithoutPoolStats())
 	if err != nil {
 		return
 	}

@@ -110,7 +110,7 @@ idempotent**.
   [otelx/USAGE.md](../otelx/USAGE.md)); publishers inject the trace context
   into message attributes and the subscriber continues it, so one trace spans
   producer and consumer.
-- **Databases and Redis.** The outbox takes a pool from `pg.Open`, the reply
+- **Databases and Redis.** The outbox takes a pool from `pgx.Open`, the reply
   broker a client from `redisx.Open`.
 - **Server.** Run subscribers next to `server.Run` under the same signal
   context; see [server/USAGE.md](../server/USAGE.md) for the full wiring.
@@ -264,7 +264,7 @@ message is written in the same transaction, and a relay publishes it later
 (from the `outbox/pgx` example):
 
 ```go
-pool, err := pg.Open(ctx, pg.Config{URL: "postgres://localhost/app"})
+pool, err := pgx.Open(ctx, pgx.Config{URL: "postgres://localhost/app"})
 if err != nil {
 	logger.ErrorContext(ctx, "startup failed", log.Err(err))
 	return
@@ -273,7 +273,7 @@ defer pool.Close()
 store, _ := outboxpgx.New(pool)
 
 // Business write and message in one transaction.
-err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+err = jpgx.BeginFunc(ctx, pool, func(tx jpgx.Tx) error {
 	if _, err := tx.Exec(ctx, "UPDATE accounts SET balance = balance - 10 WHERE id = 1"); err != nil {
 		return err
 	}

@@ -16,7 +16,7 @@ go install github.com/dungnh3/kitchen/migrate/cmd/kmigrate@latest
 ```
 
 `migrate` is its own submodule. It depends on the core module for `log`,
-`pg` and `mysqlx`.
+`pgx` and `mysqlx`.
 
 ## Quick start
 
@@ -41,7 +41,7 @@ var migrations embed.FS
 
 ```go
 ctx := context.Background()
-pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")})
+pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")})
 if err != nil {
 	return
 }
@@ -107,9 +107,9 @@ Connection settings:
 
 | Constructor | kmigrate | Connection |
 |---|---|---|
-| `NewPostgres(pool, cfg)` | | Your `*pgxpool.Pool` from `pg.Open` |
+| `NewPostgres(pool, cfg)` | | Your `*pgxpool.Pool` from `pgx.Open` |
 | `NewMySQL(db, cfg)` | | Your `*sql.DB` from `mysqlx.Open` |
-| `Open(ctx, dialect, dsn, cfg)` | `-dialect postgres\|mysql`, `-database DSN` (default `$DATABASE_URL`) | Opened with `pg.Open`/`mysqlx.Open`, 2 connections, closed by `Close` |
+| `Open(ctx, dialect, dsn, cfg)` | `-dialect postgres\|mysql`, `-database DSN` (default `$DATABASE_URL`) | Opened with `pgx.Open`/`mysqlx.Open`, 2 connections, closed by `Close` |
 
 `Open` and `kmigrate` use the same TLS defaults as services: TLS is required
 unless the DSN turns it off (`sslmode=disable`, `tls=false`). Turn it off
@@ -140,7 +140,7 @@ if err != nil {
 	logger.WarnContext(ctx, "invalid log config", log.Err(err))
 }
 
-pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")}, pg.WithLogger(logger))
+pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")}, pgx.WithLogger(logger))
 if err != nil {
 	logger.ErrorContext(ctx, "postgres", log.Err(err))
 	return
@@ -372,7 +372,7 @@ cfg := migrate.Config{
 - Log record `migrate: applied` per migration, with `direction` (`up` or
   `down`), `version`, `path` and `duration`.
 - goose's own messages go through the same logger.
-- Queries run on your pool or `*sql.DB`, so the spans and metrics from `pg`
+- Queries run on your pool or `*sql.DB`, so the spans and metrics from `pgx`
   and `mysqlx` cover them. `migrate` adds no metrics of its own.
 
 ## Production checklist

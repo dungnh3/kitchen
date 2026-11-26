@@ -244,7 +244,7 @@ The defaults:
 - SQL is logged with placeholders. Parameter values are never logged.
 - The source location points at your code, not at gorm.
 
-`pg/gorm` and `mysqlx/gorm` already install it, with
+`pgx/gorm` and `mysqlx/gorm` already install it, with
 `IgnoreRecordNotFound: true`. Override it with their `Options.Log`. They
 trace queries through the pool, so you need no gorm tracing plugin.
 

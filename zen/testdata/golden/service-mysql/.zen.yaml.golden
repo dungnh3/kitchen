@@ -15,6 +15,6 @@ answers:
 managed:
   .dockerignore: sha256:37f8ea97d732a2a60bd118fa1d0e8368cc78c9c0899fd675bcae81d26e3ad0cf
   .github/workflows/ci.yml: sha256:28b3e0ca69e95cca6d49ee60db93fb631d586c4806c18f71e552a6322307d62a
-  .golangci.yml: sha256:d278f0ed4315ff465e8d4bccb0da1295f2abc7e1e7004145978764c4c3bc6a7a
+  .golangci.yml: sha256:10f982d3da078a8feecaa4f10d0c77b9c77ddef3d61d77fb77fffa060829ed95
   Dockerfile: sha256:2cd0371f01883b1e1bc937c4c6cf1e7b7717fb609f53da51e7ef05afba094802
   buf.gen.yaml: sha256:ea8a8e5f5be9fc112df8843f81c435c425f4953580d625b0662b2deb044267e6

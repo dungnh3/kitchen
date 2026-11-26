@@ -14,7 +14,7 @@ import (
 	"github.com/dungnh3/kitchen/log"
 	"github.com/dungnh3/kitchen/migrate"
 	"github.com/dungnh3/kitchen/mysqlx"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/dungnh3/kitchen/server"
 )
 
@@ -26,7 +26,7 @@ var mysqlMigrations embed.FS
 
 func ExampleNewPostgres() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")})
+	pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")})
 	if err != nil {
 		return
 	}
@@ -55,7 +55,7 @@ func Example() {
 		logger.WarnContext(ctx, "invalid log config", log.Err(err))
 	}
 
-	pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")}, pg.WithLogger(logger))
+	pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")}, pgx.WithLogger(logger))
 	if err != nil {
 		logger.ErrorContext(ctx, "postgres", log.Err(err))
 		return
@@ -136,7 +136,7 @@ func ExampleOpen() {
 func ExampleMigrator_HasPending() {
 	ctx := context.Background()
 	logger := log.Default()
-	pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")}, pg.WithLogger(logger))
+	pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")}, pgx.WithLogger(logger))
 	if err != nil {
 		return
 	}
@@ -206,7 +206,7 @@ func ExampleMigrator_Down() {
 // for data changes that SQL cannot express.
 func ExampleNewPostgres_goMigrations() {
 	ctx := context.Background()
-	pool, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")})
+	pool, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")})
 	if err != nil {
 		return
 	}

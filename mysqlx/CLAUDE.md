@@ -1,7 +1,7 @@
 # mysqlx: package rules
 
 `mysqlx` is the canonical entry point for MySQL (D7). Keep its defaults in
-line with `pg` and `mongox`.
+line with `pgx` and `mongox`.
 
 ## Safe defaults
 

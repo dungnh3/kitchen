@@ -63,7 +63,7 @@ applies:
 - otelx spans and metrics;
 - server wiring (WithServices, checks, WithRateLimit, ...);
 - auth / xcontext identity;
-- redisx, pg, and so on.
+- redisx, pgx, and so on.
 
 ## Advanced
 

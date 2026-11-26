@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/dungnh3/kitchen/errs"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/acme/catalog/internal/store"
@@ -27,9 +27,9 @@ func NewBoxes(pool *pgxpool.Pool) *Boxes {
 func (s *Boxes) GetBox(ctx context.Context, id string) (store.Box, error) {
 	row, err := s.q.GetBox(ctx, id)
 	if err != nil {
-		// pg.MapError turns pgx.ErrNoRows into errs.ErrNotFound, constraint
+		// pgx.MapError turns jpgx.ErrNoRows into errs.ErrNotFound, constraint
 		// violations into the matching errs sentinel, and so on.
-		return store.Box{}, pg.MapError(err)
+		return store.Box{}, pgx.MapError(err)
 	}
 	return boxFromRow(row), nil
 }
@@ -41,7 +41,7 @@ func (s *Boxes) ListBoxes(ctx context.Context, after string, limit int32) ([]sto
 	}
 	rows, err := s.q.ListBoxes(ctx, sqlcdb.ListBoxesParams{After: after, PageLimit: limit})
 	if err != nil {
-		return nil, pg.MapError(err)
+		return nil, pgx.MapError(err)
 	}
 	out := make([]store.Box, len(rows))
 	for i, r := range rows {
@@ -54,7 +54,7 @@ func (s *Boxes) ListBoxes(ctx context.Context, after string, limit int32) ([]sto
 func (s *Boxes) CreateBox(ctx context.Context, title string) (store.Box, error) {
 	row, err := s.q.CreateBox(ctx, title)
 	if err != nil {
-		return store.Box{}, pg.MapError(err)
+		return store.Box{}, pgx.MapError(err)
 	}
 	return boxFromRow(row), nil
 }
@@ -63,7 +63,7 @@ func (s *Boxes) CreateBox(ctx context.Context, title string) (store.Box, error) 
 func (s *Boxes) DeleteBox(ctx context.Context, id string) error {
 	n, err := s.q.DeleteBox(ctx, id)
 	if err != nil {
-		return pg.MapError(err)
+		return pgx.MapError(err)
 	}
 	if n == 0 {
 		return errs.ErrNotFound

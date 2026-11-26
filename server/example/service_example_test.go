@@ -13,7 +13,7 @@ import (
 	"github.com/dungnh3/kitchen/i18n"
 	"github.com/dungnh3/kitchen/log"
 	"github.com/dungnh3/kitchen/otelx/sdk"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/dungnh3/kitchen/ratelimit"
 	rlredis "github.com/dungnh3/kitchen/ratelimit/redis"
 	"github.com/dungnh3/kitchen/redisx"
@@ -47,7 +47,7 @@ func run() error {
 		logger.WarnContext(ctx, "invalid log config, using defaults", log.Err(envErr))
 	}
 
-	// 3. Telemetry (OTEL_* env vars). The server, httpx, pg and redisx use
+	// 3. Telemetry (OTEL_* env vars). The server, httpx, pgx and redisx use
 	// the global providers it installs. Logs also go to OTLP.
 	tel, err := sdk.Setup(ctx, sdk.Config{ServiceName: "agents", ServiceVersion: "1.0.0"})
 	if err != nil {
@@ -60,7 +60,7 @@ func run() error {
 	}
 
 	// 4. Dependencies, opened with their canonical packages.
-	db, err := pg.Open(ctx, pg.Config{URL: os.Getenv("DATABASE_URL")})
+	db, err := pgx.Open(ctx, pgx.Config{URL: os.Getenv("DATABASE_URL")})
 	if err != nil {
 		return err
 	}

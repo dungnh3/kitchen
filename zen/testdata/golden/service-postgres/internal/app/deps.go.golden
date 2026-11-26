@@ -11,7 +11,7 @@ import (
 	"github.com/dungnh3/kitchen/log"
 	kprom "github.com/dungnh3/kitchen/otelx/prometheus"
 	"github.com/dungnh3/kitchen/otelx/sdk"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/dungnh3/kitchen/server"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
@@ -119,18 +119,18 @@ func (d *deps) adminOptions() []server.AdminOption {
 }
 
 func openDB(ctx context.Context, cfg config.Config, logger *log.Logger, tel *sdk.Telemetry) (*pgxpool.Pool, error) {
-	pool, err := pg.Open(ctx, pg.Config{
+	pool, err := pgx.Open(ctx, pgx.Config{
 		URL:              cfg.Database.URL,
 		MaxConns:         cfg.Database.MaxConns,
 		StatementTimeout: cfg.Database.StatementTimeout,
 		ApplicationName:  Name,
-		// pg sets no time zone; sessions use UTC so now() and casts of
+		// pgx sets no time zone; sessions use UTC so now() and casts of
 		// timestamptz to text do not depend on the server's setting.
 		RuntimeParams: map[string]string{"timezone": "UTC"},
 	},
-		pg.WithLogger(logger),
-		pg.WithTracerProvider(tel.TracerProvider()),
-		pg.WithMeterProvider(tel.MeterProvider()),
+		pgx.WithLogger(logger),
+		pgx.WithTracerProvider(tel.TracerProvider()),
+		pgx.WithMeterProvider(tel.MeterProvider()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: %w", err)

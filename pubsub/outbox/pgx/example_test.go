@@ -3,10 +3,10 @@ package pgx_test
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5"
+	jpgx "github.com/jackc/pgx/v5"
 
 	"github.com/dungnh3/kitchen/log"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/dungnh3/kitchen/pubsub"
 	"github.com/dungnh3/kitchen/pubsub/memory"
 	"github.com/dungnh3/kitchen/pubsub/outbox"
@@ -16,8 +16,8 @@ import (
 func Example() {
 	ctx := context.Background()
 	logger := log.Default() // main calls log.Setup once
-	// pg.Open: pool sizing, tracing (otelpgx) and metrics, ping on open.
-	pool, err := pg.Open(ctx, pg.Config{URL: "postgres://localhost/app"})
+	// pgx.Open: pool sizing, tracing (otelpgx) and metrics, ping on open.
+	pool, err := pgx.Open(ctx, pgx.Config{URL: "postgres://localhost/app"})
 	if err != nil {
 		logger.ErrorContext(ctx, "startup failed", log.Err(err))
 		return
@@ -26,7 +26,7 @@ func Example() {
 	store, _ := outboxpgx.New(pool)
 
 	// Business write and message in one transaction.
-	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+	err = jpgx.BeginFunc(ctx, pool, func(tx jpgx.Tx) error {
 		if _, err := tx.Exec(ctx, "UPDATE accounts SET balance = balance - 10 WHERE id = 1"); err != nil {
 			return err
 		}

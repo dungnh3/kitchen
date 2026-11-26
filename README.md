@@ -33,7 +33,7 @@ Start with [server](server/USAGE.md), which wires up a complete service.
 | Cache (L1 + Redis) | `cache` | [USAGE](cache/USAGE.md) |
 | Distributed lock | `lease` | [USAGE](lease/USAGE.md) |
 | Object storage (GCS, S3) | `objstore` | [USAGE](objstore/USAGE.md) |
-| PostgreSQL | `pg` (+ `pg/gorm`) | [USAGE](pg/USAGE.md) |
+| PostgreSQL | `pgx` (+ `pgx/gorm`) | [USAGE](pgx/USAGE.md) |
 | MySQL | `mysqlx` (+ `mysqlx/gorm`) | [USAGE](mysqlx/USAGE.md) |
 | MongoDB | `mongox` | [USAGE](mongox/USAGE.md) |
 | Database migrations | `migrate` (+ `kmigrate`) | [USAGE](migrate/USAGE.md) |

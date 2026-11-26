@@ -1,4 +1,4 @@
-package pggorm_test
+package pgx_test
 
 import (
 	"testing"

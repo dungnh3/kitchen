@@ -107,7 +107,7 @@ linters:
             - pkg: github.com/golang-migrate/migrate
               desc: "D7 migrations: kitchen/migrate (goose inside)"
             - pkg: github.com/lib/pq
-              desc: "D7 SQL: kitchen/pg (pgx v5)"
+              desc: "D7 SQL: kitchen/pgx (jackc/pgx v5)"
             - pkg: github.com/go-playground/validator
               desc: "D7 validation: protovalidate through kitchen/server and kitchen/errs/validation"
             - pkg: github.com/r3labs/sse
@@ -196,11 +196,11 @@ linters:
               desc: "D7 SQL: kitchen/mysqlx"
             - pkg: gorm.io/driver/mysql
               desc: "D7 SQL: kitchen/mysqlx/gorm"
-        d7-pg:
-          files: ["$all", "!**/pg/**", "!$test"]
+        d7-pgx:
+          files: ["$all", "!**/pgx/gorm/**", "!$test"]
           deny:
             - pkg: gorm.io/driver/postgres
-              desc: "D7 SQL: kitchen/pg/gorm"
+              desc: "D7 SQL: kitchen/pgx/gorm"
         d7-mongox:
           files: ["$all", "!**/mongox/**", "!$test"]
           deny:
@@ -267,10 +267,10 @@ linters:
         - pattern: ^(otelhttp|otelgrpc)\.(NewHandler|NewMiddleware|NewTransport|NewServerHandler|NewClientHandler)$
           msg: "D7 otelx: instrument with otelx.HTTPHandler, otelx.HTTPTransport, otelx.GRPCServerHandler, otelx.GRPCClientHandler"
         - pattern: ^(pgxpool\.(New|NewWithConfig)|pgx\.(Connect|ConnectConfig))$
-          msg: "D7 pg: open PostgreSQL with kitchen/pg.Open (pool, OTel, health); take a *pgxpool.Pool"
+          msg: "D7 pgx: open PostgreSQL with kitchen/pgx.Open (pool, OTel, health); take a *pgxpool.Pool"
         - pattern: ^sql\.Open$
           pkg: ^database/sql$
-          msg: "D7 pg/mysqlx: open SQL databases with kitchen/pg or kitchen/mysqlx"
+          msg: "D7 pgx/mysqlx: open SQL databases with kitchen/pgx or kitchen/mysqlx"
     sloglint:
       # One style per call: all key-value pairs or all slog.Attr.
       no-mixed-args: true
@@ -319,11 +319,11 @@ linters:
       - path: (^|/)otelx/
         text: because "D7 otelx
         linters: [forbidigo]
-      - path: (^|/)pg/
-        text: because "D7 pg
+      - path: ^pgx/
+        text: because "D7 pgx
         linters: [forbidigo]
       - path: (^|/)mysqlx/
-        text: because "D7 pg/mysqlx
+        text: because "D7 pgx/mysqlx
         linters: [forbidigo]
 formatters:
   enable:

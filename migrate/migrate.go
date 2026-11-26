@@ -38,7 +38,7 @@ import (
 
 	"github.com/dungnh3/kitchen/log"
 	"github.com/dungnh3/kitchen/mysqlx"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 )
 
 // Dialect selects the database.
@@ -195,14 +195,14 @@ func newMigrator(d goose.Dialect, db *sql.DB, cfg Config, lockOpt goose.Provider
 	return &Migrator{p: p, logger: logger}, nil
 }
 
-// Open connects with pg.Open or mysqlx.Open (same TLS defaults and
+// Open connects with pgx.Open or mysqlx.Open (same TLS defaults and
 // validation as services use) and returns a Migrator that owns the
 // connection; Close closes it. Intended for CLIs and jobs.
 func Open(ctx context.Context, d Dialect, dsn string, cfg Config) (*Migrator, error) {
 	switch d {
 	case Postgres, "":
-		pool, err := pg.Open(ctx, pg.Config{URL: dsn, MaxConns: 2, ApplicationName: "kmigrate"},
-			pg.WithLogger(cfg.Logger), pg.WithoutPoolStats())
+		pool, err := pgx.Open(ctx, pgx.Config{URL: dsn, MaxConns: 2, ApplicationName: "kmigrate"},
+			pgx.WithLogger(cfg.Logger), pgx.WithoutPoolStats())
 		if err != nil {
 			return nil, fmt.Errorf("migrate: %w", err)
 		}

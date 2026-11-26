@@ -1,4 +1,4 @@
-package pg_test
+package pgx_test
 
 import (
 	"context"
@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
+	jpgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/dungnh3/kitchen/errs"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 )
 
 func TestMapError(t *testing.T) {
@@ -24,7 +24,7 @@ func TestMapError(t *testing.T) {
 		in   error
 		want *errs.Error // nil: returned unchanged
 	}{
-		{"no rows", fmt.Errorf("get: %w", pgx.ErrNoRows), errs.ErrNotFound},
+		{"no rows", fmt.Errorf("get: %w", jpgx.ErrNoRows), errs.ErrNotFound},
 		{"unique", pgErr("23505"), errs.ErrAlreadyExists},
 		{"exclusion", pgErr("23P01"), errs.ErrAlreadyExists},
 		{"foreign key", pgErr("23503"), errs.ErrFailedPrecondition},
@@ -44,7 +44,7 @@ func TestMapError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := pg.MapError(tt.in)
+			got := pgx.MapError(tt.in)
 			if tt.want == nil {
 				if got != tt.in { //nolint:errorlint // identity: the input must come back unchanged.
 					t.Fatalf("got %v, want input unchanged", got)
@@ -54,20 +54,20 @@ func TestMapError(t *testing.T) {
 			if !errors.Is(got, tt.want) {
 				t.Fatalf("got %v (code %v), want %v", got, errs.Code(got), tt.want)
 			}
-			if !errors.Is(got, tt.in) && !errors.Is(got, pgx.ErrNoRows) {
+			if !errors.Is(got, tt.in) && !errors.Is(got, jpgx.ErrNoRows) {
 				if _, ok := errors.AsType[*pgconn.PgError](got); !ok {
 					t.Fatal("cause lost")
 				}
 			}
 		})
 	}
-	if pg.MapError(nil) != nil {
+	if pgx.MapError(nil) != nil {
 		t.Fatal("nil must map to nil")
 	}
 }
 
 func TestMapErrorHidesConstraint(t *testing.T) {
-	err := pg.MapError(&pgconn.PgError{Code: "23505", ConstraintName: "users_email_key", Message: "duplicate key"})
+	err := pgx.MapError(&pgconn.PgError{Code: "23505", ConstraintName: "users_email_key", Message: "duplicate key"})
 	st, _ := errs.ToStatus(err)
 	if msg := st.Message(); msg != "already exists" {
 		t.Fatalf("client message = %q", msg)

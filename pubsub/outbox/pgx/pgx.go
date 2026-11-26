@@ -3,7 +3,7 @@
 //
 // Write messages in the same transaction as the business data:
 //
-//	err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+//	err := jpgx.BeginFunc(ctx, pool, func(tx jpgx.Tx) error {
 //	    if _, err := tx.Exec(ctx, "INSERT INTO orders ...", ...); err != nil {
 //	        return err
 //	    }
@@ -36,14 +36,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	jpgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/dungnh3/kitchen/errs"
 	"github.com/dungnh3/kitchen/log"
-	"github.com/dungnh3/kitchen/pg"
+	"github.com/dungnh3/kitchen/pgx"
 	"github.com/dungnh3/kitchen/pubsub"
 	"github.com/dungnh3/kitchen/pubsub/outbox"
 	"github.com/dungnh3/kitchen/timex"
@@ -88,7 +88,7 @@ var (
 var identRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}(\.[A-Za-z_][A-Za-z0-9_]{0,62})?$`)
 
 // New returns a Store using pool, which the caller owns. Create it with
-// [github.com/dungnh3/kitchen/pg.Open] (tracing, metrics, sane pool limits).
+// [github.com/dungnh3/kitchen/pgx.Open] (tracing, metrics, sane pool limits).
 func New(pool *pgxpool.Pool, opts ...Option) (*Store, error) {
 	if pool == nil {
 		return nil, errors.New("outbox/pgx: nil pool")
@@ -100,9 +100,9 @@ func New(pool *pgxpool.Pool, opts ...Option) (*Store, error) {
 	if !identRE.MatchString(s.table) {
 		return nil, fmt.Errorf("outbox/pgx: invalid table name %q", s.table)
 	}
-	s.ident = pgx.Identifier(strings.Split(s.table, ".")).Sanitize()
+	s.ident = jpgx.Identifier(strings.Split(s.table, ".")).Sanitize()
 	s.chanRaw = strings.ReplaceAll(s.table, ".", "_") + "_events"
-	s.channel = pgx.Identifier{s.chanRaw}.Sanitize()
+	s.channel = jpgx.Identifier{s.chanRaw}.Sanitize()
 	if s.prop == nil {
 		s.prop = otel.GetTextMapPropagator()
 	}
@@ -149,14 +149,14 @@ func (s *Store) Schema() string {
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS claim_token bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS %[2]s ON %[1]s (ordering_key, id) WHERE ordering_key <> '' AND dead_at IS NULL;
 CREATE INDEX IF NOT EXISTS %[3]s ON %[1]s (id) WHERE ordering_key = '' AND dead_at IS NULL;`,
-		t, pgx.Identifier{base + "_key_idx"}.Sanitize(), pgx.Identifier{base + "_free_idx"}.Sanitize())
+		t, jpgx.Identifier{base + "_key_idx"}.Sanitize(), jpgx.Identifier{base + "_free_idx"}.Sanitize())
 }
 
 // CreateTable executes Schema. Prefer running Schema through your migration
 // tool in production.
 func (s *Store) CreateTable(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, s.Schema())
-	return pg.MapError(err)
+	return pgx.MapError(err)
 }
 
 // Enqueue inserts msgs for topic within tx and notifies listening relays on
@@ -173,7 +173,7 @@ func (s *Store) CreateTable(ctx context.Context) error {
 // keyed messages of a transaction in one call, or across calls take keys in
 // a consistent order (Postgres aborts one side of a deadlock with SQLSTATE
 // 40P01).
-func (s *Store) Enqueue(ctx context.Context, tx pgx.Tx, topic string, msgs ...*pubsub.Message) error {
+func (s *Store) Enqueue(ctx context.Context, tx jpgx.Tx, topic string, msgs ...*pubsub.Message) error {
 	if tx == nil || topic == "" {
 		return errors.New("outbox/pgx: nil tx or empty topic")
 	}
@@ -213,17 +213,17 @@ func (s *Store) Enqueue(ctx context.Context, tx pgx.Tx, topic string, msgs ...*p
 		// unnest emits the array in order, so the locks are taken in
 		// ascending order.
 		if _, err := tx.Exec(ctx, "SELECT count(pg_advisory_xact_lock(l)) FROM unnest($1::bigint[]) AS u(l)", locks); err != nil {
-			return pg.MapError(fmt.Errorf("outbox/pgx: lock keys: %w", err))
+			return pgx.MapError(fmt.Errorf("outbox/pgx: lock keys: %w", err))
 		}
 	}
 	q := fmt.Sprintf(`INSERT INTO %s (topic, ordering_key, payload, attributes)
 SELECT $1, u.k, u.p, u.a::jsonb FROM unnest($2::text[], $3::bytea[], $4::text[]) WITH ORDINALITY AS u(k, p, a, n)
 ORDER BY u.n`, s.ident)
 	if _, err := tx.Exec(ctx, q, topic, keys, payloads, attrs); err != nil {
-		return pg.MapError(fmt.Errorf("outbox/pgx: enqueue: %w", err))
+		return pgx.MapError(fmt.Errorf("outbox/pgx: enqueue: %w", err))
 	}
 	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, '')", s.chanRaw); err != nil {
-		return pg.MapError(fmt.Errorf("outbox/pgx: notify: %w", err))
+		return pgx.MapError(fmt.Errorf("outbox/pgx: notify: %w", err))
 	}
 	return nil
 }
@@ -357,10 +357,10 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration) ([]ou
 	s.mu.Unlock()
 	rows, err := s.pool.Query(ctx, s.claimQuery(), limit, lease.Milliseconds(), cursor, limit*ageWindowFactor)
 	if err != nil {
-		return nil, pg.MapError(fmt.Errorf("outbox/pgx: claim: %w", err))
+		return nil, pgx.MapError(fmt.Errorf("outbox/pgx: claim: %w", err))
 	}
 	next := ""
-	recs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (outbox.Record, error) {
+	recs, err := jpgx.CollectRows(rows, func(row jpgx.CollectableRow) (outbox.Record, error) {
 		var r outbox.Record
 		var key string
 		var payload []byte
@@ -376,7 +376,7 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration) ([]ou
 		return r, nil
 	})
 	if err != nil {
-		return nil, pg.MapError(fmt.Errorf("outbox/pgx: claim: %w", err))
+		return nil, pgx.MapError(fmt.Errorf("outbox/pgx: claim: %w", err))
 	}
 	// Continue the key scan after the last key it supplied; when it supplied
 	// none, start over from the first key.
@@ -444,11 +444,11 @@ func (s *Store) settle(ctx context.Context, op string, refs []outbox.Ref, q stri
 	}
 	rows, err := s.pool.Query(ctx, q, append([]any{ids, claims}, args...)...)
 	if err != nil {
-		return pg.MapError(fmt.Errorf("outbox/pgx: %s: %w", op, err))
+		return pgx.MapError(fmt.Errorf("outbox/pgx: %s: %w", op, err))
 	}
-	done, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	done, err := jpgx.CollectRows(rows, jpgx.RowTo[int64])
 	if err != nil {
-		return pg.MapError(fmt.Errorf("outbox/pgx: %s: %w", op, err))
+		return pgx.MapError(fmt.Errorf("outbox/pgx: %s: %w", op, err))
 	}
 	if len(done) == len(refs) {
 		return nil

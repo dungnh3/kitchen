@@ -40,7 +40,7 @@ func main() {
 }
 
 func run(args []string) error {
-	// Install kitchen's process logger first: every package (server, pg,
+	// Install kitchen's process logger first: every package (server, pgx,
 	// auth, otelx, ...) logs through log.Default(). LOG_LEVEL, LOG_FORMAT,
 	// LOG_SCHEMA and LOG_OUTPUT configure it; the default output is stdout.
 	// Request logs carry request_id and user_id (set by kitchen/context).
