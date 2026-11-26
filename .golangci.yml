@@ -125,6 +125,11 @@ linters:
           deny:
             - pkg: resty.dev
               desc: "D7 HTTP client: kitchen/httpx"
+        d7-grpcx:
+          files: ["$all", "!**/grpcx/**", "!$test"]
+          deny:
+            - pkg: github.com/sony/gobreaker
+              desc: "D7 gRPC client: kitchen/grpcx (WithCircuitBreaker)"
         d7-auth:
           files: ["$all", "!**/auth/**", "!$test"]
           deny:
@@ -255,6 +260,9 @@ linters:
         - pattern: ^http\.(Server|ListenAndServe|ListenAndServeTLS|Serve|ServeTLS)$
           pkg: ^net/http$
           msg: "D7 server: serve HTTP with kitchen/server (or mount on it)"
+        - pattern: ^grpc\.(NewClient|Dial|DialContext)$
+          pkg: ^google\.golang\.org/grpc$
+          msg: "D7 grpcx: call gRPC services with kitchen/grpcx.New (TLS, retries, deadlines, errs mapping, OTel)"
         - pattern: ^grpc\.NewServer$
           pkg: ^google\.golang\.org/grpc$
           msg: "D7 server: serve gRPC with kitchen/server"
@@ -311,6 +319,17 @@ linters:
         text: because "D7 httpx
         linters: [forbidigo]
       - path: (^|/)server/
+        text: because "D7 server
+        linters: [forbidigo]
+      - path: (^|/)grpcx/
+        text: because "D7 grpcx
+        linters: [forbidigo]
+      # The gateway dials the gRPC server in process (passthrough, bufconn).
+      - path: (^|/)server/
+        text: because "D7 grpcx
+        linters: [forbidigo]
+      # grpcxtest serves the fake downstream of a test.
+      - path: (^|/)grpcx/grpcxtest/
         text: because "D7 server
         linters: [forbidigo]
       - path: (^|/)errs/

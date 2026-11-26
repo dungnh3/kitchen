@@ -56,6 +56,7 @@ and do not call the library behind it.
 | i18n | `i18n` |
 | Telemetry | `otelx` |
 | HTTP client | `httpx` |
+| gRPC client | `grpcx` |
 | HTTP/gRPC server | `server` |
 | Redis | `redisx` |
 | Backoff | `timex` |

@@ -27,6 +27,7 @@ Start with [server](server/USAGE.md), which wires up a complete service.
 | Authentication (JWT, JWKS, introspection) | `auth` | [USAGE](auth/USAGE.md) |
 | Rate limiting | `ratelimit` | [USAGE](ratelimit/USAGE.md) |
 | HTTP client | `httpx` | [USAGE](httpx/USAGE.md) |
+| gRPC client | `grpcx` | [USAGE](grpcx/USAGE.md) |
 | Messaging (GCP, SQS, Kafka, outbox, reply) | `pubsub` | [USAGE](pubsub/USAGE.md) |
 | Server-sent events | `sse` | [USAGE](sse/USAGE.md) |
 | Redis client | `redisx` | [USAGE](redisx/USAGE.md) |

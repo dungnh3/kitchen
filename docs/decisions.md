@@ -140,6 +140,7 @@ every caller follows.
 | Telemetry setup, exporters | `otelx/sdk`, `otelx/gcp`, `otelx/gcp/cloudtrace`, `otelx/prometheus` | OTel SDK, exporters | OTel SDK, exporters, detectors, bridges; `otel.Set*` globals |
 | Telemetry instrumentation | `otelx` (`HTTPHandler`, `HTTPTransport`, `GRPCServerHandler`, `GRPCClientHandler`) | otelhttp, otelgrpc | `otelhttp.New*`, `otelgrpc.New*` (the OTel API for spans and metrics is fine everywhere) |
 | HTTP client | `httpx` | resty v3 | resty, retryablehttp, req; `http.Client`, `http.DefaultClient`, `http.Get`/`Head`/`Post`/`PostForm` |
+| Outbound gRPC client | `grpcx` (`grpcx.New`, + `grpcx/grpcxtest`) | grpc, gobreaker v2 | `grpc.NewClient`, `grpc.Dial`, `grpc.DialContext` (except `server`'s in-process gateway loopback); sony/gobreaker |
 | HTTP/gRPC server, gateway, admin port, compression | `server` | grpc, grpc-gateway, gzhttp | `grpc.NewServer`, `http.Server`, `http.ListenAndServe`/`Serve`; grpc-gateway, gzhttp |
 | Redis client | `redisx` (`redisx.Open`) | go-redis v9 | `redis.NewClient`/`NewUniversalClient`/`NewClusterClient`/`NewFailoverClient`/`NewRing`/`ParseURL`; rueidis, redigo |
 | Backoff, jitter | `timex.Backoff` (HTTP retries: `httpx.WithRetry`) | `math/rand/v2` | `math/rand`, cenkalti/backoff, retry-go |
