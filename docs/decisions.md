@@ -10,7 +10,7 @@ started. Per-area decisions live in `docs/design/<area>.md`.
   dependencies are light (stdlib, grpc, protobuf, otel API, small libs).
 - **Adapter submodules**, each with its own `go.mod`, for anything that pulls a
   heavy SDK or a backend client: e.g. `pubsub/gcp`, `sse`, `objstore/gcs`, `objstore/s3`,
-  `mcpkit`, `cmd/zen`, OTel exporters for a specific vendor.
+  `mcpkit`, `zen`, OTel exporters for a specific vendor.
 - Submodules are tagged `<dir>/vX.Y.Z` (e.g. `pubsub/gcp/v0.1.0`); core is
   tagged `vX.Y.Z`. No date-in-patch versions, no pseudo-version pinning in docs.
 - No `replace` directives in committed `go.mod` files. Use a local, uncommitted
@@ -103,7 +103,7 @@ started. Per-area decisions live in `docs/design/<area>.md`.
 | sse | `sse` | `sse/` (submodule) |
 | errors-auth | `ecode`, `errors`, `localization`, `guard`, `rlimit`, `pb`/`proto` (errors) | `errs/`, `i18n/`, `auth/`, `ratelimit/`, `proto/kitchen/errors/` |
 | data-utils | `cache`, `storage`, `migrations`, `uploader`, `utils`, `parallel`, `crawl` | `cache/`, `pg/`, `mysqlx/`, `mongox/`, `migrate/`, `objstore/` (was `blob/`), `vn/`, `timex/`, `webmeta/` |
-| codegen-mcp | `mcpkit`, `nest`, `gen`, MCP and service scaffolders | `mcpkit/` (submodule), `cmd/zen/` (submodule), `templates/` |
+| codegen-mcp | `mcpkit`, `nest`, `gen`, MCP and service scaffolders | `mcpkit/` (submodule), `zen/` (submodule), `templates/` |
 
 Final directory names are decided in each area's design doc. An area must not
 edit another area's directories; shared files (root `go.mod`, `README.md`,
@@ -155,5 +155,5 @@ every caller follows.
 | Migrations | `migrate` | goose | goose, golang-migrate |
 | Server-sent events | `sse` | | r3labs/sse, go-sse |
 | Web page metadata | `webmeta` | x/net/html | x/net/html, goquery |
-| MCP servers | `mcpkit` (generator: `cmd/zen`) | MCP go-sdk | MCP go-sdk |
+| MCP servers | `mcpkit` (generator: `zen`) | MCP go-sdk | MCP go-sdk |
 | Collections | stdlib `slices`/`maps`, then `github.com/samber/lo`; no in-house `xslices` | | go-funk, pie |

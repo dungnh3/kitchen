@@ -1,4 +1,4 @@
-# Design: codegen-mcp (`mcpkit`, `cmd/zen`)
+# Design: codegen-mcp (`mcpkit`, `zen`)
 
 Status: accepted 2026-11-20. Old packages covered: `mcpkit`, `nest`, `gen`,
 and the two one-shot scaffolders (MCP server, gRPC service). Migration:
@@ -14,7 +14,7 @@ and the two one-shot scaffolders (MCP server, gRPC service). Migration:
 | – | `mcpkit/mcpkittest`: in-memory client for tool tests | same submodule |
 | `nest` (fluent HTTP client) | dropped; use kitchen `httpx` + `golang.org/x/oauth2` (owner, 2026-11-21) | – |
 | `gen` (add CRUD model) | dropped | – |
-| MCP scaffolder + service scaffolder | one CLI: `zen new mcp` and `zen new service` (§3a, 2026-11-22) | `github.com/dungnh3/kitchen/cmd/zen` (submodule) |
+| MCP scaffolder + service scaffolder | one CLI: `zen new mcp` and `zen new service` (§3a, 2026-11-22) | `github.com/dungnh3/kitchen/zen` (submodule) |
 
 Versions verified on 2026-11-20: go-sdk v1.8.0 (latest stable; v1.9.0-pre.1
 exists), MCP spec 2026-07-28 (SDK falls back to 2025-11-25 automatically),
@@ -120,7 +120,7 @@ error, and `Internal`/`Unknown`/`DataLoss` errs, is logged with the tool name
 and returned as "internal error", like `errs.Handler` does for HTTP and gRPC.
 `*jsonrpc.Error` passes through as a protocol error.
 
-## 3. `cmd/zen`
+## 3. `zen`
 
 ```
 zen new mcp -module github.com/acme/mcp-notes [-dir] [-name] [-description]
@@ -132,7 +132,7 @@ zen version
 - **Prompts:** when stdin is a terminal, `-module` is missing and `-yes` is
   not set, the CLI asks for the missing values with huh v2. Otherwise it uses
   flags only and fails on missing values, which suits CI.
-- **Templates:** `embed.FS` under `cmd/zen/templates/<kind>/`, rendered with
+- **Templates:** `embed.FS` under `zen/templates/<kind>/`, rendered with
   `text/template` using `{%`/`%}` delimiters, so `${{ }}` in workflows needs
   no escaping. Only `*.tmpl` files are templated; `.go` output is gofmt'd and
   a format error fails generation.
@@ -222,7 +222,7 @@ traffic cannot force sampling); `SHUTDOWN_DELAY=5s`, `SHUTDOWN_TIMEOUT=30s`;
 package is the name with dashes as underscores, and the example service is
 always `ItemService` so the name never doubles (`OrdersServiceService`).
 
-Tests (`cmd/zen`):
+Tests (`zen`):
 - Golden trees `testdata/golden/service-postgres` and `service-nodb` (refresh with `-update`).
 - `TestGeneratedServiceBuilds` writes both cases, replaces the kitchen modules
   with the local checkout (they are not tagged yet), runs the CLI's
@@ -325,6 +325,18 @@ this phase; `-with sse` and an HTTP client feature wait.
   seen by every instance at its next read), `CACHE_TTL` default 5m, keys
   `<name>:item:v1:`; a failed cache delete is logged, not returned.
 
+## 3f. Name and location (owner, popups 2026-11-26)
+
+| # | Decision (owner) | Alternatives | Why |
+|---|---|---|---|
+| N1 | The CLI is `zen` | `wok`, `pinch`, `zest`, `stir` | Short, generic and fun; `kitchen` also clashed with the Test Kitchen command that some shells already alias |
+| N2 | Everything on the CLI side is renamed: command, directory, `.zen.yaml`, `// zen:` markers, "Managed by zen". The libraries stay `kitchen` | rename only the binary | A generated project never names the CLI by the library's name |
+| N3 | The CLI is the module `github.com/dungnh3/kitchen/zen` at the repository root (it was `cmd/zen`); `go install github.com/dungnh3/kitchen/zen@latest` installs `zen` in `$(go env GOPATH)/bin` | `cmd/zen`; its own repository | Shortest install URL in the same repository, so the build tests keep using the local kitchen checkout |
+
+The module does not require any kitchen library (generated projects do), so
+it can be tagged `zen/vX.Y.Z` at any time and has no place in the tag order
+of D1.
+
 ## 4. Sequencing
 
 1. **This PR:** mcpkit, jwtauth, mcpkittest, the CLI framework and `new mcp`
@@ -365,8 +377,8 @@ below can be revisited.
 | A1 | A missing or invalid bearer token always gets **401 + WWW-Authenticate** when `WithAuth` is set. Without `WithAuth`, the server is public. | (b) an `Optional` flag that lets requests through; (c) always let them through, as before | Spec-compliant; OAuth clients discover the IdP by themselves; no unauthenticated path by accident | A server cannot mix public and private tools behind one handler (mount two handlers) |
 | A2 | **Stateless by default, `WithStateful(idle)` opt-in**, `SDK()` escape hatch | stateless only | Scales horizontally without sticky sessions (30K-connection target); stateful is still possible | One more configuration branch to test (covered by `TestHTTPStateful`) |
 | A3 | **Functional options** for `mcpkit.New` | `Config` struct | Extensible without breaking callers; clear defaults | Harder to dump the effective config |
-| A4 | **huh v2 prompt when TTY and flags are missing**; flags only with `-yes` or without a TTY | flags only | Friendly for people, still works in CI | Pulls bubbletea/lipgloss into `cmd/zen` (CLI-only module, not into libraries) |
-| A5 | Templates live in **`cmd/zen/templates/`**, not root `templates/` (D6) | root `templates/` + a separate embed module | `go:embed` cannot reach outside the module directory | Differs from the D6 table; no other area is affected |
+| A4 | **huh v2 prompt when TTY and flags are missing**; flags only with `-yes` or without a TTY | flags only | Friendly for people, still works in CI | Pulls bubbletea/lipgloss into `zen` (CLI-only module, not into libraries) |
+| A5 | Templates live in **`zen/templates/`**, not root `templates/` (D6) | root `templates/` + a separate embed module | `go:embed` cannot reach outside the module directory | Differs from the D6 table; no other area is affected |
 | A6 | ~~`jwtauth` on go-jose v4~~ → **kitchen `auth` via `mcpkit.Verifier`** (2026-11-21) | keep `jwtauth` | One token-verification stack (jwx) for gRPC, HTTP and MCP; introspection for opaque tokens comes for free | mcpkit requires the `auth` submodule; no JWKS discovery |
 | A7 | `PassThrough` needs an explicit `AllowMissingExpiration: true`; JWTs must carry `exp` | PassThrough fakes an expiry | Never weakens expiry checks silently | One more field to set (shown in the examples and the template) |
 | A8 | A tool panic returns a generic "internal error"; details go only to the log | return the panic text | No information leak to the model or client | Callers must read logs to debug |

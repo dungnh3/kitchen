@@ -5,7 +5,7 @@ adds typed tools with safe errors, panic recovery and timeouts, a hardened
 Streamable HTTP handler, bearer auth through kitchen `auth`, stdio serving
 and MCP telemetry. It is the canonical MCP package ([D7](../docs/decisions.md)).
 `zen new mcp` generates a project wired like the snippets below
-([cmd/zen](../cmd/zen/USAGE.md)).
+([zen](../zen/USAGE.md)).
 
 ## Install
 
@@ -367,7 +367,7 @@ Every request gets one SERVER span named `{mcp.method.name} {target}` (for
 example `tools/call greet`) and one `mcp.server.operation.duration` sample,
 in seconds, per the MCP semantic conventions (semconv v1.41). Pass the
 `otelx/sdk` providers to `mcpkit` and `server`, as the generated
-[main.go](../cmd/zen/templates/mcp/cmd/server/main.go.tmpl) does.
+[main.go](../zen/templates/mcp/cmd/server/main.go.tmpl) does.
 
 | Attribute | When |
 |---|---|

@@ -168,7 +168,7 @@ Circuit breakers and rate limiters were unused interfaces in `nest`;
 | gRPC service scaffolder | `zen new service -module <path> [-db postgres\|none] [-yes]` (§6) |
 | `gen` (add CRUD model) | removed |
 
-Install: `go install github.com/dungnh3/kitchen/cmd/zen@latest`.
+Install: `go install github.com/dungnh3/kitchen/zen@latest`.
 
 Fixed in the generated output:
 

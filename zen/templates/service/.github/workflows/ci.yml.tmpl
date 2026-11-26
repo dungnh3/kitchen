@@ -1,0 +1,65 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+{%- if eq .CI "reusable" %}
+
+jobs:
+  ci:
+    # Reusable workflow pinned to a full commit SHA.
+    uses: {% .CIWorkflow %}
+    secrets: inherit
+{%- else %}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@{% .Actions.Checkout %}
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # buf breaking compares with the base branch
+      - uses: actions/setup-go@{% .Actions.SetupGo %}
+        with:
+          go-version-file: go.mod
+      - name: files managed by zen are not edited
+        run: go run github.com/dungnh3/kitchen/zen@{% .CLIVersion %} check
+      - name: generated code is up to date
+        run: |
+          make generate
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+      - run: go mod tidy -diff
+      - run: go vet ./...
+      # The integration test starts the whole service{% if .SQL %} and a {% .DBName %} container (Docker is available on ubuntu runners){% end %}.
+      - run: go test -race -count=1 ./...
+      - uses: golangci/golangci-lint-action@{% .Actions.GolangciLint %}
+        with:
+          version: {% .GolangciLintVersion %}
+      - run: go run github.com/bufbuild/buf/cmd/buf@{% .Versions.Buf %} lint
+      - name: no breaking API change
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: go run github.com/bufbuild/buf/cmd/buf@{% .Versions.Buf %} breaking --against ".git#ref=${BASE_SHA}"
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@{% .Actions.Checkout %}
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@{% .Actions.SetupBuildx %}
+      - uses: docker/build-push-action@{% .Actions.BuildPush %}
+        with:
+          context: .
+          push: false
+          build-args: VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+{%- end %}
