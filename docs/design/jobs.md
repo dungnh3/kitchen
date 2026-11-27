@@ -86,6 +86,7 @@ func (w SendWelcomeWorker) Work(ctx context.Context, j *jobs.Job[SendWelcome]) e
 | any error | retried at `now + backoff(attempt)`; `discarded` after `MaxAttempts` |
 | `jobs.Cancel(err)` | `cancelled` at once, no retry (permanent failure) |
 | `jobs.Snooze(d)` | rescheduled after `d`; the attempt is not counted |
+| `jobs.RetryAfter(d, err)` | retried after `d` instead of the backoff; the attempt counts (a kind with its own schedule, such as `webhook/delivery`) |
 | panic | recovered, logged with the stack, counted as a failed attempt |
 | context cancelled by shutdown | given back: available at once, attempt not counted |
 

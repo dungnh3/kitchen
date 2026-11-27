@@ -66,6 +66,7 @@ and do not call the library behind it.
 | Auth/JWT | `auth` |
 | Messaging | `pubsub` |
 | Background jobs | `jobs` |
+| Webhooks (sign, verify, deliver) | `webhook` |
 | Object storage | `objstore` |
 | PostgreSQL / MySQL / MongoDB | `pgx` / `mysqlx` / `mongox` |
 | Migrations | `migrate` |

@@ -227,6 +227,39 @@ func TestRetryBackoff(t *testing.T) {
 	})
 }
 
+func TestRetryAfterOverridesBackoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := jobstest.New()
+		reg := jobs.NewRegistry()
+		var times []time.Time
+		schedule := []time.Duration{5 * time.Second, time.Minute, 30 * time.Minute}
+		register(t, reg, func(_ context.Context, j *jobs.Job[echo]) error {
+			times = append(times, time.Now())
+			return jobs.RetryAfter(schedule[min(j.Attempt, len(schedule))-1], errors.New("fail"))
+		})
+		c := newClient(t, drv, reg, jobs.WithRetryBackoff(time.Hour, time.Hour), jobs.WithPollInterval(100*time.Millisecond))
+		stop := start(t, c)
+		defer stop()
+		res, err := c.Insert(context.Background(), echo{}, &jobs.InsertOpts{MaxAttempts: 4})
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
+		if len(times) != 4 {
+			t.Fatalf("ran %d times", len(times))
+		}
+		for i, d := range schedule {
+			if gap := times[i+1].Sub(times[i]); gap < d || gap > d+200*time.Millisecond {
+				t.Errorf("gap before attempt %d = %v, want %v", i+2, gap, d)
+			}
+		}
+		if r := row(t, drv, res.ID); r.State != jobs.StateDiscarded || len(r.Errors) != 4 || r.Errors[3].Error != "fail" {
+			t.Fatalf("row = %+v", r)
+		}
+	})
+}
+
 func TestOnlyRegisteredKindsAreClaimed(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		drv := jobstest.New()

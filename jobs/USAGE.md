@@ -98,6 +98,7 @@ Per-job options go in `InsertOpts` (or on the args, by implementing
 | an error | retried after the backoff; discarded after `MaxAttempts` |
 | `jobs.Cancel(err)` | cancelled at once, not retried |
 | `jobs.Snooze(d)` | runs again after `d`; the attempt is not counted |
+| `jobs.RetryAfter(d, err)` | retried after `d` instead of the backoff; the attempt counts |
 | a panic | logged with the stack, counted as a failed attempt |
 
 Cancelled and discarded jobs stay in the table for the retention period with

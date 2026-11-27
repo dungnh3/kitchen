@@ -30,6 +30,7 @@ Start with [server](server/USAGE.md), which wires up a complete service.
 | gRPC client | `grpcx` | [USAGE](grpcx/USAGE.md) |
 | Messaging (GCP, SQS, Kafka, outbox, reply) | `pubsub` | [USAGE](pubsub/USAGE.md) |
 | Background jobs (PostgreSQL, MySQL) | `jobs` | [USAGE](jobs/USAGE.md) |
+| Webhooks (Standard Webhooks: sign, verify, deliver) | `webhook` | [USAGE](webhook/USAGE.md) |
 | Server-sent events | `sse` | [USAGE](sse/USAGE.md) |
 | Redis client | `redisx` | [USAGE](redisx/USAGE.md) |
 | Cache (L1 + Redis) | `cache` | [USAGE](cache/USAGE.md) |

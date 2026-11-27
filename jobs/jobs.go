@@ -221,6 +221,26 @@ func (e *snoozeError) Error() string { return fmt.Sprintf("job snoozed for %s", 
 // up MaxAttempts. A negative d counts as 0.
 func Snooze(d time.Duration) error { return &snoozeError{d: max(d, 0)} }
 
+type retryAfterError struct {
+	d   time.Duration
+	err error
+}
+
+func (e *retryAfterError) Error() string { return e.err.Error() }
+func (e *retryAfterError) Unwrap() error { return e.err }
+
+// RetryAfter makes a worker's failure retry after d instead of after the
+// client's backoff ([WithRetryBackoff]). Unlike [Snooze], the attempt counts:
+// when the job is out of attempts it is discarded as with any other error.
+// Use it when the job kind has its own retry schedule. A negative d counts
+// as 0; a nil err records a generic message.
+func RetryAfter(d time.Duration, err error) error {
+	if err == nil {
+		err = errors.New("retry requested")
+	}
+	return &retryAfterError{d: max(d, 0), err: err}
+}
+
 var (
 	queueRE = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 	kindRE  = regexp.MustCompile(`^[A-Za-z0-9_.:/-]{1,255}$`)

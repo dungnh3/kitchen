@@ -112,6 +112,10 @@ linters:
               desc: "D7 background jobs: kitchen/jobs"
             - pkg: github.com/vgarvardt/gue
               desc: "D7 background jobs: kitchen/jobs"
+            - pkg: github.com/standard-webhooks/standard-webhooks
+              desc: "D7 webhooks: kitchen/webhook (Standard Webhooks, stdlib crypto)"
+            - pkg: github.com/svix/svix-webhooks
+              desc: "D7 webhooks: kitchen/webhook and kitchen/webhook/delivery"
             - pkg: gocloud.dev
               desc: "D7 object storage / messaging: kitchen/objstore, kitchen/pubsub"
             - pkg: github.com/golang-migrate/migrate

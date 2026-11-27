@@ -109,7 +109,7 @@ func TestDefaultsCoverCatalog(t *testing.T) {
 	if len(b.Languages()) != 2 {
 		t.Fatalf("languages = %v", b.Languages())
 	}
-	reasons := []string{"AUTH_UNAVAILABLE", "RATE_LIMITER_UNAVAILABLE"} // auth, ratelimit
+	reasons := []string{"AUTH_UNAVAILABLE", "RATE_LIMITER_UNAVAILABLE", "WEBHOOK_SIGNATURE_INVALID"} // auth, ratelimit, webhook
 	for _, e := range errs.Catalog() {
 		reasons = append(reasons, e.Reason())
 	}

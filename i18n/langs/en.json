@@ -43,5 +43,6 @@
   "DEPENDENCY_UNAVAILABLE": "The service is temporarily unavailable. Please try again later.",
   "UPSTREAM_TIMEOUT": "The request took too long. Please try again.",
   "AUTH_UNAVAILABLE": "Sign-in is temporarily unavailable. Please try again later.",
-  "RATE_LIMITER_UNAVAILABLE": "The service is temporarily unavailable. Please try again later."
+  "RATE_LIMITER_UNAVAILABLE": "The service is temporarily unavailable. Please try again later.",
+  "WEBHOOK_SIGNATURE_INVALID": "The webhook signature is missing or invalid."
 }

@@ -280,6 +280,7 @@ func (c *Client[TTx]) decide(cl Claimed, err error, shutdown bool) (Settlement, 
 	var (
 		ce *cancelError
 		se *snoozeError
+		re *retryAfterError
 	)
 	switch {
 	case err == nil:
@@ -292,6 +293,8 @@ func (c *Client[TTx]) decide(cl Claimed, err error, shutdown bool) (Settlement, 
 		return Settlement{State: StateAvailable, GiveBackAttempt: true}, outcomeReleased
 	case cl.Attempt >= cl.MaxAttempts:
 		return Settlement{State: StateDiscarded, Error: newAttemptError(now, cl.Attempt, err)}, outcomeDiscarded
+	case errors.As(err, &re):
+		return Settlement{State: StateAvailable, Delay: re.d, Error: newAttemptError(now, cl.Attempt, err)}, outcomeRetried
 	default:
 		return Settlement{
 			State: StateAvailable, Delay: timex.Backoff(c.o.backoffBase, c.o.backoffMax, cl.Attempt),

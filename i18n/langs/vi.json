@@ -43,5 +43,6 @@
   "DEPENDENCY_UNAVAILABLE": "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau.",
   "UPSTREAM_TIMEOUT": "Yêu cầu xử lý quá lâu. Vui lòng thử lại.",
   "AUTH_UNAVAILABLE": "Tạm thời không thể xác thực. Vui lòng thử lại sau.",
-  "RATE_LIMITER_UNAVAILABLE": "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau."
+  "RATE_LIMITER_UNAVAILABLE": "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau.",
+  "WEBHOOK_SIGNATURE_INVALID": "Chữ ký webhook bị thiếu hoặc không hợp lệ."
 }
