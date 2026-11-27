@@ -102,6 +102,16 @@ linters:
               desc: "D7 cache: kitchen/cache"
             - pkg: github.com/ThreeDotsLabs/watermill
               desc: "D7 messaging: kitchen/pubsub"
+            - pkg: github.com/riverqueue/river
+              desc: "D7 background jobs: kitchen/jobs (SQL queue on pgx or mysqlx)"
+            - pkg: github.com/hibiken/asynq
+              desc: "D7 background jobs: kitchen/jobs"
+            - pkg: github.com/RichardKnop/machinery
+              desc: "D7 background jobs: kitchen/jobs"
+            - pkg: github.com/gocraft/work
+              desc: "D7 background jobs: kitchen/jobs"
+            - pkg: github.com/vgarvardt/gue
+              desc: "D7 background jobs: kitchen/jobs"
             - pkg: gocloud.dev
               desc: "D7 object storage / messaging: kitchen/objstore, kitchen/pubsub"
             - pkg: github.com/golang-migrate/migrate

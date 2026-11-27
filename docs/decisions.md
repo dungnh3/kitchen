@@ -149,6 +149,7 @@ every caller follows.
 | Rate limiting | `ratelimit` (+ `ratelimit/redis`) | x/time/rate, GCRA Lua | x/time/rate, redis_rate, ulule/limiter |
 | Auth: JWT, JWKS, introspection | `auth` | jwx v3 | jwx, httprc, golang-jwt, go-jose |
 | Messaging | `pubsub` (+ `gcp`, `sqs`, `kafka`, `outbox`, `outbox/pgx`, `reply/redis`) | cloud pubsub, SQS, franz-go | those SDKs, other Kafka clients, watermill |
+| Background jobs | `jobs` (+ `jobs/pgx`, `jobs/mysql`, `jobs/jobstest`) | | River, asynq, machinery, gocraft/work, gue |
 | Object storage | `objstore` (+ `gcs`, `s3`) | GCS, S3 SDKs | those SDKs, gocloud.dev |
 | PostgreSQL | `pgx` (`pgx.Open`, + `pgx/gorm`); import jackc/pgx as `jpgx` next to it | jackc/pgx v5 | `pgxpool.New`/`NewWithConfig`, jackc `pgx.Connect`, `sql.Open`, lib/pq, gorm postgres driver |
 | MySQL | `mysqlx` (`mysqlx.Open`, + `mysqlx/gorm`) | go-sql-driver | go-sql-driver/mysql, gorm mysql driver, `sql.Open` |

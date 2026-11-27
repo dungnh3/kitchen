@@ -65,6 +65,7 @@ and do not call the library behind it.
 | Rate limiting | `ratelimit` |
 | Auth/JWT | `auth` |
 | Messaging | `pubsub` |
+| Background jobs | `jobs` |
 | Object storage | `objstore` |
 | PostgreSQL / MySQL / MongoDB | `pgx` / `mysqlx` / `mongox` |
 | Migrations | `migrate` |
