@@ -17,9 +17,10 @@ LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=
 	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=$(SQS_URL)/catalog-items
 # Queues that "make up" creates.
 LOCAL_QUEUES := catalog-items
-# "zen add consumer" and "zen add client" add their local settings here.
+# "zen add consumer", "zen add client" and "zen add webhook" add their local settings here.
 LOCAL_ENV += PUBSUB_ORDER_EVENTS_TOPIC=$(SQS_URL)/order-events
 LOCAL_QUEUES += order-events
+LOCAL_ENV += BILLING_EVENTS_WEBHOOK_SECRET=whsec_emVuLWxvY2FsLXdlYmhvb2stc2VjcmV0 # local only; in production the sender's secret
 # zen:local-env
 
 .PHONY: generate build test lint check breaking run tidy docker run-worker up down migrate-up migrate-down migrate-status

@@ -12,7 +12,7 @@ import (
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 
 func environ(kv ...string) env.Options {
-	m := map[string]string{
+	m := map[string]string{ //nolint:gosec // G101: local test values, such as the webhook secrets of "zen add webhook"
 		"DB_URL":                       "postgres://app@localhost:5432/app?sslmode=disable",
 		"REDIS_ADDRS":                  "localhost:6379",
 		"PUBSUB_PROJECT":               "local",
@@ -21,6 +21,7 @@ func environ(kv ...string) env.Options {
 		// zen:subscriptions-env
 		"LEDGER_ADDR": "ledger:443",
 		// zen:clients-env
+		// zen:webhooks-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
@@ -81,6 +82,7 @@ func TestValidateServer(t *testing.T) {
 		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
 		{"ledger address required", with("LEDGER_ADDR", ""), "LEDGER_ADDR"},
 		// zen:clients-validate-test
+		// zen:webhooks-validate-test
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

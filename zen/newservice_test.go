@@ -40,12 +40,12 @@ var serviceGoldenCases = map[string]serviceParams{
 	"service-jobs": {
 		projectParams: projectParams{Module: "github.com/acme/mailer", Description: "Mailer.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
 		DB:            dbPostgres,
-		With:          []string{withJobs},
+		With:          []string{withJobs, withWebhooks},
 	},
 	"service-mysql": {
 		projectParams: projectParams{Module: "github.com/acme/shop", Description: "Shop.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
 		DB:            dbMySQL,
-		With:          []string{withCache, withJobs},
+		With:          []string{withCache, withJobs, withWebhooks},
 		Auth:          authIntrospection,
 	},
 	"service-sqs": {
@@ -239,6 +239,7 @@ func TestServiceValidate(t *testing.T) {
 		{"jobs on postgres", func(p *serviceParams) { p.With = []string{withJobs} }, ""},
 		{"jobs on mysql", func(p *serviceParams) { p.DB, p.With = dbMySQL, []string{withJobs} }, ""},
 		{"jobs without a database", func(p *serviceParams) { p.DB, p.With = dbNone, []string{withJobs} }, "-with jobs needs -db postgres or -db mysql"},
+		{"webhooks without jobs", func(p *serviceParams) { p.With = []string{withWebhooks} }, "-with webhooks needs -with jobs"},
 		{"bad broker", func(p *serviceParams) { p.With, p.Broker = []string{withPubSub}, "nats" }, "-pubsub"},
 		{"broker without pubsub", func(p *serviceParams) { p.Broker, p.brokerSet = brokerKafka, true }, "-pubsub needs"},
 		{"reusable with tag", func(p *serviceParams) {

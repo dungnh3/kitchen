@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/dungnh3/kitchen/webhook"
 )
 
 // EnvProduction is the APP_ENV value of production deployments. Unsafe
@@ -41,13 +42,15 @@ type Config struct {
 	// ErrorDomain is the ErrorInfo.domain of API errors (AIP-193).
 	ErrorDomain string `env:"ERROR_DOMAIN" envDefault:"shop"`
 
-	Database  Database  `envPrefix:"DB_"`
-	Redis     Redis     `envPrefix:"REDIS_"`
-	Cache     Cache     `envPrefix:"CACHE_"`
-	Jobs      Jobs      `envPrefix:"JOBS_"`
-	Auth      Auth      `envPrefix:"AUTH_"`
-	RateLimit RateLimit `envPrefix:"RATE_LIMIT_"`
-	Clients   Clients
+	Database        Database        `envPrefix:"DB_"`
+	Redis           Redis           `envPrefix:"REDIS_"`
+	Cache           Cache           `envPrefix:"CACHE_"`
+	Jobs            Jobs            `envPrefix:"JOBS_"`
+	WebhookDelivery WebhookDelivery `envPrefix:"WEBHOOK_DELIVERY_"`
+	Auth            Auth            `envPrefix:"AUTH_"`
+	RateLimit       RateLimit       `envPrefix:"RATE_LIMIT_"`
+	Clients         Clients
+	Webhooks        Webhooks
 }
 
 // Clients configures the gRPC services this service calls. "zen add
@@ -71,6 +74,34 @@ type Client struct {
 	// CAFile is a PEM file of the CAs that sign the server's certificate;
 	// empty means the system roots.
 	CAFile string `env:"CA_FILE"`
+}
+
+// Webhooks configures the webhooks this service receives. "zen add webhook"
+// adds one above "zen:webhooks"; its variables start with its name, for
+// example BILLING_WEBHOOK_SECRET.
+type Webhooks struct {
+	// zen:webhooks
+}
+
+// Webhook configures one webhook receiver (see
+// github.com/dungnh3/kitchen/webhook).
+type Webhook struct {
+	// Secrets verify the sender's signatures: "whsec_..." secrets or
+	// "whpk_..." public keys, comma-separated. Give the old and the new one
+	// while the sender rotates.
+	Secrets []string `env:"SECRET"`
+}
+
+// Validate reports the invalid settings of w; prefix is the prefix of its
+// variables, for example BILLING_WEBHOOK_.
+func (w Webhook) Validate(prefix string) error {
+	if len(w.Secrets) == 0 {
+		return fmt.Errorf("%sSECRET is required", prefix)
+	}
+	if _, err := webhook.NewVerifier(webhook.VerifierConfig{Secrets: w.Secrets}); err != nil {
+		return fmt.Errorf("%sSECRET: %w", prefix, err)
+	}
+	return nil
 }
 
 // Validate reports the invalid settings of c; prefix is the prefix of its
@@ -119,6 +150,18 @@ type Redis struct {
 type Jobs struct {
 	// Workers is the number of tasks the worker runs at once.
 	Workers int `env:"WORKERS" envDefault:"10"`
+}
+
+// WebhookDelivery configures the webhooks the worker sends (see
+// github.com/dungnh3/kitchen/webhook/delivery).
+type WebhookDelivery struct {
+	// Workers is the number of deliveries the worker sends at once.
+	Workers int `env:"WORKERS" envDefault:"10"`
+	// Timeout bounds one delivery attempt.
+	Timeout time.Duration `env:"TIMEOUT" envDefault:"15s"`
+	// AllowHTTP accepts http:// endpoint URLs, for local development. It
+	// is refused when APP_ENV=production.
+	AllowHTTP bool `env:"ALLOW_HTTP"`
 }
 
 // Cache configures the Redis cache of the item store.
@@ -184,7 +227,14 @@ func (c Config) validate() error {
 // ValidateServer checks the settings needed to serve requests. It is not
 // part of Load so that commands such as "migrate" run without them.
 func (c Config) ValidateServer() error {
-	return errors.Join(c.validateAuth(), c.validateDeps())
+	return errors.Join(c.validateAuth(), c.validateDeps(), c.validateWebhooks())
+}
+
+// validateWebhooks checks the webhooks the server receives.
+func (c Config) validateWebhooks() error {
+	var errs []error
+	// zen:webhooks-validate
+	return errors.Join(errs...)
 }
 
 // ValidateWorker checks the settings needed by the worker.
@@ -202,6 +252,15 @@ func (c Config) validateDeps() error {
 	}
 	if c.Jobs.Workers < 1 {
 		errs = append(errs, errors.New("JOBS_WORKERS must be at least 1"))
+	}
+	if c.WebhookDelivery.Workers < 1 {
+		errs = append(errs, errors.New("WEBHOOK_DELIVERY_WORKERS must be at least 1"))
+	}
+	if c.WebhookDelivery.Timeout <= 0 {
+		errs = append(errs, errors.New("WEBHOOK_DELIVERY_TIMEOUT must be positive"))
+	}
+	if c.WebhookDelivery.AllowHTTP && c.Env == EnvProduction {
+		errs = append(errs, errors.New("WEBHOOK_DELIVERY_ALLOW_HTTP is not allowed when APP_ENV=production"))
 	}
 	// zen:clients-validate
 	return errors.Join(errs...)

@@ -59,6 +59,9 @@ func TestApp(t *testing.T) {
 			Ledger: config.Client{Addr: "passthrough:///ledger", Insecure: true},
 			// zen:clients-test
 		},
+		Webhooks: config.Webhooks{
+			// zen:webhooks-test
+		},
 	}
 	// The broker is in process; the test reads the topic through its own
 	// subscription.

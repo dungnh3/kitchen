@@ -139,6 +139,7 @@ readiness check, local container in `compose.yaml` and tests:
 | `pubsub` | `pubsub` and the broker adapter | An `ItemCreated` event per new item (`internal/events`), a consumer in the worker (`internal/consumer`) |
 | `outbox` | `pubsub/outbox/pgx` | The event is written in the item's transaction and the worker relays it. Needs `-db postgres` and `pubsub` |
 | `jobs` | `jobs`, `jobs/pgx` or `jobs/mysql` | Durable background tasks in the service's database (`internal/task`, the `jobs` table migration, `JOBS_WORKERS`): enqueue in a transaction, retries with backoff, periodic runs once across replicas. Needs `-db postgres` or `-db mysql` |
+| `webhooks` | `webhook/delivery` | Webhooks sent to customers' endpoints (`internal/outbound`, `WEBHOOK_DELIVERY_*`): one job per message and endpoint in its own queue, signed (Standard Webhooks), SSRF guard on, retried for about 17 hours. Implement `outbound.Endpoints` with your endpoints table. Needs `jobs` |
 
 With `pubsub`, `lease` or `jobs` the binary gets a `worker` command (`server
 worker`): deploy it from the same image as a second Deployment.
@@ -179,8 +180,8 @@ The exact trees are in [testdata/golden](testdata/golden):
 `service-postgres` and `service-nodb` (no features), `service-events`
 (Postgres, `lease,pubsub,outbox`, Pub/Sub), `service-kafka` (no database,
 `pubsub`, Kafka), `service-sqs` (Postgres, `redis,pubsub`, SQS),
-`service-jobs` (Postgres, `jobs`) and `service-mysql` (MySQL, `cache,jobs`,
-`-auth introspection`).
+`service-jobs` (Postgres, `jobs,webhooks`) and `service-mysql` (MySQL,
+`cache,jobs,webhooks`, `-auth introspection`).
 
 | Path | What |
 |---|---|
@@ -192,6 +193,8 @@ The exact trees are in [testdata/golden](testdata/golden):
 | `internal/app/app.go` | Wiring of `serve`: i18n + errs, rate limits, auth, admin port, server |
 | `internal/app/worker.go` | Wiring of `worker`: consumers, outbox relay, jobs, tasks, admin port (with `pubsub`, `lease` or `jobs`) |
 | `internal/app/jobs.go`, `internal/task/` | The job client, and the tasks it runs: typed args and workers, registered in `task.Register` and scheduled in `task.Periodic` (`jobs`) |
+| `internal/outbound/` | Sent webhooks: `Deliveries` builds the jobs, `Endpoints` looks endpoints up, `NewWorker` is registered by the jobs runner (`webhooks`) |
+| `internal/inbound/` | Received webhooks, one receiver per `zen add webhook` |
 | `internal/app/redis.go`, `broker.go` | `redisx.Open`; the broker client handed to the kitchen adapter (with `redis`, `pubsub`) |
 | `internal/events/`, `internal/consumer/`, `internal/job/` | Events and their handlers (`pubsub`), periodic jobs (`lease`) |
 | `internal/app/migrate.go` | goose migrations through kitchen `migrate`, with an advisory lock |
@@ -308,6 +311,11 @@ files rather than copies here:
   task with an interval also runs on a schedule, once across all worker
   replicas, with no Redis. A task can run twice, so it must be idempotent.
   See [jobs/USAGE.md](../jobs/USAGE.md).
+- **Webhooks.** With `webhooks`, `outbound.Deliveries` returns the jobs of
+  one event for its endpoints; insert them with `InsertManyTx` in the
+  transaction of the change. Received webhooks come from `zen add webhook`.
+  Both use the Standard Webhooks format; see
+  [webhook/USAGE.md](../webhook/USAGE.md).
 - **Lint.** `.golangci.yml` mirrors the repo's D5/D7 rules with depguard,
   forbidigo and sloglint. It denies `log/slog`, raw Redis, SQL, HTTP and gRPC
   clients, `http.Server`, `status.New`, OTel SDK setup and so on. Tests may
@@ -324,6 +332,7 @@ zen add consumer payments          # needs -with pubsub
 zen add job cleanup -every 5m      # needs -with lease
 zen add task send-email            # needs -with jobs; add -every 1h to run it on a schedule
 zen add client billing             # a gRPC client of the billing service
+zen add webhook payments           # a receiver of signed webhooks on POST /webhooks/payments
 ```
 
 | Command | Writes | Changes |
@@ -333,6 +342,7 @@ zen add client billing             # a gRPC client of the billing service
 | `add job <name>` | `internal/job/<name>.go` and test | `worker.go` (the job list) |
 | `add task <name>` | `internal/task/<name>.go` (typed args, worker, `Register<Name>`, and `<Name>Every` with `-every`) and test | `internal/task/task.go` (`Register`, and `Periodic` with `-every`) |
 | `add client <name>` | `internal/app/client_<name>.go` (opens a `grpcx.Conn`: TLS with the system roots or `<NAME>_CA_FILE`, plaintext only with `<NAME>_INSECURE=true`, the service's logger and telemetry, `<NAME>_TIMEOUT`, the circuit breaker on) and test | `config.go` (a `config.Client` under `Clients` with `<NAME>_ADDR` required, validated), `deps.go` (the `d.<name>` field, opened with the other dependencies and closed after them), the tests' config, `docs/ENV.md` and the `Makefile` local settings |
+| `add webhook <name>` | `internal/inbound/<name>.go` (a `server.Service` with the route `POST /webhooks/<name>` behind `webhook.NewMiddleware`: signature, 1 MiB body limit, and with `redis` one run per message id) and test; `internal/inbound/inbound.go` the first time | `config.go` (a `config.Webhook` under `Webhooks` with `<NAME>_WEBHOOK_SECRET` required and parsed), `app.go` (the receiver, and its route in `webhookRoutes`, which the authenticator lets through), the tests' config, `docs/ENV.md` and the `Makefile` local secret |
 
 Changes go before marker comments such as `// zen:services` in the
 generated files; keep the markers. Every file and marker is checked before

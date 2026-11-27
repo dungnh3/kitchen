@@ -9,12 +9,12 @@ answers:
   description: Mailer.
   db: postgres
   auth: jwks
-  with: [jobs]
+  with: [jobs, webhooks]
   ci: standalone
   kitchen_version: v0.1.0
 managed:
   .dockerignore: sha256:37f8ea97d732a2a60bd118fa1d0e8368cc78c9c0899fd675bcae81d26e3ad0cf
   .github/workflows/ci.yml: sha256:08fa47c7c2b67d68f568dc48a58f4669152d22cac2b3faa8b1819dbb4cdadb84
-  .golangci.yml: sha256:eeaaa86608275b98eacb6582d76730393eaaf7cc370c9371195334a34d31c764
+  .golangci.yml: sha256:57ad0e5b97aa526de913f15493dbeca33d8a845e11a16fb255e3fdd54be840e2
   Dockerfile: sha256:2cd0371f01883b1e1bc937c4c6cf1e7b7717fb609f53da51e7ef05afba094802
   buf.gen.yaml: sha256:4a97e3a0b0d6da13e1dc755a451a1a5d726b120636e6d4c40fd79bb7e1678793

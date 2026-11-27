@@ -1,0 +1,64 @@
+package inbound
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/webhook"
+	"google.golang.org/grpc"
+
+	"github.com/acme/catalog/internal/config"
+)
+
+// BillingEventsRoute is the route of the billing events webhook. It is public for the
+// authenticator: the signature authenticates the sender.
+const BillingEventsRoute = "POST /webhooks/billing-events"
+
+// BillingEvents receives the billing events webhook. It is a server.Service with a
+// plain HTTP route and no gRPC API.
+type BillingEvents struct {
+	verified func(http.Handler) http.Handler
+	errh     *errs.Handler
+	logger   *log.Logger
+}
+
+// NewBillingEvents returns the receiver. dedup may be nil: the handler then
+// runs for every delivery, including the sender's retries.
+func NewBillingEvents(cfg config.Webhook, errh *errs.Handler, dedup webhook.Dedup, logger *log.Logger) (*BillingEvents, error) {
+	mw, err := verified(cfg, errh, dedup, logger)
+	if err != nil {
+		return nil, fmt.Errorf("billing-events webhook: %w", err)
+	}
+	return &BillingEvents{verified: mw, errh: errh, logger: log.OrDefault(logger)}, nil
+}
+
+// RegisterGRPC implements server.Service; the receiver has no gRPC API.
+func (*BillingEvents) RegisterGRPC(grpc.ServiceRegistrar) {}
+
+// RegisterHTTP mounts the route behind the signature check.
+func (h *BillingEvents) RegisterHTTP(mux *http.ServeMux) {
+	mux.Handle(BillingEventsRoute, h.verified(http.HandlerFunc(h.handle)))
+}
+
+// billingEventsEvent is the part of the payload that the handler reads.
+type billingEventsEvent struct {
+	Type string `json:"type"`
+}
+
+// handle runs for every verified delivery. Answer 2xx only once the event
+// is handled: any other status makes the sender retry. Handle an event
+// idempotently, since a sender may deliver it more than once.
+func (h *BillingEvents) handle(w http.ResponseWriter, r *http.Request) {
+	msg, _ := webhook.FromContext(r.Context())
+	var ev billingEventsEvent
+	if err := json.Unmarshal(msg.Body, &ev); err != nil {
+		h.errh.WriteHTTP(w, r, errs.Wrap(err, errs.ErrMalformedRequest))
+		return
+	}
+	h.logger.InfoContext(r.Context(), "billing events webhook received",
+		log.String("webhook.id", msg.ID), log.String("webhook.type", ev.Type))
+	w.WriteHeader(http.StatusNoContent)
+}

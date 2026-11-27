@@ -57,6 +57,9 @@ func TestApp(t *testing.T) {
 		Clients: config.Clients{
 			// zen:clients-test
 		},
+		Webhooks: config.Webhooks{
+			// zen:webhooks-test
+		},
 	}
 	// The broker is in process; the test reads the topic through its own
 	// subscription.

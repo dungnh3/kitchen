@@ -15,7 +15,7 @@ LOCAL_ENV += REDIS_ADDRS=localhost:6379 REDIS_TLS=false
 LOCAL_ENV += PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT=local PUBSUB_MAX_DELIVERY_ATTEMPTS=0
 # topic:subscription pairs that "make up" creates in the emulator.
 LOCAL_SUBSCRIPTIONS := billing-items:billing-items-worker
-# "zen add consumer" and "zen add client" add their local settings here.
+# "zen add consumer", "zen add client" and "zen add webhook" add their local settings here.
 LOCAL_ENV += PUBSUB_PAYMENTS_TOPIC=payments PUBSUB_PAYMENTS_SUBSCRIPTION=billing-payments-worker
 LOCAL_SUBSCRIPTIONS += payments:billing-payments-worker
 LOCAL_ENV += LEDGER_ADDR=localhost:10001 LEDGER_INSECURE=true # a local ledger server

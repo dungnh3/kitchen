@@ -40,8 +40,12 @@ func TestApp(t *testing.T) {
 		ErrorDomain:     Name,
 		Database:        config.Database{URL: startPostgres(t), MigrateOnStart: true},
 		Jobs:            config.Jobs{Workers: 2},
+		WebhookDelivery: config.WebhookDelivery{Workers: 2, Timeout: 5 * time.Second},
 		Clients:         config.Clients{
 			// zen:clients-test
+		},
+		Webhooks: config.Webhooks{
+			// zen:webhooks-test
 		},
 	}
 	var opts []Option

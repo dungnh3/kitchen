@@ -108,6 +108,12 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
   handlers must be idempotent. Return `nil` to ack, an error to retry, and
   `pubsub.Permanent(err)` to dead-letter. `zen add consumer <name>`
   adds a consumer with its subscription settings.
+- **Received webhooks.** `zen add webhook <name>` adds a receiver in
+  `internal/inbound` on `POST /webhooks/<name>`: the Standard Webhooks
+  signature is checked with `<NAME>_WEBHOOK_SECRET` before the handler
+  runs, and Redis runs the handler once per message id.
+  The route skips bearer authentication (the signature replaces it) but
+  keeps the rate limits.
 - **Probes.** Set `ADMIN_ADDR` and point the worker's probes at `/livez` and
   `/readyz` on it.
 

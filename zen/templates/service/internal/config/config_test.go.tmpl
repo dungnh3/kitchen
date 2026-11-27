@@ -12,7 +12,7 @@ import (
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 
 func environ(kv ...string) env.Options {
-	m := map[string]string{
+	m := map[string]string{ //nolint:gosec // G101: local test values, such as the webhook secrets of "zen add webhook"
 {%- if .Postgres %}
 		"DB_URL": "postgres://app@localhost:5432/app?sslmode=disable",
 {%- else if .MySQL %}
@@ -32,6 +32,7 @@ func environ(kv ...string) env.Options {
 		// zen:subscriptions-env
 {%- end %}
 		// zen:clients-env
+		// zen:webhooks-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
@@ -124,10 +125,17 @@ func TestValidateServer(t *testing.T) {
 {%- if .Jobs %}
 		{"jobs workers", with("JOBS_WORKERS", "0"), "JOBS_WORKERS"},
 {%- end %}
+{%- if .Webhooks %}
+		{"webhook delivery workers", with("WEBHOOK_DELIVERY_WORKERS", "0"), "WEBHOOK_DELIVERY_WORKERS"},
+		{"webhook delivery timeout", with("WEBHOOK_DELIVERY_TIMEOUT", "0s"), "WEBHOOK_DELIVERY_TIMEOUT"},
+		{"webhook http in development", with("WEBHOOK_DELIVERY_ALLOW_HTTP", "true"), ""},
+		{"webhook http in production", with("WEBHOOK_DELIVERY_ALLOW_HTTP", "true", "APP_ENV", EnvProduction), "WEBHOOK_DELIVERY_ALLOW_HTTP"},
+{%- end %}
 {%- if .PubSub %}
 		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
 {%- end %}
 		// zen:clients-validate-test
+		// zen:webhooks-validate-test
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

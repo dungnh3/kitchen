@@ -9,12 +9,12 @@ answers:
   description: Shop.
   db: mysql
   auth: introspection
-  with: [cache, jobs, redis]
+  with: [cache, jobs, redis, webhooks]
   ci: standalone
   kitchen_version: v0.1.0
 managed:
   .dockerignore: sha256:37f8ea97d732a2a60bd118fa1d0e8368cc78c9c0899fd675bcae81d26e3ad0cf
   .github/workflows/ci.yml: sha256:28b3e0ca69e95cca6d49ee60db93fb631d586c4806c18f71e552a6322307d62a
-  .golangci.yml: sha256:eeaaa86608275b98eacb6582d76730393eaaf7cc370c9371195334a34d31c764
+  .golangci.yml: sha256:57ad0e5b97aa526de913f15493dbeca33d8a845e11a16fb255e3fdd54be840e2
   Dockerfile: sha256:2cd0371f01883b1e1bc937c4c6cf1e7b7717fb609f53da51e7ef05afba094802
   buf.gen.yaml: sha256:ea8a8e5f5be9fc112df8843f81c435c425f4953580d625b0662b2deb044267e6

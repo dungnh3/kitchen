@@ -8,8 +8,10 @@ import (
 	"github.com/dungnh3/kitchen/jobs"
 	jobsmysql "github.com/dungnh3/kitchen/jobs/mysql"
 	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/webhook/delivery"
 
 	"github.com/acme/shop/internal/config"
+	"github.com/acme/shop/internal/outbound"
 	"github.com/acme/shop/internal/task"
 )
 
@@ -31,21 +33,36 @@ func (d *deps) newJobs(logger *log.Logger, opts ...jobs.Option) (*jobsClient, er
 	}, opts...)...)
 }
 
-// jobsRunner returns the function that runs the tasks of internal/task until
-// its context is cancelled.
+// jobsRunner returns the function that runs the tasks of internal/task and
+// the webhook deliveries of internal/outbound until its context is cancelled.
 func (d *deps) jobsRunner(cfg config.Config, logger *log.Logger) (func(context.Context) error, error) {
 	reg := jobs.NewRegistry()
 	if err := task.Register(reg, logger); err != nil {
 		return nil, fmt.Errorf("register tasks: %w", err)
 	}
+	hooks, err := outbound.NewWorker(cfg.WebhookDelivery, logger, d.tel)
+	if err != nil {
+		return nil, fmt.Errorf("webhook delivery: %w", err)
+	}
+	if err := jobs.Register(reg, hooks); err != nil {
+		return nil, fmt.Errorf("webhook delivery: %w", err)
+	}
 	c, err := d.newJobs(logger,
 		jobs.WithRegistry(reg),
-		jobs.WithQueues(jobs.Queue{Name: "default", Workers: cfg.Jobs.Workers}),
+		jobs.WithQueues(
+			jobs.Queue{Name: "default", Workers: cfg.Jobs.Workers},
+			// Deliveries have their own queue, so a slow endpoint never
+			// holds up the tasks.
+			jobs.Queue{Name: delivery.DefaultQueue, Workers: cfg.WebhookDelivery.Workers},
+		),
 		jobs.WithPeriodic(task.Periodic()...),
 		jobs.WithShutdownTimeout(cfg.ShutdownTimeout),
 	)
 	if err != nil {
 		return nil, err
 	}
-	return c.Run, nil
+	return func(ctx context.Context) error {
+		defer func() { _ = hooks.Close(context.WithoutCancel(ctx)) }()
+		return c.Run(ctx)
+	}, nil
 }

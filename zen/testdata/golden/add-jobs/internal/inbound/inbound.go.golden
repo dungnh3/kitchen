@@ -1,0 +1,32 @@
+// Package inbound receives the webhooks that other systems send to this
+// service. Each receiver is a server.Service with one plain HTTP route;
+// github.com/dungnh3/kitchen/webhook checks the Standard Webhooks signature
+// before the handler runs, so a handler only sees requests from the sender.
+// "zen add webhook <name>" adds a receiver.
+package inbound
+
+import (
+	"net/http"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/webhook"
+
+	"github.com/acme/mailer/internal/config"
+)
+
+// verified returns the middleware that lets through only requests signed
+// with one of cfg.Secrets, with the body limited to 1 MiB. dedup, when not
+// nil, runs the handler once per message id.
+func verified(cfg config.Webhook, errh *errs.Handler, dedup webhook.Dedup, logger *log.Logger) (func(http.Handler) http.Handler, error) {
+	v, err := webhook.NewVerifier(webhook.VerifierConfig{Secrets: cfg.Secrets})
+	if err != nil {
+		return nil, err
+	}
+	return webhook.NewMiddleware(webhook.MiddlewareConfig{
+		Verifier: v,
+		Dedup:    dedup,
+		Errors:   errh,
+		Logger:   logger,
+	})
+}

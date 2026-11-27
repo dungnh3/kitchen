@@ -39,10 +39,14 @@ func TestApp(t *testing.T) {
 		Redis:           config.Redis{Addrs: []string{miniredis.RunT(t).Addr()}},
 		Cache:           config.Cache{TTL: time.Minute},
 		Jobs:            config.Jobs{Workers: 2},
+		WebhookDelivery: config.WebhookDelivery{Workers: 2, Timeout: 5 * time.Second},
 		Clients: config.Clients{
 			Billing:     config.Client{Addr: "passthrough:///billing", Insecure: true},
 			UserProfile: config.Client{Addr: "passthrough:///user-profile", Insecure: true},
 			// zen:clients-test
+		},
+		Webhooks: config.Webhooks{
+			// zen:webhooks-test
 		},
 	}
 	var opts []Option

@@ -11,7 +11,7 @@ LOCAL_ENV := AUTH_DISABLED=true LOG_FORMAT=text
 LOCAL_ENV += PUBSUB_BROKERS=localhost:9092 PUBSUB_TLS=false
 # Topics that "make up" creates.
 LOCAL_TOPICS := notify-items notify-items.dlq
-# "zen add consumer" and "zen add client" add their local settings here.
+# "zen add consumer", "zen add client" and "zen add webhook" add their local settings here.
 LOCAL_ENV += PUBSUB_ORDER_EVENTS_TOPIC=order-events PUBSUB_ORDER_EVENTS_SUBSCRIPTION=notify-order-events-worker PUBSUB_ORDER_EVENTS_DEAD_LETTER_TOPIC=order-events.dlq
 LOCAL_TOPICS += order-events order-events.dlq
 # zen:local-env

@@ -1,0 +1,45 @@
+// Package inbound receives the webhooks that other systems send to this
+// service. Each receiver is a server.Service with one plain HTTP route;
+// github.com/dungnh3/kitchen/webhook checks the Standard Webhooks signature
+// before the handler runs, so a handler only sees requests from the sender.
+// "zen add webhook <name>" adds a receiver.
+package inbound
+
+import (
+	"net/http"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/webhook"
+{%- if .Redis %}
+	"github.com/redis/go-redis/v9"
+{%- end %}
+
+	"{% .Module %}/internal/config"
+)
+
+// verified returns the middleware that lets through only requests signed
+// with one of cfg.Secrets, with the body limited to 1 MiB. dedup, when not
+// nil, runs the handler once per message id.
+func verified(cfg config.Webhook, errh *errs.Handler, dedup webhook.Dedup, logger *log.Logger) (func(http.Handler) http.Handler, error) {
+	v, err := webhook.NewVerifier(webhook.VerifierConfig{Secrets: cfg.Secrets})
+	if err != nil {
+		return nil, err
+	}
+	return webhook.NewMiddleware(webhook.MiddlewareConfig{
+		Verifier: v,
+		Dedup:    dedup,
+		Errors:   errh,
+		Logger:   logger,
+	})
+}
+{%- if .Redis %}
+
+// NewDedup returns the Redis deduplication of one sender's webhooks: a
+// message that the sender delivers again after a 2xx is acknowledged
+// without running the handler. If Redis is down, deliveries get 503 and the
+// sender retries them later.
+func NewDedup(rdb redis.UniversalClient, service, name string) (webhook.Dedup, error) {
+	return webhook.NewRedisDedup(rdb, webhook.RedisDedupConfig{Prefix: service + ":webhook:" + name + ":"})
+}
+{%- end %}

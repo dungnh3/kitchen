@@ -51,6 +51,9 @@ curl -s localhost:8080/v1/items
 {%- if .Jobs %}
 | `internal/task/` | Background tasks: typed jobs stored in the `jobs` table and run by the worker |
 {%- end %}
+{%- if .Webhooks %}
+| `internal/outbound/` | Webhooks sent to customers' endpoints, as jobs run by the worker |
+{%- end %}
 | `docs/ENV.md` | Environment variables |
 | `.zen.yaml` | How zen generated the project; `make check` compares the managed files with it |
 {%- if .SQL %}
@@ -162,6 +165,22 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
   `zen add task <name> -every 1h` adds one. `JOBS_WORKERS` bounds how many
   run at once.
 {%- end %}
+{%- if .Webhooks %}
+- **Sent webhooks.** `internal/outbound` sends Standard Webhooks with
+  `github.com/dungnh3/kitchen/webhook/delivery`. Insert the jobs of
+  `outbound.Deliveries(endpointIDs, "item.created", item)` with
+  `InsertManyTx` in the transaction of the change. The worker signs each
+  one with the endpoint's secrets, sends it through the SSRF guard (public
+  https endpoints only) and retries for about 17 hours; 410 Gone stops it.
+  Implement `outbound.Endpoints` with your endpoints table first: as
+  generated it knows no endpoint.
+{%- end %}
+- **Received webhooks.** `zen add webhook <name>` adds a receiver in
+  `internal/inbound` on `POST /webhooks/<name>`: the Standard Webhooks
+  signature is checked with `<NAME>_WEBHOOK_SECRET` before the handler
+  runs{% if .Redis %}, and Redis runs the handler once per message id{% end %}.
+  The route skips bearer authentication (the signature replaces it) but
+  keeps the rate limits.
 - **Probes.** Set `ADMIN_ADDR` and point the worker's probes at `/livez` and
   `/readyz` on it.
 {%- end %}

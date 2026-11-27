@@ -12,12 +12,13 @@ import (
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 
 func environ(kv ...string) env.Options {
-	m := map[string]string{
+	m := map[string]string{ //nolint:gosec // G101: local test values, such as the webhook secrets of "zen add webhook"
 		"DB_URL":            "app:app@tcp(localhost:3306)/app?tls=false",
 		"REDIS_ADDRS":       "localhost:6379",
 		"BILLING_ADDR":      "billing:443",
 		"USER_PROFILE_ADDR": "user-profile:443",
 		// zen:clients-env
+		// zen:webhooks-env
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
@@ -81,9 +82,14 @@ func TestValidateServer(t *testing.T) {
 		{"disabled in production", []string{"AUTH_DISABLED", "true", "APP_ENV", EnvProduction}, "not allowed"},
 		{"redis required", with("REDIS_ADDRS", ""), "REDIS_ADDRS"},
 		{"jobs workers", with("JOBS_WORKERS", "0"), "JOBS_WORKERS"},
+		{"webhook delivery workers", with("WEBHOOK_DELIVERY_WORKERS", "0"), "WEBHOOK_DELIVERY_WORKERS"},
+		{"webhook delivery timeout", with("WEBHOOK_DELIVERY_TIMEOUT", "0s"), "WEBHOOK_DELIVERY_TIMEOUT"},
+		{"webhook http in development", with("WEBHOOK_DELIVERY_ALLOW_HTTP", "true"), ""},
+		{"webhook http in production", with("WEBHOOK_DELIVERY_ALLOW_HTTP", "true", "APP_ENV", EnvProduction), "WEBHOOK_DELIVERY_ALLOW_HTTP"},
 		{"billing address required", with("BILLING_ADDR", ""), "BILLING_ADDR"},
 		{"user profile address required", with("USER_PROFILE_ADDR", ""), "USER_PROFILE_ADDR"},
 		// zen:clients-validate-test
+		// zen:webhooks-validate-test
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

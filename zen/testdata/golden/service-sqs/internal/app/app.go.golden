@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/dungnh3/kitchen/auth"
 	xcontext "github.com/dungnh3/kitchen/context"
@@ -23,6 +24,7 @@ import (
 	"github.com/acme/catalog/internal/service"
 	"github.com/acme/catalog/internal/store"
 	"github.com/acme/catalog/internal/store/pgstore"
+	// zen:app-imports
 )
 
 // Name is the service name reported in telemetry.
@@ -32,6 +34,14 @@ const Name = "catalog"
 // service, used by load balancers and Kubernetes probes. The HTTP probes
 // /livez and /readyz are always public.
 var publicMethods = []string{"/grpc.health.v1.Health/"}
+
+// webhookRoutes are the plain HTTP routes of received webhooks. They
+// authenticate the sender by signature instead of a bearer token, so the
+// authenticator lets them through; rate limits still apply. "zen add
+// webhook" adds its route above "zen:webhook-routes".
+var webhookRoutes = []string{
+	// zen:webhook-routes
+}
 
 // Run serves the API until ctx is cancelled, then shuts down gracefully.
 // logger nil means log.Default().
@@ -71,6 +81,10 @@ func Run(ctx context.Context, cfg config.Config, logger *log.Logger, version str
 		return fmt.Errorf("i18n: %w", err)
 	}
 	errh := errs.NewHandler(errs.Config{Logger: logger, Localizer: bundle, Domain: cfg.ErrorDomain})
+
+	// Webhook receivers: "zen add webhook" adds its receiver above
+	// "zen:webhooks" and its route to webhookRoutes.
+	// zen:webhooks
 
 	rlCfg := ratelimit.Config{
 		Default:       &ratelimit.Policy{Limits: ratelimit.DefaultLimits()},
@@ -155,7 +169,7 @@ func newAuthenticator(ctx context.Context, cfg config.Auth, errh *errs.Handler, 
 	authn, err := auth.New(auth.Config{
 		Verifiers:     []auth.Verifier{jwks},
 		Audience:      cfg.Audience,
-		Public:        publicMethods,
+		Public:        slices.Concat(publicMethods, webhookRoutes),
 		WriteError:    errh.WriteHTTP,
 		Logger:        logger,
 		MeterProvider: d.tel.MeterProvider(),

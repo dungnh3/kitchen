@@ -17,7 +17,7 @@ LOCAL_ENV += AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=
 	AWS_ENDPOINT_URL_SQS=http://localhost:9324 PUBSUB_ITEMS_TOPIC=$(SQS_URL)/catalog-items
 # Queues that "make up" creates.
 LOCAL_QUEUES := catalog-items
-# "zen add consumer" and "zen add client" add their local settings here.
+# "zen add consumer", "zen add client" and "zen add webhook" add their local settings here.
 # zen:local-env
 
 .PHONY: generate build test lint check breaking run tidy docker run-worker up down migrate-up migrate-down migrate-status

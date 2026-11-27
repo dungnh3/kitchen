@@ -1,0 +1,68 @@
+package outbound
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+	"github.com/dungnh3/kitchen/webhook/delivery"
+	"go.uber.org/goleak"
+
+	"{% .Module %}/internal/config"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+func TestDeliveries(t *testing.T) {
+	tests := []struct {
+		name      string
+		endpoints []string
+		eventType string
+		want      int
+		wantErr   bool
+	}{
+		{"fan-out", []string{"ep_1", "ep_2"}, "item.created", 2, false},
+		{"no endpoint", nil, "item.created", 0, false},
+		{"empty type", []string{"ep_1"}, "", 0, true},
+		{"empty endpoint", []string{""}, "item.created", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params, err := Deliveries(tt.endpoints, tt.eventType, map[string]string{"id": "item_1"})
+			if (err != nil) != tt.wantErr || len(params) != tt.want {
+				t.Fatalf("Deliveries = %d params, %v", len(params), err)
+			}
+			for i, p := range params {
+				a := p.Args.(delivery.Args)
+				first := params[0].Args.(delivery.Args)
+				var ev Event
+				if err := json.Unmarshal(a.Payload, &ev); err != nil || ev.Type != tt.eventType {
+					t.Fatalf("payload %s: %v", a.Payload, err)
+				}
+				if a.EndpointID != tt.endpoints[i] || a.MessageID != first.MessageID {
+					t.Fatalf("args %+v", a)
+				}
+			}
+		})
+	}
+}
+
+func TestWorker(t *testing.T) {
+	tel, err := sdk.Setup(t.Context(), sdk.Config{Disabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
+	w, err := NewWorker(config.WebhookDelivery{Workers: 1, Timeout: time.Second}, log.Discard(), tel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close(context.Background()) })
+	if _, err := (Endpoints{}).Endpoint(t.Context(), "ep_1"); !errors.Is(err, delivery.ErrEndpointNotFound) {
+		t.Fatalf("Endpoint = %v", err)
+	}
+}

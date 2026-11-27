@@ -15,7 +15,7 @@ LOCAL_ENV += REDIS_ADDRS=localhost:6379 REDIS_TLS=false
 LOCAL_ENV += PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT=local PUBSUB_MAX_DELIVERY_ATTEMPTS=0
 # topic:subscription pairs that "make up" creates in the emulator.
 LOCAL_SUBSCRIPTIONS := billing-items:billing-items-worker
-# "zen add consumer" and "zen add client" add their local settings here.
+# "zen add consumer", "zen add client" and "zen add webhook" add their local settings here.
 # zen:local-env
 
 .PHONY: generate build test lint check breaking run tidy docker run-worker up down migrate-up migrate-down migrate-status

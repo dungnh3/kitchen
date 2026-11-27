@@ -82,13 +82,32 @@ and useful to any kind with its own schedule.
 | W8 | Placement | Both in the core module: `jobs`, `httpx` and `redisx` are core, so no submodule is needed | A `webhook/delivery` submodule; inside `jobs` | Core never imports a submodule, and no heavy dependency is added. |
 | W9 | zen | `zen add webhook <name>` (inbound handler, middleware, secret in config and ENV.md, public route) and `zen new service -with webhooks` (outbound worker, needs `-with jobs`) | `zen add webhook` only | Both directions get the same wiring, including the SSRF settings and the auth public route. |
 
-## 4. Out of scope
+## 4. zen
+
+- `zen add webhook <name>` writes `internal/inbound/<name>.go` (a
+  `server.Service` whose only route is `POST /webhooks/<name>` behind
+  `webhook.NewMiddleware`) and its test; the first one also writes
+  `internal/inbound/inbound.go`. It adds `<NAME>_WEBHOOK_SECRET` (required,
+  parsed at start-up) to config, `docs/ENV.md` and the Makefile's local
+  settings, and the route to `webhookRoutes` in `app.go`, which the
+  authenticator treats as public; rate limits still apply. With `-with
+  redis` the receiver deduplicates through Redis.
+- `zen new service -with webhooks` (needs `-with jobs`) writes
+  `internal/outbound`: `Deliveries` builds one job per endpoint with one
+  message id and a `{type, timestamp, data}` payload, `Endpoints` is the
+  lookup to implement, and the jobs runner registers the worker on its own
+  `webhooks` queue (`WEBHOOK_DELIVERY_WORKERS`, `_TIMEOUT`, `_ALLOW_HTTP`,
+  the last refused in production).
+- Services generated before these markers existed get the "add the change
+  by hand" error from `zen add webhook`.
+
+## 5. Out of scope
 
 Endpoint and subscription storage, secret storage and the management UI are
 business code. The service implements `delivery.Endpoints` and, for logs and
 auto-disabling, `Config.OnResult`.
 
-## 5. Security notes
+## 6. Security notes
 
 - Secrets need their prefix; a symmetric secret has 16 to 1024 bytes. A
   verifier refuses a `whsk_` key and a signer a `whpk_` key.

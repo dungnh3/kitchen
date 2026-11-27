@@ -1,0 +1,67 @@
+package inbound
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dungnh3/kitchen/errs"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/webhook"
+
+	"github.com/acme/mailer/internal/config"
+)
+
+func TestPartnerEvents(t *testing.T) {
+	secret, err := webhook.GenerateSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewPartnerEvents(config.Webhook{Secrets: []string{secret}}, errs.NewHandler(errs.Config{Logger: log.Discard()}), nil, log.Discard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	h.RegisterHTTP(mux)
+	signer, err := webhook.NewSigner(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		body string
+		sign bool
+		want int
+	}{
+		{"signed event", `{"type":"ping"}`, true, http.StatusNoContent},
+		{"unsigned", `{"type":"ping"}`, false, http.StatusUnauthorized},
+		{"signed but not JSON", `not json`, true, http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhooks/partner-events", strings.NewReader(tt.body))
+			if tt.sign {
+				hdr, err := signer.Headers(webhook.NewMessageID(), time.Now(), []byte(tt.body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for k, v := range hdr {
+					r.Header[k] = v
+				}
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, r)
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.want, rec.Body)
+			}
+		})
+	}
+}
+
+func TestNewPartnerEventsRefusesBadSecrets(t *testing.T) {
+	if _, err := NewPartnerEvents(config.Webhook{Secrets: []string{"not-a-secret"}}, nil, nil, log.Discard()); err == nil {
+		t.Fatal("accepted a secret without the whsec_ prefix")
+	}
+}

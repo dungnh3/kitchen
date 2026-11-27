@@ -12,7 +12,7 @@ DB_URL ?= app:app@tcp(localhost:3306)/app?tls=false
 # Local runs: no auth, readable logs, the dependencies of compose.yaml.
 LOCAL_ENV := AUTH_DISABLED=true LOG_FORMAT=text DB_URL="$(DB_URL)"
 LOCAL_ENV += REDIS_ADDRS=localhost:6379 REDIS_TLS=false
-# "zen add consumer" and "zen add client" add their local settings here.
+# "zen add consumer", "zen add client" and "zen add webhook" add their local settings here.
 LOCAL_ENV += BILLING_ADDR=localhost:10001 BILLING_INSECURE=true # a local billing server
 LOCAL_ENV += USER_PROFILE_ADDR=localhost:10001 USER_PROFILE_INSECURE=true # a local user profile server
 # zen:local-env

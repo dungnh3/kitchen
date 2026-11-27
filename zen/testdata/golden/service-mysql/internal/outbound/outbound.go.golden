@@ -1,0 +1,81 @@
+// Package outbound sends this service's webhooks to its customers'
+// endpoints with github.com/dungnh3/kitchen/webhook/delivery. A delivery is
+// a job in the "jobs" table: insert it in the transaction of the change it
+// announces, and the worker sends it, signed (Standard Webhooks), through
+// the SSRF guard, retrying for about 17 hours.
+package outbound
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/dungnh3/kitchen/jobs"
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/otelx/sdk"
+	"github.com/dungnh3/kitchen/webhook"
+	"github.com/dungnh3/kitchen/webhook/delivery"
+
+	"github.com/acme/shop/internal/config"
+)
+
+// Endpoints looks up the endpoints that receive the webhooks. Keep the
+// endpoints (URL, signing secrets from webhook.GenerateSecret, disabled) in
+// the service's database and look them up here. As generated, it knows no
+// endpoint, so every delivery is cancelled as not found.
+type Endpoints struct{}
+
+// Endpoint implements delivery.Endpoints. It is called before every
+// attempt, so a changed URL or a rotated secret applies to the next one.
+func (Endpoints) Endpoint(_ context.Context, id string) (delivery.Endpoint, error) {
+	return delivery.Endpoint{}, fmt.Errorf("%w: %q", delivery.ErrEndpointNotFound, id)
+}
+
+// Event is the body of every webhook: the Standard Webhooks payload
+// structure.
+type Event struct {
+	Type      string    `json:"type"`
+	Timestamp time.Time `json:"timestamp"`
+	Data      any       `json:"data"`
+}
+
+// Deliveries returns the jobs that send one event to each endpoint, all
+// with one message id. Insert them in the transaction of the change:
+//
+//	params, err := outbound.Deliveries(endpointIDs, "item.created", item)
+//	_, err = jobsClient.InsertManyTx(ctx, tx, params)
+func Deliveries(endpointIDs []string, eventType string, data any) ([]jobs.InsertParams, error) {
+	if len(endpointIDs) == 0 {
+		return nil, nil
+	}
+	if eventType == "" {
+		return nil, errors.New("outbound: empty event type")
+	}
+	body, err := json.Marshal(Event{Type: eventType, Timestamp: time.Now().UTC(), Data: data})
+	if err != nil {
+		return nil, fmt.Errorf("outbound: encode %s: %w", eventType, err)
+	}
+	args := delivery.Args{MessageID: webhook.NewMessageID(), EventType: eventType, Payload: body}
+	params := make([]jobs.InsertParams, 0, len(endpointIDs))
+	for _, id := range endpointIDs {
+		if id == "" {
+			return nil, errors.New("outbound: empty endpoint id")
+		}
+		params = append(params, jobs.InsertParams{Args: args.To(id)})
+	}
+	return params, nil
+}
+
+// NewWorker returns the delivery worker that the jobs runner registers.
+func NewWorker(cfg config.WebhookDelivery, logger *log.Logger, tel *sdk.Telemetry) (*delivery.Worker, error) {
+	return delivery.NewWorker(delivery.Config{
+		Endpoints:      Endpoints{},
+		Timeout:        cfg.Timeout,
+		AllowHTTP:      cfg.AllowHTTP,
+		Logger:         logger,
+		MeterProvider:  tel.MeterProvider(),
+		TracerProvider: tel.TracerProvider(),
+	})
+}

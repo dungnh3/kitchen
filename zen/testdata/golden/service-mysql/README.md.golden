@@ -37,6 +37,7 @@ curl -s localhost:8080/v1/items
 | `internal/service/` | The API implementation, one file per domain (`item_service.go`) |
 | `internal/store/` | Per domain: the types and store interface (`store.Items`) and their implementations (`memstore`, `mysqlstore`, `cachestore`) |
 | `internal/task/` | Background tasks: typed jobs stored in the `jobs` table and run by the worker |
+| `internal/outbound/` | Webhooks sent to customers' endpoints, as jobs run by the worker |
 | `docs/ENV.md` | Environment variables |
 | `.zen.yaml` | How zen generated the project; `make check` compares the managed files with it |
 | `internal/store/mysqlstore/queries/` | SQL queries, one file per domain; `make generate` turns them into `sqlcdb` (committed) |
@@ -108,6 +109,20 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
   with `-every` also runs on a schedule, once across all worker replicas.
   `zen add task <name> -every 1h` adds one. `JOBS_WORKERS` bounds how many
   run at once.
+- **Sent webhooks.** `internal/outbound` sends Standard Webhooks with
+  `github.com/dungnh3/kitchen/webhook/delivery`. Insert the jobs of
+  `outbound.Deliveries(endpointIDs, "item.created", item)` with
+  `InsertManyTx` in the transaction of the change. The worker signs each
+  one with the endpoint's secrets, sends it through the SSRF guard (public
+  https endpoints only) and retries for about 17 hours; 410 Gone stops it.
+  Implement `outbound.Endpoints` with your endpoints table first: as
+  generated it knows no endpoint.
+- **Received webhooks.** `zen add webhook <name>` adds a receiver in
+  `internal/inbound` on `POST /webhooks/<name>`: the Standard Webhooks
+  signature is checked with `<NAME>_WEBHOOK_SECRET` before the handler
+  runs, and Redis runs the handler once per message id.
+  The route skips bearer authentication (the signature replaces it) but
+  keeps the rate limits.
 - **Probes.** Set `ADMIN_ADDR` and point the worker's probes at `/livez` and
   `/readyz` on it.
 

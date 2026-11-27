@@ -17,9 +17,9 @@ import (
 var serviceAdds = map[string][][]string{
 	"service-events": {{"domain", "order-item"}, {"consumer", "payments"}, {"job", "cleanup", "-every", "5m"}, {"client", "ledger"}},
 	"service-kafka":  {{"domain", "category"}, {"consumer", "order-events"}},
-	"service-sqs":    {{"domain", "box"}, {"consumer", "order-events"}},
+	"service-sqs":    {{"domain", "box"}, {"consumer", "order-events"}, {"webhook", "billing-events"}},
 	"service-mysql":  {{"domain", "order-item"}, {"client", "billing"}, {"client", "user-profile"}, {"task", "send-email"}},
-	"service-jobs":   {{"task", "send-email"}, {"task", "refresh-stats", "-every", "5m"}},
+	"service-jobs":   {{"task", "send-email"}, {"task", "refresh-stats", "-every", "5m"}, {"webhook", "payments"}, {"webhook", "partner-events"}},
 }
 
 // runAdds writes the case into dir and runs its add commands without code
@@ -94,6 +94,9 @@ func TestAddRefusals(t *testing.T) {
 		{"client named like a Go keyword", []string{"client", "type"}, 1, "name is taken"},
 		{"bad client name", []string{"client", "Billing"}, 1, "lower-case"},
 		{"client without name", []string{"client"}, 2, "missing <name>"},
+		{"webhook named like a generated function", []string{"webhook", "dedup"}, 1, "clashes"},
+		{"webhook named like a generated constant", []string{"webhook", "order-route"}, 1, "clashes"},
+		{"bad webhook name", []string{"webhook", "Stripe"}, 1, "lower-case"},
 		{"missing name", []string{"domain"}, 2, "missing <name>"},
 		{"unknown kind", []string{"model", "x"}, 2, "zen add domain"},
 	}

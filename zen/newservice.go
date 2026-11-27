@@ -83,12 +83,13 @@ const (
 
 // Optional features (-with). Each one wires one canonical kitchen package.
 const (
-	withRedis  = "redis"
-	withCache  = "cache"
-	withLease  = "lease"
-	withPubSub = "pubsub"
-	withOutbox = "outbox"
-	withJobs   = "jobs"
+	withRedis    = "redis"
+	withCache    = "cache"
+	withLease    = "lease"
+	withPubSub   = "pubsub"
+	withOutbox   = "outbox"
+	withJobs     = "jobs"
+	withWebhooks = "webhooks"
 )
 
 // features lists the -with values in the order they are shown.
@@ -99,6 +100,7 @@ var features = []struct{ name, desc string }{
 	{withPubSub, "Events: publisher, consumer in the worker (pubsub)"},
 	{withOutbox, "Transactional outbox and relay (pubsub/outbox/pgx); needs postgres and pubsub"},
 	{withJobs, "Background tasks stored in the database, run by the worker (jobs); needs postgres or mysql"},
+	{withWebhooks, "Webhooks sent to customers' endpoints, retried for hours (webhook/delivery); needs jobs"},
 }
 
 // Message brokers (-pubsub).
@@ -181,6 +183,9 @@ func (p serviceParams) PubSub() bool { return p.Has(withPubSub) }
 
 // Jobs reports whether the service has background tasks in its database.
 func (p serviceParams) Jobs() bool { return p.Has(withJobs) }
+
+// Webhooks reports whether the worker sends webhooks.
+func (p serviceParams) Webhooks() bool { return p.Has(withWebhooks) }
 
 // Outbox reports whether events go through the transactional outbox.
 func (p serviceParams) Outbox() bool { return p.Has(withOutbox) }
@@ -369,6 +374,9 @@ func (p *serviceParams) validate() error {
 	if p.Jobs() && !p.SQL() {
 		errs = append(errs, errors.New("-with jobs needs -db postgres or -db mysql"))
 	}
+	if p.Webhooks() && !p.Jobs() {
+		errs = append(errs, errors.New("-with webhooks needs -with jobs"))
+	}
 	switch p.Broker {
 	case brokerGCP, brokerKafka, brokerSQS:
 	default:
@@ -399,6 +407,7 @@ var fileRules = []struct {
 	{[]string{"internal/events/publish.go", "internal/events/publish_test.go"}, func(p serviceParams) bool { return p.PubSub() && !p.Outbox() }},
 	{[]string{"internal/job/"}, serviceParams.Lease},
 	{[]string{"migrations/00003_create_jobs.sql", "internal/app/jobs.go", "internal/task/"}, serviceParams.Jobs},
+	{[]string{"internal/outbound/"}, serviceParams.Webhooks},
 	{[]string{"internal/app/worker.go"}, serviceParams.Worker},
 	{[]string{"compose.yaml"}, serviceParams.Compose},
 }
@@ -498,7 +507,7 @@ func promptService(ctx context.Context, p *serviceParams) error {
 				huh.NewOption("None", dbNone),
 			).Value(&p.DB),
 			huh.NewMultiSelect[string]().Title("Optional features").
-				Description("Each one wires a kitchen package; outbox needs PostgreSQL and pubsub, jobs needs a database.").
+				Description("Each one wires a kitchen package; outbox needs PostgreSQL and pubsub, jobs needs a database, webhooks needs jobs.").
 				Options(featureOptions()...).Value(&p.With).
 				Validate(func(with []string) error {
 					if slices.Contains(with, withOutbox) && (p.DB != dbPostgres || !slices.Contains(with, withPubSub)) {
@@ -506,6 +515,9 @@ func promptService(ctx context.Context, p *serviceParams) error {
 					}
 					if slices.Contains(with, withJobs) && p.DB == dbNone {
 						return errors.New("jobs needs PostgreSQL or MySQL")
+					}
+					if slices.Contains(with, withWebhooks) && !slices.Contains(with, withJobs) {
+						return errors.New("webhooks needs jobs")
 					}
 					return nil
 				}),
