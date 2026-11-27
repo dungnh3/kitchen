@@ -80,6 +80,7 @@ func TestValidateServer(t *testing.T) {
 		{"disabled in development", []string{"AUTH_DISABLED", "true"}, ""},
 		{"disabled in production", []string{"AUTH_DISABLED", "true", "APP_ENV", EnvProduction}, "not allowed"},
 		{"redis required", with("REDIS_ADDRS", ""), "REDIS_ADDRS"},
+		{"jobs workers", with("JOBS_WORKERS", "0"), "JOBS_WORKERS"},
 		{"billing address required", with("BILLING_ADDR", ""), "BILLING_ADDR"},
 		{"user profile address required", with("USER_PROFILE_ADDR", ""), "USER_PROFILE_ADDR"},
 		// zen:clients-validate-test

@@ -1,0 +1,7 @@
+// Package pgstore implements the store interfaces on PostgreSQL. The queries
+// are in queries/, one file per domain; "make generate" turns them into the
+// sqlcdb package.
+package pgstore
+
+// firstID sorts before every UUID, so it starts the first page.
+const firstID = "00000000-0000-0000-0000-000000000000"

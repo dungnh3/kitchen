@@ -1,0 +1,31 @@
+-- The job table of github.com/dungnh3/kitchen/jobs (jobs/pgx, its
+-- Driver.Schema): jobs are inserted in the same transaction as the data they
+-- belong to, and the worker runs them.
+
+-- +goose Up
+CREATE TABLE IF NOT EXISTS "jobs" (
+    id           bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    kind         text        NOT NULL,
+    queue        text        NOT NULL DEFAULT 'default',
+    args         jsonb       NOT NULL DEFAULT '{}',
+    metadata     jsonb       NOT NULL DEFAULT '{}',
+    state        text        NOT NULL DEFAULT 'available'
+                 CHECK (state IN ('available', 'running', 'completed', 'cancelled', 'discarded')),
+    priority     smallint    NOT NULL DEFAULT 1,
+    attempt      integer     NOT NULL DEFAULT 0,
+    max_attempts integer     NOT NULL,
+    scheduled_at timestamptz NOT NULL DEFAULT now(),
+    locked_until timestamptz,
+    claim        bigint      NOT NULL DEFAULT 0,
+    errors       jsonb       NOT NULL DEFAULT '[]',
+    unique_key   text,
+    unique_keep  boolean     NOT NULL DEFAULT false,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    finalized_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "jobs_unique_idx" ON "jobs" (unique_key);
+CREATE INDEX IF NOT EXISTS "jobs_fetch_idx" ON "jobs" (queue, priority, scheduled_at, id) WHERE state IN ('available', 'running');
+CREATE INDEX IF NOT EXISTS "jobs_finalized_idx" ON "jobs" (finalized_at) WHERE finalized_at IS NOT NULL;
+
+-- +goose Down
+DROP TABLE "jobs";

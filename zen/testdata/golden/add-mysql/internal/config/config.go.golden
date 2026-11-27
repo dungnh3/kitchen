@@ -44,6 +44,7 @@ type Config struct {
 	Database  Database  `envPrefix:"DB_"`
 	Redis     Redis     `envPrefix:"REDIS_"`
 	Cache     Cache     `envPrefix:"CACHE_"`
+	Jobs      Jobs      `envPrefix:"JOBS_"`
 	Auth      Auth      `envPrefix:"AUTH_"`
 	RateLimit RateLimit `envPrefix:"RATE_LIMIT_"`
 	Clients   Clients
@@ -115,6 +116,13 @@ type Redis struct {
 	TLS bool `env:"TLS" envDefault:"true"`
 }
 
+// Jobs configures the background tasks of the worker (see
+// github.com/dungnh3/kitchen/jobs).
+type Jobs struct {
+	// Workers is the number of tasks the worker runs at once.
+	Workers int `env:"WORKERS" envDefault:"10"`
+}
+
 // Cache configures the Redis cache of the item store.
 type Cache struct {
 	// TTL is how long a cached item is served before it is read again.
@@ -181,6 +189,9 @@ func (c Config) ValidateServer() error {
 	return errors.Join(c.validateAuth(), c.validateDeps())
 }
 
+// ValidateWorker checks the settings needed by the worker.
+func (c Config) ValidateWorker() error { return c.validateDeps() }
+
 // validateDeps checks the settings of the external services that the
 // server and the worker connect to.
 func (c Config) validateDeps() error {
@@ -190,6 +201,9 @@ func (c Config) validateDeps() error {
 	}
 	if c.Cache.TTL <= 0 {
 		errs = append(errs, errors.New("CACHE_TTL must be positive"))
+	}
+	if c.Jobs.Workers < 1 {
+		errs = append(errs, errors.New("JOBS_WORKERS must be at least 1"))
 	}
 	errs = append(errs, c.Clients.Billing.Validate("BILLING_"))
 	errs = append(errs, c.Clients.UserProfile.Validate("USER_PROFILE_"))

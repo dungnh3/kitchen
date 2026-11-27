@@ -1,0 +1,33 @@
+package task
+
+import (
+	"context"
+
+	"github.com/dungnh3/kitchen/jobs"
+	"github.com/dungnh3/kitchen/log"
+)
+
+// SendEmail is the args of the send email task: they are stored as JSON in the
+// jobs table. Add the fields that identify the work, for example the ID of
+// the record to process.
+type SendEmail struct{}
+
+// Kind names the task in the jobs table; never change it while jobs of it
+// are queued.
+func (SendEmail) Kind() string { return "send_email" }
+
+type sendEmailWorker struct{ logger *log.Logger }
+
+// Work does one attempt of the send email task. It can run twice for one job
+// (after a crash or a lost lease), so it must be idempotent. Return an error
+// to retry with backoff, jobs.Cancel(err) to give up and jobs.Snooze(d) to
+// run again later.
+func (w sendEmailWorker) Work(ctx context.Context, j *jobs.Job[SendEmail]) error {
+	w.logger.InfoContext(ctx, "send email task ran", log.Int64("job_id", j.ID))
+	return nil
+}
+
+// RegisterSendEmail adds the send email worker to reg.
+func RegisterSendEmail(reg *jobs.Registry, logger *log.Logger) error {
+	return jobs.Register(reg, sendEmailWorker{logger: log.OrDefault(logger)})
+}

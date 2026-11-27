@@ -1,0 +1,17 @@
+## What and why
+
+<!-- What does this change do, and why is it needed? Link the issue. -->
+
+## How it was tested
+
+- [ ] Unit tests
+- [ ] Integration tests (`make test` starts the whole service with a PostgreSQL container)
+- [ ] Manual test
+
+## Checklist
+
+- [ ] `make generate` was run after changing `proto/`, `migrations/` or SQL queries
+- [ ] API changes are backward compatible (`make breaking`), or the break is intended and announced
+- [ ] New migrations are backward compatible with the running version (expand, then contract)
+- [ ] New queries are covered by an index (no sequential scan on large tables)
+- [ ] Errors returned to clients are `errs` errors; no internal details leak

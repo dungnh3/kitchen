@@ -121,6 +121,9 @@ func TestValidateServer(t *testing.T) {
 {%- else if .SQS %}
 		{"queue required", with("PUBSUB_ITEMS_TOPIC", ""), "PUBSUB_ITEMS_TOPIC"},
 {%- end %}
+{%- if .Jobs %}
+		{"jobs workers", with("JOBS_WORKERS", "0"), "JOBS_WORKERS"},
+{%- end %}
 {%- if .PubSub %}
 		{"concurrency", with("PUBSUB_CONCURRENCY", "0"), "PUBSUB_CONCURRENCY"},
 {%- end %}

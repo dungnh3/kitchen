@@ -90,6 +90,16 @@ linters:
               desc: "migrations: github.com/dungnh3/kitchen/migrate"
             - pkg: github.com/golang-migrate/migrate
               desc: "migrations: github.com/dungnh3/kitchen/migrate"
+            - pkg: github.com/riverqueue/river
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/hibiken/asynq
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/RichardKnop/machinery
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/gocraft/work
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/vgarvardt/gue
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
             - pkg: github.com/lib/pq
               desc: "SQL: github.com/dungnh3/kitchen/pgx"
             - pkg: github.com/go-sql-driver/mysql

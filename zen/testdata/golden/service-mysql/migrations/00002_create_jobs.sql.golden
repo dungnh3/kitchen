@@ -1,0 +1,30 @@
+-- The job table of github.com/dungnh3/kitchen/jobs (jobs/mysql, its
+-- Driver.Schema): jobs are inserted in the same transaction as the data they
+-- belong to, and the worker runs them.
+
+-- +goose Up
+CREATE TABLE IF NOT EXISTS `jobs` (
+    id           BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    kind         VARCHAR(255) NOT NULL,
+    queue        VARCHAR(64)  NOT NULL DEFAULT 'default',
+    args         JSON         NOT NULL,
+    metadata     JSON         NOT NULL,
+    state        VARCHAR(16)  NOT NULL DEFAULT 'available',
+    priority     SMALLINT     NOT NULL DEFAULT 1,
+    attempt      INT          NOT NULL DEFAULT 0,
+    max_attempts INT          NOT NULL,
+    scheduled_at DATETIME(6)  NOT NULL,
+    locked_until DATETIME(6)  NULL,
+    claim        BIGINT       NOT NULL DEFAULT 0,
+    errors       JSON         NOT NULL,
+    unique_key   VARCHAR(255) NULL,
+    unique_keep  BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_at   DATETIME(6)  NOT NULL,
+    finalized_at DATETIME(6)  NULL,
+    UNIQUE KEY `jobs_unique_idx` (unique_key),
+    KEY `jobs_fetch_idx` (queue, state, priority, scheduled_at, id),
+    KEY `jobs_finalized_idx` (state, finalized_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+-- +goose Down
+DROP TABLE `jobs`;

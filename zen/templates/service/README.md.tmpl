@@ -48,6 +48,9 @@ curl -s localhost:8080/v1/items
 {%- if .Lease %}
 | `internal/job/` | Periodic jobs, each on one worker replica at a time (lease on Redis) |
 {%- end %}
+{%- if .Jobs %}
+| `internal/task/` | Background tasks: typed jobs stored in the `jobs` table and run by the worker |
+{%- end %}
 | `docs/ENV.md` | Environment variables |
 | `.zen.yaml` | How zen generated the project; `make check` compares the managed files with it |
 {%- if .SQL %}
@@ -145,6 +148,19 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
 - **Jobs.** `internal/job` runs each job on one replica at a time under a
   Redis lease. `zen add job <name> -every 5m` adds one; a run must stop
   when its context is cancelled.
+{%- end %}
+{%- if .Jobs %}
+- **Tasks.** `internal/task` holds the background tasks, run with
+  `github.com/dungnh3/kitchen/jobs` from the `jobs` table of the service's
+  database. Enqueue one in the transaction of the change that needs it, so
+  it exists if and only if the change is stored:
+  `client.InsertTx(ctx, tx, task.SendEmail{...}, nil)`. The API process has
+  the insert-only client as `deps.jobs` in `internal/app`; pass it to the
+  stores or services that enqueue. A task can run twice, so it must be idempotent; return an
+  error to retry with backoff and `jobs.Cancel(err)` to give up. A task
+  with `-every` also runs on a schedule, once across all worker replicas.
+  `zen add task <name> -every 1h` adds one. `JOBS_WORKERS` bounds how many
+  run at once.
 {%- end %}
 - **Probes.** Set `ADMIN_ADDR` and point the worker's probes at `/livez` and
   `/readyz` on it.

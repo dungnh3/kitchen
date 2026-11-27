@@ -37,10 +37,15 @@ var serviceGoldenCases = map[string]serviceParams{
 		With:          []string{withPubSub},
 		Broker:        brokerKafka,
 	},
+	"service-jobs": {
+		projectParams: projectParams{Module: "github.com/acme/mailer", Description: "Mailer.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
+		DB:            dbPostgres,
+		With:          []string{withJobs},
+	},
 	"service-mysql": {
 		projectParams: projectParams{Module: "github.com/acme/shop", Description: "Shop.", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
 		DB:            dbMySQL,
-		With:          []string{withCache},
+		With:          []string{withCache, withJobs},
 		Auth:          authIntrospection,
 	},
 	"service-sqs": {
@@ -231,6 +236,9 @@ func TestServiceValidate(t *testing.T) {
 		{"outbox without postgres", func(p *serviceParams) {
 			p.DB, p.With = dbNone, []string{withPubSub, withOutbox}
 		}, "-with outbox needs"},
+		{"jobs on postgres", func(p *serviceParams) { p.With = []string{withJobs} }, ""},
+		{"jobs on mysql", func(p *serviceParams) { p.DB, p.With = dbMySQL, []string{withJobs} }, ""},
+		{"jobs without a database", func(p *serviceParams) { p.DB, p.With = dbNone, []string{withJobs} }, "-with jobs needs -db postgres or -db mysql"},
 		{"bad broker", func(p *serviceParams) { p.With, p.Broker = []string{withPubSub}, "nats" }, "-pubsub"},
 		{"broker without pubsub", func(p *serviceParams) { p.Broker, p.brokerSet = brokerKafka, true }, "-pubsub needs"},
 		{"reusable with tag", func(p *serviceParams) {
@@ -295,7 +303,7 @@ func TestRunServiceCLI(t *testing.T) {
 // TestServiceFeatureMatrix renders every valid combination of database,
 // features and broker: each must render and gofmt, and keep only its files.
 func TestServiceFeatureMatrix(t *testing.T) {
-	names := []string{withRedis, withCache, withLease, withPubSub, withOutbox}
+	names := []string{withRedis, withCache, withLease, withPubSub, withOutbox, withJobs}
 	for _, db := range []string{dbPostgres, dbMySQL, dbNone} {
 		for mask := range 1 << len(names) {
 			var with []string
@@ -347,6 +355,27 @@ func TestRedisFeaturesAddRedis(t *testing.T) {
 		p.applyDefaults()
 		if want := []string{f, withRedis}; !slices.Equal(p.With, want) {
 			t.Errorf("-with %s: With = %v, want %v", f, p.With, want)
+		}
+	}
+}
+
+// TestJobsMigrationNumber: the jobs migration follows the outbox's, and is
+// the second one without it.
+func TestJobsMigrationNumber(t *testing.T) {
+	for _, tt := range []struct {
+		with []string
+		want string
+	}{
+		{[]string{withJobs}, "migrations/00002_create_jobs.sql"},
+		{[]string{withJobs, withPubSub, withOutbox}, "migrations/00003_create_jobs.sql"},
+	} {
+		p := serviceParams{
+			projectParams: projectParams{Module: "example.com/x/svc", CI: ciStandalone, KitchenVersion: defaultKitchenVersion},
+			DB:            dbPostgres, With: tt.with,
+		}
+		files := renderSvc(t, p)
+		if _, ok := files[tt.want]; !ok {
+			t.Errorf("-with %v: %s not generated; migrations: %v", tt.with, tt.want, files.Paths())
 		}
 	}
 }

@@ -1,0 +1,51 @@
+package app
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/dungnh3/kitchen/jobs"
+	jobsmysql "github.com/dungnh3/kitchen/jobs/mysql"
+	"github.com/dungnh3/kitchen/log"
+
+	"github.com/acme/shop/internal/config"
+	"github.com/acme/shop/internal/task"
+)
+
+// jobsClient is the client of the job table. Its transaction type is the
+// database's, so InsertTx takes the transaction of the business write.
+type jobsClient = jobs.Client[*sql.Tx]
+
+// newJobs returns a client of the "jobs" table. Without a registry it only
+// inserts jobs; the worker adds the registry and runs them.
+func (d *deps) newJobs(logger *log.Logger, opts ...jobs.Option) (*jobsClient, error) {
+	drv, err := jobsmysql.New(d.db)
+	if err != nil {
+		return nil, err
+	}
+	return jobs.NewClient(drv, append([]jobs.Option{
+		jobs.WithLogger(logger),
+		jobs.WithTracerProvider(d.tel.TracerProvider()),
+		jobs.WithMeterProvider(d.tel.MeterProvider()),
+	}, opts...)...)
+}
+
+// jobsRunner returns the function that runs the tasks of internal/task until
+// its context is cancelled.
+func (d *deps) jobsRunner(cfg config.Config, logger *log.Logger) (func(context.Context) error, error) {
+	reg := jobs.NewRegistry()
+	if err := task.Register(reg, logger); err != nil {
+		return nil, fmt.Errorf("register tasks: %w", err)
+	}
+	c, err := d.newJobs(logger,
+		jobs.WithRegistry(reg),
+		jobs.WithQueues(jobs.Queue{Name: "default", Workers: cfg.Jobs.Workers}),
+		jobs.WithPeriodic(task.Periodic()...),
+		jobs.WithShutdownTimeout(cfg.ShutdownTimeout),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return c.Run, nil
+}

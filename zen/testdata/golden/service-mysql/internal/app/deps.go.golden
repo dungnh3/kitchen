@@ -22,7 +22,7 @@ import (
 	"github.com/acme/shop/internal/config"
 )
 
-// Option changes how Run builds the service. Tests use
+// Option changes how Run and RunWorker build the service. Tests use
 // options to listen on random ports.
 type Option func(*options)
 
@@ -35,13 +35,16 @@ func WithServerOptions(o ...server.Option) Option {
 	return func(c *options) { c.server = append(c.server, o...) }
 }
 
-// deps are the resources that the server share. close releases
+// deps are the resources that the server and the worker share. close releases
 // them in reverse order.
 type deps struct {
 	tel      *sdk.Telemetry
 	registry *prometheus.Registry
 	db       *sql.DB
-	redis    redis.UniversalClient
+	// jobs inserts jobs in the transaction of a business write (InsertTx);
+	// the worker runs them (internal/task).
+	jobs  *jobsClient
+	redis redis.UniversalClient
 	// The gRPC clients that "zen add client" adds above "zen:client-fields".
 	// zen:client-fields
 	closers []func(context.Context) error
@@ -90,6 +93,11 @@ func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, versio
 		return d, err
 	}
 	d.onClose(func(context.Context) error { return d.db.Close() })
+
+	d.jobs, err = d.newJobs(logger)
+	if err != nil {
+		return d, fmt.Errorf("jobs: %w", err)
+	}
 
 	d.redis, err = openRedis(ctx, cfg.Redis, d.tel)
 	if err != nil {

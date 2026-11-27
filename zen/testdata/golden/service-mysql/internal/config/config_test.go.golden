@@ -78,6 +78,7 @@ func TestValidateServer(t *testing.T) {
 		{"disabled in development", []string{"AUTH_DISABLED", "true"}, ""},
 		{"disabled in production", []string{"AUTH_DISABLED", "true", "APP_ENV", EnvProduction}, "not allowed"},
 		{"redis required", with("REDIS_ADDRS", ""), "REDIS_ADDRS"},
+		{"jobs workers", with("JOBS_WORKERS", "0"), "JOBS_WORKERS"},
 		// zen:clients-validate-test
 	}
 	for _, tt := range tests {

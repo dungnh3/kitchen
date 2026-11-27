@@ -1,0 +1,34 @@
+package task
+
+import (
+	"context"
+	"time"
+
+	"github.com/dungnh3/kitchen/jobs"
+	"github.com/dungnh3/kitchen/log"
+)
+
+// Heartbeat is an example task that logs a line every hour. Replace it with
+// real tasks.
+type Heartbeat struct{}
+
+// Kind names the task in the jobs table; never change it while jobs of it
+// are queued.
+func (Heartbeat) Kind() string { return "heartbeat" }
+
+type heartbeatWorker struct{ logger *log.Logger }
+
+func (w heartbeatWorker) Work(ctx context.Context, j *jobs.Job[Heartbeat]) error {
+	w.logger.InfoContext(ctx, "heartbeat task ran", log.Int64("job_id", j.ID))
+	return nil
+}
+
+// RegisterHeartbeat adds the heartbeat worker to reg.
+func RegisterHeartbeat(reg *jobs.Registry, logger *log.Logger) error {
+	return jobs.Register(reg, heartbeatWorker{logger: log.OrDefault(logger)})
+}
+
+// HeartbeatEvery runs the heartbeat every hour, on the hour.
+func HeartbeatEvery() jobs.Periodic {
+	return jobs.Every(time.Hour, func() jobs.Args { return Heartbeat{} })
+}

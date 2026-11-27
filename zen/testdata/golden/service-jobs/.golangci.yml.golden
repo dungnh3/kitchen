@@ -1,0 +1,180 @@
+# Managed by zen: "zen check" fails when this file differs from
+# the version zen wrote, and "zen check -write" updates it to the
+# current template. To own the file instead, remove it from "managed" in
+# .zen.yaml.
+version: "2"
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - depguard
+    - errorlint
+    - forbidigo
+    - gosec
+    - misspell
+    - noctx
+    - sloglint
+  settings:
+    # One canonical kitchen package per concern (logging, errors, HTTP,
+    # Redis, SQL, telemetry, ...): use it instead of the library behind it,
+    # so defaults (TLS, timeouts, OTel, SSRF guard, error mapping) and fixes
+    # come from one place. Tests may use the libraries directly.
+    depguard:
+      rules:
+        kitchen:
+          files:
+            - "$all"
+            - "!$test"
+          deny:
+            - pkg: log/slog
+              desc: "log through github.com/dungnh3/kitchen/log (*log.Logger, log.String, log.Default)"
+            - pkg: log$
+              desc: "log through github.com/dungnh3/kitchen/log"
+            - pkg: go.uber.org/zap
+              desc: "log through github.com/dungnh3/kitchen/log"
+            - pkg: github.com/rs/zerolog
+              desc: "log through github.com/dungnh3/kitchen/log"
+            - pkg: github.com/sirupsen/logrus
+              desc: "log through github.com/dungnh3/kitchen/log"
+            - pkg: github.com/pkg/errors
+              desc: "errors: stdlib errors (%w, errors.Join) and github.com/dungnh3/kitchen/errs"
+            - pkg: go.uber.org/multierr
+              desc: "errors: errors.Join"
+            - pkg: github.com/hashicorp/go-multierror
+              desc: "errors: errors.Join"
+            - pkg: github.com/cenkalti/backoff
+              desc: "backoff: github.com/dungnh3/kitchen/timex.Backoff"
+            - pkg: github.com/avast/retry-go
+              desc: "backoff: github.com/dungnh3/kitchen/timex.Backoff (HTTP: httpx.WithRetry)"
+            - pkg: math/rand
+              desc: "jitter: github.com/dungnh3/kitchen/timex.Backoff; crypto/rand for secrets"
+            - pkg: resty.dev
+              desc: "HTTP client: github.com/dungnh3/kitchen/httpx"
+            - pkg: github.com/go-resty/resty
+              desc: "HTTP client: github.com/dungnh3/kitchen/httpx"
+            - pkg: github.com/sony/gobreaker
+              desc: "gRPC client: github.com/dungnh3/kitchen/grpcx (WithCircuitBreaker)"
+            - pkg: github.com/hashicorp/go-retryablehttp
+              desc: "HTTP client: github.com/dungnh3/kitchen/httpx (WithRetry)"
+            - pkg: github.com/golang-jwt/jwt
+              desc: "auth: github.com/dungnh3/kitchen/auth"
+            - pkg: github.com/go-jose/go-jose
+              desc: "auth: github.com/dungnh3/kitchen/auth"
+            - pkg: github.com/lestrrat-go/jwx
+              desc: "auth: github.com/dungnh3/kitchen/auth"
+            - pkg: github.com/redis/rueidis
+              desc: "Redis: github.com/dungnh3/kitchen/redisx"
+            - pkg: github.com/gomodule/redigo
+              desc: "Redis: github.com/dungnh3/kitchen/redisx"
+            - pkg: golang.org/x/time/rate
+              desc: "rate limit: github.com/dungnh3/kitchen/ratelimit"
+            - pkg: github.com/go-redsync/redsync
+              desc: "locks: github.com/dungnh3/kitchen/lease"
+            - pkg: github.com/bsm/redislock
+              desc: "locks: github.com/dungnh3/kitchen/lease"
+            - pkg: github.com/maypok86/otter
+              desc: "cache: github.com/dungnh3/kitchen/cache"
+            - pkg: github.com/dgraph-io/ristretto
+              desc: "cache: github.com/dungnh3/kitchen/cache"
+            - pkg: github.com/hashicorp/golang-lru
+              desc: "cache: github.com/dungnh3/kitchen/cache"
+            - pkg: github.com/patrickmn/go-cache
+              desc: "cache: github.com/dungnh3/kitchen/cache"
+            - pkg: go.opentelemetry.io/otel/sdk
+              desc: "telemetry setup: github.com/dungnh3/kitchen/otelx/sdk (the OTel API is fine)"
+            - pkg: go.opentelemetry.io/otel/exporters
+              desc: "telemetry exporters: github.com/dungnh3/kitchen/otelx/sdk"
+            - pkg: go.opentelemetry.io/contrib/exporters
+              desc: "telemetry exporters: github.com/dungnh3/kitchen/otelx/sdk"
+            - pkg: github.com/pressly/goose
+              desc: "migrations: github.com/dungnh3/kitchen/migrate"
+            - pkg: github.com/golang-migrate/migrate
+              desc: "migrations: github.com/dungnh3/kitchen/migrate"
+            - pkg: github.com/riverqueue/river
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/hibiken/asynq
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/RichardKnop/machinery
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/gocraft/work
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/vgarvardt/gue
+              desc: "background jobs: github.com/dungnh3/kitchen/jobs"
+            - pkg: github.com/lib/pq
+              desc: "SQL: github.com/dungnh3/kitchen/pgx"
+            - pkg: github.com/go-sql-driver/mysql
+              desc: "SQL: github.com/dungnh3/kitchen/mysqlx"
+            - pkg: gorm.io/driver
+              desc: "SQL: github.com/dungnh3/kitchen/pgx/gorm or mysqlx/gorm"
+            - pkg: golang.org/x/net/html
+              desc: "web metadata: github.com/dungnh3/kitchen/webmeta (SSRF-safe)"
+            - pkg: github.com/PuerkitoBio/goquery
+              desc: "web metadata: github.com/dungnh3/kitchen/webmeta (SSRF-safe)"
+            - pkg: github.com/grpc-ecosystem/grpc-gateway
+              desc: "server: github.com/dungnh3/kitchen/server"
+            - pkg: github.com/nicksnyder/go-i18n
+              desc: "i18n: github.com/dungnh3/kitchen/i18n"
+            - pkg: github.com/realclientip/realclientip-go
+              desc: "request metadata: github.com/dungnh3/kitchen/context"
+            - pkg: cloud.google.com/go/pubsub
+              desc: "messaging: github.com/dungnh3/kitchen/pubsub"
+            - pkg: github.com/twmb/franz-go
+              desc: "messaging: github.com/dungnh3/kitchen/pubsub"
+            - pkg: cloud.google.com/go/storage
+              desc: "object storage: github.com/dungnh3/kitchen/objstore"
+            - pkg: github.com/aws/aws-sdk-go-v2/service/s3
+              desc: "object storage: github.com/dungnh3/kitchen/objstore"
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^slog\.(Default|New|NewJSONHandler|NewTextHandler|SetDefault)$
+          msg: "use kitchen/log: log.Default, log.New, log.Setup or log.SetDefault (main only)"
+        - pattern: ^redis\.(NewClient|NewUniversalClient|NewClusterClient|NewFailoverClient|NewFailoverClusterClient|NewRing|NewSentinelClient|ParseURL|ParseClusterURL)$
+          pkg: ^github\.com/redis/go-redis/v9$
+          msg: "open Redis with kitchen/redisx.Open; take a redis.UniversalClient"
+        - pattern: ^http\.(Client|DefaultClient|Get|Head|Post|PostForm)$
+          pkg: ^net/http$
+          msg: "make HTTP calls with kitchen/httpx (retries, SSRF guard, OTel)"
+        - pattern: ^http\.(Server|ListenAndServe|ListenAndServeTLS|Serve|ServeTLS)$
+          pkg: ^net/http$
+          msg: "serve HTTP with kitchen/server"
+        - pattern: ^grpc\.(NewClient|Dial|DialContext)$
+          pkg: ^google\.golang\.org/grpc$
+          msg: "call gRPC services with kitchen/grpcx.New (TLS, retries, deadlines, errs mapping, OTel)"
+        - pattern: ^grpc\.NewServer$
+          pkg: ^google\.golang\.org/grpc$
+          msg: "serve gRPC with kitchen/server"
+        - pattern: ^status\.(New|Newf|Error|Errorf|FromProto)$
+          pkg: ^google\.golang\.org/grpc/status$
+          msg: "build errors with kitchen/errs (sentinels, errs.New, errs.Wrap)"
+        - pattern: ^otel\.(SetTracerProvider|SetMeterProvider|SetTextMapPropagator|SetErrorHandler|SetLogger)$
+          pkg: ^go\.opentelemetry\.io/otel$
+          msg: "install telemetry with kitchen/otelx/sdk"
+        - pattern: ^(otelhttp|otelgrpc)\.(NewHandler|NewMiddleware|NewTransport|NewServerHandler|NewClientHandler)$
+          msg: "instrument with otelx.HTTPHandler, otelx.HTTPTransport, otelx.GRPCServerHandler, otelx.GRPCClientHandler"
+        - pattern: ^(pgxpool\.(New|NewWithConfig)|pgx\.(Connect|ConnectConfig))$
+          msg: "open PostgreSQL with kitchen/pgx.Open"
+        - pattern: ^sql\.Open$
+          pkg: ^database/sql$
+          msg: "open SQL databases with kitchen/pgx or kitchen/mysqlx"
+        - pattern: ^mongo\.(Connect|NewClient)$
+          pkg: ^go\.mongodb\.org/mongo-driver/v2/mongo$
+          msg: "open MongoDB with kitchen/mongox.Open"
+    sloglint:
+      no-mixed-args: true
+      no-global: all
+      context: scope
+      static-msg: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [forbidigo]
+      # kitchen server.GatewayRegistrar takes the gateway's mux type; the
+      # service only registers the generated handlers on it.
+      - path: internal/service/
+        linters: [depguard]
+        text: grpc-gateway/v2/runtime
+formatters:
+  enable:
+    - gofmt
+    - goimports

@@ -1,0 +1,40 @@
+package task
+
+import (
+	"context"
+	"time"
+
+	"github.com/dungnh3/kitchen/jobs"
+	"github.com/dungnh3/kitchen/log"
+)
+
+// RefreshStats is the args of the refresh stats task: they are stored as JSON in the
+// jobs table. Add the fields that identify the work, for example the ID of
+// the record to process.
+type RefreshStats struct{}
+
+// Kind names the task in the jobs table; never change it while jobs of it
+// are queued.
+func (RefreshStats) Kind() string { return "refresh_stats" }
+
+type refreshStatsWorker struct{ logger *log.Logger }
+
+// Work does one attempt of the refresh stats task. It can run twice for one job
+// (after a crash or a lost lease), so it must be idempotent. Return an error
+// to retry with backoff, jobs.Cancel(err) to give up and jobs.Snooze(d) to
+// run again later.
+func (w refreshStatsWorker) Work(ctx context.Context, j *jobs.Job[RefreshStats]) error {
+	w.logger.InfoContext(ctx, "refresh stats task ran", log.Int64("job_id", j.ID))
+	return nil
+}
+
+// RegisterRefreshStats adds the refresh stats worker to reg.
+func RegisterRefreshStats(reg *jobs.Registry, logger *log.Logger) error {
+	return jobs.Register(reg, refreshStatsWorker{logger: log.OrDefault(logger)})
+}
+
+// RefreshStatsEvery runs the refresh stats task every 5m0s, at the multiples of that time since
+// the Unix epoch, once across all worker replicas.
+func RefreshStatsEvery() jobs.Periodic {
+	return jobs.Every(5*time.Minute, func() jobs.Args { return RefreshStats{} })
+}

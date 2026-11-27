@@ -1,0 +1,16 @@
+# Query code generation: make generate. The generated package is committed.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: internal/store/pgstore/queries
+    gen:
+      go:
+        package: sqlcdb
+        out: internal/store/pgstore/sqlcdb
+        sql_package: pgx/v5
+        overrides:
+          - db_type: uuid
+            go_type: string
+          - db_type: timestamptz
+            go_type: time.Time

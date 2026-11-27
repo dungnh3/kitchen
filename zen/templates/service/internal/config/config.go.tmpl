@@ -53,6 +53,9 @@ type Config struct {
 {%- if .PubSub %}
 	PubSub PubSub `envPrefix:"PUBSUB_"`
 {%- end %}
+{%- if .Jobs %}
+	Jobs Jobs `envPrefix:"JOBS_"`
+{%- end %}
 	Auth      Auth      `envPrefix:"AUTH_"`
 	RateLimit RateLimit `envPrefix:"RATE_LIMIT_"`
 	Clients   Clients
@@ -140,6 +143,15 @@ type Redis struct {
 	DB         int      `env:"DB"`
 	// TLS encrypts the connections. Turn it off only for a local Redis.
 	TLS bool `env:"TLS" envDefault:"true"`
+}
+
+{% end -%}
+{%- if .Jobs %}
+// Jobs configures the background tasks of the worker (see
+// github.com/dungnh3/kitchen/jobs).
+type Jobs struct {
+	// Workers is the number of tasks the worker runs at once.
+	Workers int `env:"WORKERS" envDefault:"10"`
 }
 
 {% end -%}
@@ -340,6 +352,11 @@ func (c Config) validateDeps() error {
 {%- if .Cache %}
 	if c.Cache.TTL <= 0 {
 		errs = append(errs, errors.New("CACHE_TTL must be positive"))
+	}
+{%- end %}
+{%- if .Jobs %}
+	if c.Jobs.Workers < 1 {
+		errs = append(errs, errors.New("JOBS_WORKERS must be at least 1"))
 	}
 {%- end %}
 {%- if .PubSub %}

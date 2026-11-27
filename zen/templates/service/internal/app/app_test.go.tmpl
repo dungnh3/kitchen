@@ -70,6 +70,9 @@ func TestApp(t *testing.T) {
 {%- if .Cache %}
 		Cache:           config.Cache{TTL: time.Minute},
 {%- end %}
+{%- if .Jobs %}
+		Jobs:            config.Jobs{Workers: 2},
+{%- end %}
 {%- if .PubSub %}
 		PubSub: config.PubSub{
 {%- if .GCP %}

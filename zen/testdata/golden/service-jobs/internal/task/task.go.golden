@@ -1,0 +1,35 @@
+// Package task holds the background tasks of the service. A task is a typed
+// job: its args are stored as JSON in the "jobs" table, inserted in the same
+// transaction as the data they belong to, and run by the worker with
+// github.com/dungnh3/kitchen/jobs.
+//
+// A task can run twice (after a crash or a lost lease), so it must be
+// idempotent. Return nil when done, an error to retry with backoff,
+// jobs.Cancel(err) to give up at once and jobs.Snooze(d) to run again later.
+// "zen add task <name>" adds a task.
+package task
+
+import (
+	"errors"
+
+	"github.com/dungnh3/kitchen/jobs"
+	"github.com/dungnh3/kitchen/log"
+)
+
+// Register adds the worker of every task to reg. "zen add task" adds its
+// registration above "zen:tasks".
+func Register(reg *jobs.Registry, logger *log.Logger) error {
+	return errors.Join(
+		RegisterHeartbeat(reg, logger),
+		// zen:tasks
+	)
+}
+
+// Periodic lists the tasks that run on a schedule, once across all worker
+// replicas. "zen add task -every" adds its entry above "zen:periodic".
+func Periodic() []jobs.Periodic {
+	return []jobs.Periodic{
+		HeartbeatEvery(),
+		// zen:periodic
+	}
+}

@@ -37,6 +37,9 @@ import (
 {%- if .Lease %}
 //   - runs the periodic jobs (internal/job), each on one replica at a time;
 {%- end %}
+{%- if .Jobs %}
+//   - runs the background tasks (internal/task) from the jobs table;
+{%- end %}
 //   - serves the probes, metrics and pprof on ADMIN_ADDR when it is set.
 //
 // logger nil means log.Default().
@@ -109,6 +112,15 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, versi
 		// zen:jobs
 	}
 	runners = append(runners, func(ctx context.Context) error { return job.Run(ctx, locker, logger, jobs...) })
+{%- end %}
+{%- if .Jobs %}
+
+	// The tasks of internal/task: "zen add task" registers its worker there.
+	runJobs, err := d.jobsRunner(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("jobs: %w", err)
+	}
+	runners = append(runners, runJobs)
 {%- end %}
 
 	if cfg.AdminAddr != "" {

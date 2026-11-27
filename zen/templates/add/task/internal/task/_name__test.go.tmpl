@@ -1,0 +1,16 @@
+package task
+
+import (
+	"testing"
+	"testing/synctest"
+
+	"github.com/dungnh3/kitchen/jobs"
+)
+
+func Test{% .N.Name %}(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		if row := runUntilIdle(t, {% .N.Name %}{}); row.State != jobs.StateCompleted {
+			t.Fatalf("{% .N.Words %} job = %+v", row)
+		}
+	})
+}

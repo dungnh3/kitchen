@@ -1,0 +1,16 @@
+package task
+
+import (
+	"testing"
+	"testing/synctest"
+
+	"github.com/dungnh3/kitchen/jobs"
+)
+
+func TestSendEmail(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		if row := runUntilIdle(t, SendEmail{}); row.State != jobs.StateCompleted {
+			t.Fatalf("send email job = %+v", row)
+		}
+	})
+}

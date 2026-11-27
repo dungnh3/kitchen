@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -207,5 +208,21 @@ func TestNewErrors(t *testing.T) {
 		if _, err := jobsmysql.New(&sql.DB{}, jobsmysql.WithTable(name)); err == nil {
 			t.Errorf("table name %q accepted", name)
 		}
+	}
+}
+
+// TestZenMigrationMatchesSchema keeps the migration that "zen new service
+// -with jobs -db mysql" writes equal to the driver's Schema().
+func TestZenMigrationMatchesSchema(t *testing.T) {
+	b, err := os.ReadFile("../../zen/templates/service/migrations/00003_create_jobs.sql.tmpl")
+	if err != nil {
+		t.Skipf("zen templates not found next to the module: %v", err)
+	}
+	d, err := jobsmysql.New(&sql.DB{}) // Schema needs no connection
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), d.Schema()) {
+		t.Fatalf("the zen migration template does not contain Driver.Schema():\n%s", d.Schema())
 	}
 }

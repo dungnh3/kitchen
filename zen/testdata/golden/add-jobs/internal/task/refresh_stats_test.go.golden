@@ -1,0 +1,16 @@
+package task
+
+import (
+	"testing"
+	"testing/synctest"
+
+	"github.com/dungnh3/kitchen/jobs"
+)
+
+func TestRefreshStats(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		if row := runUntilIdle(t, RefreshStats{}); row.State != jobs.StateCompleted {
+			t.Fatalf("refresh stats job = %+v", row)
+		}
+	})
+}

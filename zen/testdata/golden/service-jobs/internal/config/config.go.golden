@@ -1,0 +1,205 @@
+// Package config loads the service configuration from environment variables.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"time"
+
+	"github.com/caarlos0/env/v11"
+)
+
+// EnvProduction is the APP_ENV value of production deployments. Unsafe
+// settings such as AUTH_DISABLED are refused there.
+const EnvProduction = "production"
+
+// Config is the service configuration. Logging is configured separately by
+// LOG_LEVEL, LOG_FORMAT, LOG_SCHEMA and LOG_OUTPUT, and telemetry by the standard OTEL_*
+// variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SDK_DISABLED, ...).
+type Config struct {
+	// Env names the deployment: development, staging, production, ...
+	Env string `env:"APP_ENV" envDefault:"development"`
+
+	GRPCAddr string `env:"GRPC_ADDR" envDefault:":10000"`
+	HTTPAddr string `env:"HTTP_ADDR" envDefault:":8080"`
+	// AdminAddr enables the admin port (/livez, /readyz with details,
+	// /version, /metrics, /debug/pprof/). Never expose it publicly.
+	AdminAddr string `env:"ADMIN_ADDR"`
+	// GRPCReflection registers gRPC server reflection (for grpcurl).
+	GRPCReflection bool `env:"GRPC_REFLECTION"`
+
+	// ShutdownDelay keeps serving after the server is marked not ready, so
+	// load balancers stop routing to it first. It is part of ShutdownTimeout.
+	ShutdownDelay   time.Duration `env:"SHUTDOWN_DELAY" envDefault:"5s"`
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s"`
+
+	// TrustedProxies lists the CIDRs of every proxy hop in front of the
+	// service (load balancer, ingress); it decides the client IP used by
+	// rate limits. Empty trusts no X-Forwarded-For header.
+	TrustedProxies []string `env:"TRUSTED_PROXIES"`
+	// ErrorDomain is the ErrorInfo.domain of API errors (AIP-193).
+	ErrorDomain string `env:"ERROR_DOMAIN" envDefault:"mailer"`
+
+	Database  Database  `envPrefix:"DB_"`
+	Jobs      Jobs      `envPrefix:"JOBS_"`
+	Auth      Auth      `envPrefix:"AUTH_"`
+	RateLimit RateLimit `envPrefix:"RATE_LIMIT_"`
+	Clients   Clients
+}
+
+// Clients configures the gRPC services this service calls. "zen add
+// client" adds one above "zen:clients"; its variables start with its name,
+// for example BILLING_ADDR.
+type Clients struct {
+	// zen:clients
+}
+
+// Client configures the connection to a gRPC service (see
+// github.com/dungnh3/kitchen/grpcx).
+type Client struct {
+	// Addr is the target, host:port or dns:///host:port. Point it at a
+	// headless Kubernetes service so that calls spread over every pod.
+	Addr string `env:"ADDR"`
+	// Timeout is the deadline of calls that have none of their own.
+	Timeout time.Duration `env:"TIMEOUT" envDefault:"10s"`
+	// Insecure sends the calls in plaintext. Use it only behind a service
+	// mesh that does mTLS, or for a local server.
+	Insecure bool `env:"INSECURE"`
+	// CAFile is a PEM file of the CAs that sign the server's certificate;
+	// empty means the system roots.
+	CAFile string `env:"CA_FILE"`
+}
+
+// Validate reports the invalid settings of c; prefix is the prefix of its
+// variables, for example BILLING_.
+func (c Client) Validate(prefix string) error {
+	var errs []error
+	if c.Addr == "" {
+		errs = append(errs, fmt.Errorf("%sADDR is required", prefix))
+	}
+	if c.Timeout < 0 {
+		errs = append(errs, fmt.Errorf("%sTIMEOUT must not be negative", prefix))
+	}
+	if c.Insecure && c.CAFile != "" {
+		errs = append(errs, fmt.Errorf("%sINSECURE and %sCA_FILE are exclusive", prefix, prefix))
+	}
+	return errors.Join(errs...)
+}
+
+// Database configures PostgreSQL.
+type Database struct {
+	// URL is a postgres:// URL. TLS is required unless the URL sets another
+	// sslmode, for example sslmode=disable for a local database.
+	URL string `env:"URL,required"`
+	// MaxConns bounds the pool; 0 means the URL's pool_max_conns, else
+	// max(4, number of CPUs).
+	MaxConns int32 `env:"MAX_CONNS"`
+	// StatementTimeout cancels queries that run longer; 0 keeps the server
+	// default.
+	StatementTimeout time.Duration `env:"STATEMENT_TIMEOUT" envDefault:"30s"`
+	// MigrateOnStart applies pending migrations before serving. Prefer
+	// running "server migrate up" as a separate deployment step.
+	MigrateOnStart bool `env:"MIGRATE_ON_START"`
+}
+
+// Jobs configures the background tasks of the worker (see
+// github.com/dungnh3/kitchen/jobs).
+type Jobs struct {
+	// Workers is the number of tasks the worker runs at once.
+	Workers int `env:"WORKERS" envDefault:"10"`
+}
+
+// Auth configures bearer-token authentication. Every method needs a valid
+// JWT signed by Issuer for Audience, except the health service.
+type Auth struct {
+	// Disabled turns authentication off. It is refused in production.
+	Disabled bool   `env:"DISABLED"`
+	Issuer   string `env:"ISSUER"`
+	// JWKSURL is the issuer's key set, for example
+	// https://issuer.example.com/.well-known/jwks.json.
+	JWKSURL  string `env:"JWKS_URL"`
+	Audience string `env:"AUDIENCE"`
+	// TokenTypes, when set, lists the accepted JWT "typ" values, for example
+	// at+jwt for RFC 9068 access tokens.
+	TokenTypes []string `env:"TOKEN_TYPES"`
+}
+
+// RateLimit configures the per-caller rate limits.
+type RateLimit struct {
+	Disabled bool `env:"DISABLED"`
+	// DryRun counts and logs but never rejects.
+	DryRun bool `env:"DRY_RUN"`
+	// Exempt lists identities that are never limited: user:<id>,
+	// ip:<address> or ip:<CIDR>.
+	Exempt []string `env:"EXEMPT"`
+}
+
+// Load reads and validates the configuration from the environment.
+func Load() (Config, error) { return load(env.Options{}) }
+
+func load(opts env.Options) (Config, error) {
+	c, err := env.ParseAsWithOptions[Config](opts)
+	if err != nil {
+		return c, err
+	}
+	return c, c.validate()
+}
+
+func (c Config) validate() error {
+	var errs []error
+	if c.ShutdownDelay < 0 || c.ShutdownTimeout <= 0 || c.ShutdownDelay >= c.ShutdownTimeout {
+		errs = append(errs, errors.New("SHUTDOWN_DELAY and SHUTDOWN_TIMEOUT: want 0 <= delay < timeout"))
+	}
+	if c.Database.MaxConns < 0 || c.Database.StatementTimeout < 0 {
+		errs = append(errs, errors.New("DB_MAX_CONNS and DB_STATEMENT_TIMEOUT must not be negative"))
+	}
+	return errors.Join(errs...)
+}
+
+// ValidateServer checks the settings needed to serve requests. It is not
+// part of Load so that commands such as "migrate" run without them.
+func (c Config) ValidateServer() error {
+	return errors.Join(c.validateAuth(), c.validateDeps())
+}
+
+// ValidateWorker checks the settings needed by the worker.
+func (c Config) ValidateWorker() error { return c.validateDeps() }
+
+// validateDeps checks the settings of the external services that the
+// server and the worker connect to.
+func (c Config) validateDeps() error {
+	var errs []error
+	if c.Jobs.Workers < 1 {
+		errs = append(errs, errors.New("JOBS_WORKERS must be at least 1"))
+	}
+	// zen:clients-validate
+	return errors.Join(errs...)
+}
+
+func (c Config) validateAuth() error {
+	a := c.Auth
+	if a.Disabled {
+		if c.Env == EnvProduction {
+			return errors.New("AUTH_DISABLED is not allowed when APP_ENV=production")
+		}
+		return nil
+	}
+	var errs []error
+	if a.Issuer == "" {
+		errs = append(errs, errors.New("AUTH_ISSUER is required (or set AUTH_DISABLED=true outside production)"))
+	}
+	if a.Audience == "" {
+		errs = append(errs, errors.New("AUTH_AUDIENCE is required: it stops tokens issued for other services from being accepted"))
+	}
+	if !secureURL(a.JWKSURL) {
+		errs = append(errs, fmt.Errorf("AUTH_JWKS_URL: want an https URL (http only for localhost), got %q", a.JWKSURL))
+	}
+	return errors.Join(errs...)
+}
+
+// secureURL reports whether s is an https URL, or an http URL of localhost.
+func secureURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))
+}

@@ -1,0 +1,81 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+
+	"github.com/dungnh3/kitchen/log"
+	"github.com/dungnh3/kitchen/server"
+
+	"github.com/acme/shop/internal/config"
+)
+
+// RunWorker does the background work until ctx is cancelled, then stops
+// gracefully:
+//   - runs the background tasks (internal/task) from the jobs table;
+//   - serves the probes, metrics and pprof on ADMIN_ADDR when it is set.
+//
+// logger nil means log.Default().
+func RunWorker(ctx context.Context, cfg config.Config, logger *log.Logger, version string, opts ...Option) (err error) {
+	if err := cfg.ValidateWorker(); err != nil {
+		return err
+	}
+	logger = log.OrDefault(logger)
+	var o options
+	for _, f := range opts {
+		f(&o)
+	}
+	d, err := openDeps(ctx, cfg, logger, version, o)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, d.close(ctx)) }()
+
+	var runners []func(context.Context) error
+
+	// The tasks of internal/task: "zen add task" registers its worker there.
+	runJobs, err := d.jobsRunner(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("jobs: %w", err)
+	}
+	runners = append(runners, runJobs)
+
+	if cfg.AdminAddr != "" {
+		admin := server.NewAdmin(cfg.AdminAddr, append(d.adminOptions(),
+			server.WithAdminChecks(d.checks()...),
+			server.WithAdminLogger(logger),
+			server.WithAdminVersion(version),
+		)...)
+		runners = append(runners, admin.Run)
+	}
+	logger.InfoContext(ctx, "worker started")
+	err = runAll(ctx, runners...)
+	logger.InfoContext(ctx, "worker stopped")
+	return err
+}
+
+// runAll runs every runner until ctx is cancelled or one of them fails,
+// which cancels the others. It returns after all of them have returned.
+func runAll(ctx context.Context, runners ...func(context.Context) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
+	for _, run := range runners {
+		wg.Go(func() {
+			if err := run(ctx); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+				cancel()
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}

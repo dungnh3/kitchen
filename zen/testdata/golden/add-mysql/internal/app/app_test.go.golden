@@ -38,6 +38,7 @@ func TestApp(t *testing.T) {
 		Database:        config.Database{URL: startMySQL(t), MigrateOnStart: true},
 		Redis:           config.Redis{Addrs: []string{miniredis.RunT(t).Addr()}},
 		Cache:           config.Cache{TTL: time.Minute},
+		Jobs:            config.Jobs{Workers: 2},
 		Clients: config.Clients{
 			Billing:     config.Client{Addr: "passthrough:///billing", Insecure: true},
 			UserProfile: config.Client{Addr: "passthrough:///user-profile", Insecure: true},
@@ -45,6 +46,10 @@ func TestApp(t *testing.T) {
 		},
 	}
 	var opts []Option
+	if err := Migrate(t.Context(), base, log.Discard(), "up", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	startWorker(t, base, opts...)
 
 	t.Run("crud", func(t *testing.T) {
 		cfg := base
@@ -165,6 +170,20 @@ func start(t *testing.T, cfg config.Config, opts ...Option) string {
 		case <-tick.C:
 		}
 	}
+}
+
+// startWorker runs the worker until the test ends.
+func startWorker(t *testing.T, cfg config.Config, opts ...Option) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- RunWorker(ctx, cfg, log.Discard(), "test", opts...) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("RunWorker: %v", err)
+		}
+	})
 }
 
 func call(t *testing.T, method, url, body string, wantStatus int, out any) {

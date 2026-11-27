@@ -1,4 +1,4 @@
-# Local dependencies for "make run". Start them with
+# Local dependencies for "make run" and "make run-worker". Start them with
 # "make up" and stop them with "make down". Not for production.
 services:
   mysql:

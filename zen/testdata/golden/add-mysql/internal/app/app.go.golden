@@ -1,5 +1,6 @@
 // Package app wires the service together: telemetry, database, errors,
-// authentication, rate limits and the gRPC + REST server.
+// authentication, rate limits and the gRPC + REST server, and the
+// worker.
 package app
 
 import (

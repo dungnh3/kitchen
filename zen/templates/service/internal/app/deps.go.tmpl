@@ -66,6 +66,11 @@ type deps struct {
 {%- else if .MySQL %}
 	db       *sql.DB
 {%- end %}
+{%- if .Jobs %}
+	// jobs inserts jobs in the transaction of a business write (InsertTx);
+	// the worker runs them (internal/task).
+	jobs     *jobsClient
+{%- end %}
 {%- if .Redis %}
 	redis    redis.UniversalClient
 {%- end %}
@@ -128,6 +133,13 @@ func openDeps(ctx context.Context, cfg config.Config, logger *log.Logger, versio
 		return d, err
 	}
 	d.onClose(func(context.Context) error { return d.db.Close() })
+{%- end %}
+{%- if .Jobs %}
+
+	d.jobs, err = d.newJobs(logger)
+	if err != nil {
+		return d, fmt.Errorf("jobs: %w", err)
+	}
 {%- end %}
 {%- if .Redis %}
 

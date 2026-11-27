@@ -264,8 +264,9 @@ and returns. `Close(ctx)` cancels a running client and waits for `Run`. No gorou
     the chosen dialect;
   - `internal/task/` with the registry, a sample periodic task and the
     marker `// zen:tasks`;
-  - the API gets an insert-only client in its deps; the worker runs
-    `client.Run`.
+  - the API gets an insert-only client in its deps (`deps.jobs`); the worker
+    runs a client with the registry and the periodic tasks (`internal/app/jobs.go`),
+    with `JOBS_WORKERS` (default 10) workers on the `default` queue.
 - `zen add task <name> [-queue q] [-every d]`: writes
   `internal/task/<name>.go` (typed args and worker) and its test, and
   registers it at `// zen:tasks`; with `-every` it also adds the periodic

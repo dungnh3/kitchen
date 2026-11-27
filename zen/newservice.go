@@ -88,6 +88,7 @@ const (
 	withLease  = "lease"
 	withPubSub = "pubsub"
 	withOutbox = "outbox"
+	withJobs   = "jobs"
 )
 
 // features lists the -with values in the order they are shown.
@@ -97,6 +98,7 @@ var features = []struct{ name, desc string }{
 	{withLease, "Leader-elected periodic jobs in the worker (lease on Redis)"},
 	{withPubSub, "Events: publisher, consumer in the worker (pubsub)"},
 	{withOutbox, "Transactional outbox and relay (pubsub/outbox/pgx); needs postgres and pubsub"},
+	{withJobs, "Background tasks stored in the database, run by the worker (jobs); needs postgres or mysql"},
 }
 
 // Message brokers (-pubsub).
@@ -177,6 +179,9 @@ func (p serviceParams) Lease() bool { return p.Has(withLease) }
 // PubSub reports whether the service publishes and consumes events.
 func (p serviceParams) PubSub() bool { return p.Has(withPubSub) }
 
+// Jobs reports whether the service has background tasks in its database.
+func (p serviceParams) Jobs() bool { return p.Has(withJobs) }
+
 // Outbox reports whether events go through the transactional outbox.
 func (p serviceParams) Outbox() bool { return p.Has(withOutbox) }
 
@@ -187,7 +192,7 @@ func (p serviceParams) Kafka() bool { return p.PubSub() && p.Broker == brokerKaf
 func (p serviceParams) SQS() bool   { return p.PubSub() && p.Broker == brokerSQS }
 
 // Worker reports whether the service has a "worker" command.
-func (p serviceParams) Worker() bool { return p.PubSub() || p.Lease() }
+func (p serviceParams) Worker() bool { return p.PubSub() || p.Lease() || p.Jobs() }
 
 // Commands is the usage of the server binary.
 func (p serviceParams) Commands() string {
@@ -361,6 +366,9 @@ func (p *serviceParams) validate() error {
 	if p.Outbox() && (!p.Postgres() || !p.PubSub()) {
 		errs = append(errs, errors.New("-with outbox needs -db postgres and -with pubsub"))
 	}
+	if p.Jobs() && !p.SQL() {
+		errs = append(errs, errors.New("-with jobs needs -db postgres or -db mysql"))
+	}
 	switch p.Broker {
 	case brokerGCP, brokerKafka, brokerSQS:
 	default:
@@ -390,6 +398,7 @@ var fileRules = []struct {
 	{[]string{"internal/app/broker_sqs.go"}, serviceParams.SQS},
 	{[]string{"internal/events/publish.go", "internal/events/publish_test.go"}, func(p serviceParams) bool { return p.PubSub() && !p.Outbox() }},
 	{[]string{"internal/job/"}, serviceParams.Lease},
+	{[]string{"migrations/00003_create_jobs.sql", "internal/app/jobs.go", "internal/task/"}, serviceParams.Jobs},
 	{[]string{"internal/app/worker.go"}, serviceParams.Worker},
 	{[]string{"compose.yaml"}, serviceParams.Compose},
 }
@@ -423,6 +432,11 @@ func renderService(p serviceParams) (scaffold.Files, error) {
 	for rel, b := range files {
 		if !keepFile(p, rel) {
 			continue
+		}
+		// The jobs migration follows the outbox's; without an outbox it is
+		// the second one.
+		if rel == "migrations/00003_create_jobs.sql" && !p.Outbox() {
+			rel = "migrations/00002_create_jobs.sql"
 		}
 		if dir, rest, ok := strings.Cut(rel, "proto/"+protoPkgDir+"/"); ok && dir == "" {
 			rel = path.Join("proto", p.ProtoPackage(), rest)
@@ -484,11 +498,14 @@ func promptService(ctx context.Context, p *serviceParams) error {
 				huh.NewOption("None", dbNone),
 			).Value(&p.DB),
 			huh.NewMultiSelect[string]().Title("Optional features").
-				Description("Each one wires a kitchen package; outbox needs PostgreSQL and pubsub.").
+				Description("Each one wires a kitchen package; outbox needs PostgreSQL and pubsub, jobs needs a database.").
 				Options(featureOptions()...).Value(&p.With).
 				Validate(func(with []string) error {
 					if slices.Contains(with, withOutbox) && (p.DB != dbPostgres || !slices.Contains(with, withPubSub)) {
 						return errors.New("outbox needs PostgreSQL and pubsub")
+					}
+					if slices.Contains(with, withJobs) && p.DB == dbNone {
+						return errors.New("jobs needs PostgreSQL or MySQL")
 					}
 					return nil
 				}),

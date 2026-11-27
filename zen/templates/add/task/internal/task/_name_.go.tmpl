@@ -1,0 +1,44 @@
+package task
+
+import (
+	"context"
+{%- if .Every %}
+	"time"
+{%- end %}
+
+	"github.com/dungnh3/kitchen/jobs"
+	"github.com/dungnh3/kitchen/log"
+)
+
+// {% .N.Name %} is the args of the {% .N.Words %} task: they are stored as JSON in the
+// jobs table. Add the fields that identify the work, for example the ID of
+// the record to process.
+type {% .N.Name %} struct{}
+
+// Kind names the task in the jobs table; never change it while jobs of it
+// are queued.
+func ({% .N.Name %}) Kind() string { return "{% .N.Snake %}" }
+
+type {% .N.Lower %}Worker struct{ logger *log.Logger }
+
+// Work does one attempt of the {% .N.Words %} task. It can run twice for one job
+// (after a crash or a lost lease), so it must be idempotent. Return an error
+// to retry with backoff, jobs.Cancel(err) to give up and jobs.Snooze(d) to
+// run again later.
+func (w {% .N.Lower %}Worker) Work(ctx context.Context, j *jobs.Job[{% .N.Name %}]) error {
+	w.logger.InfoContext(ctx, "{% .N.Words %} task ran", log.Int64("job_id", j.ID))
+	return nil
+}
+
+// Register{% .N.Name %} adds the {% .N.Words %} worker to reg.
+func Register{% .N.Name %}(reg *jobs.Registry, logger *log.Logger) error {
+	return jobs.Register(reg, {% .N.Lower %}Worker{logger: log.OrDefault(logger)})
+}
+{%- if .Every %}
+
+// {% .N.Name %}Every runs the {% .N.Words %} task every {% .EveryText %}, at the multiples of that time since
+// the Unix epoch, once across all worker replicas.
+func {% .N.Name %}Every() jobs.Periodic {
+	return jobs.Every({% .Every %}, func() jobs.Args { return {% .N.Name %}{} })
+}
+{%- end %}

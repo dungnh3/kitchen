@@ -18,7 +18,8 @@ var serviceAdds = map[string][][]string{
 	"service-events": {{"domain", "order-item"}, {"consumer", "payments"}, {"job", "cleanup", "-every", "5m"}, {"client", "ledger"}},
 	"service-kafka":  {{"domain", "category"}, {"consumer", "order-events"}},
 	"service-sqs":    {{"domain", "box"}, {"consumer", "order-events"}},
-	"service-mysql":  {{"domain", "order-item"}, {"client", "billing"}, {"client", "user-profile"}},
+	"service-mysql":  {{"domain", "order-item"}, {"client", "billing"}, {"client", "user-profile"}, {"task", "send-email"}},
+	"service-jobs":   {{"task", "send-email"}, {"task", "refresh-stats", "-every", "5m"}},
 }
 
 // runAdds writes the case into dir and runs its add commands without code
@@ -88,6 +89,7 @@ func TestAddRefusals(t *testing.T) {
 		{"same plural", []string{"domain", "sheep", "-plural", "sheep"}, 1, "must differ"},
 		{"consumer without pubsub", []string{"consumer", "orders"}, 1, "-with pubsub"},
 		{"job without lease", []string{"job", "cleanup"}, 1, "-with lease"},
+		{"task without jobs", []string{"task", "send-email"}, 1, "-with jobs"},
 		{"client with a reserved name", []string{"client", "redis"}, 1, "name is taken"},
 		{"client named like a Go keyword", []string{"client", "type"}, 1, "name is taken"},
 		{"bad client name", []string{"client", "Billing"}, 1, "lower-case"},
@@ -214,5 +216,45 @@ func TestAddClientTwice(t *testing.T) {
 	}
 	if n := bytes.Count(deps, []byte(`"github.com/dungnh3/kitchen/grpcx"`)); n != 1 {
 		t.Errorf("grpcx imported %d times", n)
+	}
+}
+
+func TestAddTaskRefusals(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "proj")
+	if err := scaffold.Write(dir, renderSvc(t, serviceGoldenCases["service-jobs"])); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"the sample task", []string{"task", "heartbeat"}, "clashes with the names zen generates"},
+		{"a name that clashes with Register<Name>", []string{"task", "register-mail"}, "clashes with the names zen generates"},
+		{"a name that clashes with <Name>Every", []string{"task", "stats-every"}, "clashes with the names zen generates"},
+		{"a name that clashes with <name>Worker", []string{"task", "mail-worker"}, "clashes with the names zen generates"},
+		{"a bad name", []string{"task", "SendEmail"}, "lower-case"},
+		{"a negative interval", []string{"task", "sweep", "-every", "-1m"}, "-every"},
+		{"an interval under a second", []string{"task", "sweep", "-every", "10ms"}, "-every"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			args := append(append([]string{"add"}, tt.args...), "-dir", dir)
+			if code := run(t.Context(), args, nil, &out, &out); code != 1 || !strings.Contains(out.String(), tt.want) {
+				t.Errorf("exit %d, want 1; output %q lacks %q", code, out.String(), tt.want)
+			}
+		})
+	}
+	// A task is added once.
+	var out bytes.Buffer
+	for i, code := range []int{0, 1} {
+		out.Reset()
+		if got := run(t.Context(), []string{"add", "task", "sweep", "-dir", dir}, nil, &out, &out); got != code {
+			t.Fatalf("add %d: exit %d, want %d\n%s", i+1, got, code, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "already exists") {
+		t.Errorf("output %q", out.String())
 	}
 }

@@ -17,7 +17,7 @@ LOCAL_ENV += BILLING_ADDR=localhost:10001 BILLING_INSECURE=true # a local billin
 LOCAL_ENV += USER_PROFILE_ADDR=localhost:10001 USER_PROFILE_INSECURE=true # a local user profile server
 # zen:local-env
 
-.PHONY: generate build test lint check breaking run tidy docker up down migrate-up migrate-down migrate-status
+.PHONY: generate build test lint check breaking run tidy docker run-worker up down migrate-up migrate-down migrate-status
 
 # Regenerate gen/ from proto/ and internal/store/mysqlstore/sqlcdb from the SQL.
 # The generated code is committed; CI fails if it is stale.
@@ -50,6 +50,9 @@ tidy:
 
 run:
 	$(LOCAL_ENV) DB_MIGRATE_ON_START=true go run ./cmd/server serve
+
+run-worker:
+	$(LOCAL_ENV) go run ./cmd/server worker
 
 migrate-up migrate-down migrate-status:
 	$(LOCAL_ENV) go run ./cmd/server migrate $(@:migrate-%=%)
