@@ -100,7 +100,7 @@ func (d *Driver) Schema() string {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", d.ident, base)
 }
 
-// CreateTable executes Schema. Prefer a migration in production.
+// CreateTable executes Schema.
 func (d *Driver) CreateTable(ctx context.Context) error {
 	_, err := d.db.ExecContext(ctx, d.Schema())
 	return mysqlx.MapError(err)
@@ -183,7 +183,11 @@ func scan(r scanner, extra ...any) (jobs.Row, error) {
 	if err := r.Scan(dest...); err != nil {
 		return jobs.Row{}, err
 	}
-	row.RawArgs, row.Metadata, row.State = args, md, jobs.State(state)
+	row.RawArgs, row.Metadata = args, md
+	var err error
+	if row.State, err = jobs.ParseState(state); err != nil {
+		return jobs.Row{}, err
+	}
 	row.FinalizedAt = finalized.Time
 	row.UniqueKey = key.String
 	if len(errs) > 0 {
@@ -301,6 +305,9 @@ func (d *Driver) Extend(ctx context.Context, refs []jobs.Ref, lease time.Duratio
 
 // Settle implements [jobs.Store].
 func (d *Driver) Settle(ctx context.Context, ref jobs.Ref, s jobs.Settlement) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
 	var errJSON any
 	if s.Error != nil {
 		b, err := json.Marshal(s.Error)

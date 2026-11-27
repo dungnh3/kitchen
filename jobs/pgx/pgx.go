@@ -95,12 +95,11 @@ func (d *Driver) Schema() string {
 	idx := func(suffix string) string { return jpgx.Identifier{base + suffix}.Sanitize() }
 	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %[1]s (
     id           bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    kind         text        NOT NULL,
-    queue        text        NOT NULL DEFAULT 'default',
+    kind         varchar(255) NOT NULL,
+    queue        varchar(64) NOT NULL DEFAULT 'default',
     args         jsonb       NOT NULL DEFAULT '{}',
     metadata     jsonb       NOT NULL DEFAULT '{}',
-    state        text        NOT NULL DEFAULT 'available'
-                 CHECK (state IN ('available', 'running', 'completed', 'cancelled', 'discarded')),
+    state        varchar(16) NOT NULL DEFAULT 'available',
     priority     smallint    NOT NULL DEFAULT 1,
     attempt      integer     NOT NULL DEFAULT 0,
     max_attempts integer     NOT NULL,
@@ -108,7 +107,7 @@ func (d *Driver) Schema() string {
     locked_until timestamptz,
     claim        bigint      NOT NULL DEFAULT 0,
     errors       jsonb       NOT NULL DEFAULT '[]',
-    unique_key   text,
+    unique_key   varchar(255),
     unique_keep  boolean     NOT NULL DEFAULT false,
     created_at   timestamptz NOT NULL DEFAULT now(),
     finalized_at timestamptz
@@ -119,7 +118,7 @@ CREATE INDEX IF NOT EXISTS %[4]s ON %[1]s (finalized_at) WHERE finalized_at IS N
 		d.ident, idx("_unique_idx"), idx("_fetch_idx"), idx("_finalized_idx"))
 }
 
-// CreateTable executes Schema. Prefer a migration in production.
+// CreateTable executes Schema.
 func (d *Driver) CreateTable(ctx context.Context) error {
 	_, err := d.pool.Exec(ctx, d.Schema())
 	return pgx.MapError(err)
@@ -207,7 +206,11 @@ func scan(r scanner, extra ...any) (jobs.Row, error) {
 	if err := r.Scan(dest...); err != nil {
 		return jobs.Row{}, err
 	}
-	row.RawArgs, row.Metadata, row.State = args, md, jobs.State(state)
+	row.RawArgs, row.Metadata = args, md
+	var err error
+	if row.State, err = jobs.ParseState(state); err != nil {
+		return jobs.Row{}, err
+	}
 	if finalized != nil {
 		row.FinalizedAt = *finalized
 	}
@@ -316,6 +319,9 @@ RETURNING id, claim`, d.ident)
 
 // Settle implements [jobs.Store].
 func (d *Driver) Settle(ctx context.Context, ref jobs.Ref, s jobs.Settlement) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
 	var errJSON *string
 	if s.Error != nil {
 		b, err := json.Marshal(s.Error)

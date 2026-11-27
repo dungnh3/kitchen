@@ -19,9 +19,7 @@ import (
 const maxUniqueKeyBytes = 255
 
 // Client inserts jobs and, with [Client.Run], runs them. TTx is the
-// transaction type of the driver. A client without a registry only inserts:
-// use one in processes that enqueue (an API server) and a second one with a
-// registry in the worker process.
+// transaction type of the driver. A client without a registry only inserts.
 type Client[TTx any] struct {
 	drv   Driver[TTx]
 	o     options
@@ -56,8 +54,8 @@ func NewClient[TTx any](drv Driver[TTx], opts ...Option) (*Client[TTx], error) {
 	return c, nil
 }
 
-// Insert inserts one job in a transaction of its own. Prefer
-// [Client.InsertTx] when the job belongs to a business write.
+// Insert inserts one job in a transaction of its own. [Client.InsertTx]
+// inserts in the caller's transaction.
 func (c *Client[TTx]) Insert(ctx context.Context, args Args, opts *InsertOpts) (InsertResult, error) {
 	res, err := c.InsertMany(ctx, []InsertParams{{Args: args, Opts: opts}})
 	if err != nil {

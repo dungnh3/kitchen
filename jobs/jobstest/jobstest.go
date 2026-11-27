@@ -167,6 +167,9 @@ func (d *Driver) Extend(_ context.Context, refs []jobs.Ref, lease time.Duration)
 
 // Settle implements [jobs.Store].
 func (d *Driver) Settle(_ context.Context, ref jobs.Ref, s jobs.Settlement) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.failing != nil {

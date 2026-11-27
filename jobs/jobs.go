@@ -5,8 +5,8 @@
 // A job is a row. [Client.InsertTx] writes it in the same transaction as the
 // business data, so the job exists if and only if the transaction committed.
 // A worker process runs [Client.Run], which claims due rows, runs the
-// registered [Worker] and records the result. Execution is at least once:
-// workers must be idempotent.
+// registered [Worker] and records the result. Execution is at least
+// once: a job can run more than once.
 //
 // Claims are leases. A claimed job is leased for [WithLease]; a heartbeat
 // renews the lease while the job runs. A process that crashes stops renewing,
@@ -37,6 +37,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 	"unicode/utf8"
 )
@@ -52,11 +53,29 @@ const (
 	StateRunning State = "running"
 	// StateCompleted: finished successfully.
 	StateCompleted State = "completed"
-	// StateCancelled: stopped on purpose (see [Cancel]); never retried.
+	// StateCancelled: stopped by the worker (see [Cancel]); not retried.
 	StateCancelled State = "cancelled"
-	// StateDiscarded: out of attempts. This is the dead-letter state.
+	// StateDiscarded: out of attempts; kept until the retention clean-up.
 	StateDiscarded State = "discarded"
 )
+
+// States are the valid states. The database stores the name in a plain
+// varchar column; the application is the only place that checks it.
+var States = []State{StateAvailable, StateRunning, StateCompleted, StateCancelled, StateDiscarded}
+
+// String returns the name stored in the database.
+func (s State) String() string { return string(s) }
+
+// Valid reports whether s is one of [States].
+func (s State) Valid() bool { return slices.Contains(States, s) }
+
+// ParseState returns the State named s, or an error for an unknown name.
+func ParseState(s string) (State, error) {
+	if st := State(s); st.Valid() {
+		return st, nil
+	}
+	return "", fmt.Errorf("jobs: unknown state %q", s)
+}
 
 // Final reports whether s is a state a job never leaves.
 func (s State) Final() bool {
@@ -162,8 +181,8 @@ type Job[T Args] struct {
 	Args T
 }
 
-// Worker runs the jobs of one kind. Work must be idempotent and must return
-// when ctx is done. A Worker may also implement
+// Worker runs the jobs of one kind. Work can run more than once for a job and
+// returns when ctx is done. A Worker may also implement
 //
 //	Timeout() time.Duration
 //

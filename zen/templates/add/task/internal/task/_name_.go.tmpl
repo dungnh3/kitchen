@@ -21,10 +21,9 @@ func ({% .N.Name %}) Kind() string { return "{% .N.Snake %}" }
 
 type {% .N.Lower %}Worker struct{ logger *log.Logger }
 
-// Work does one attempt of the {% .N.Words %} task. It can run twice for one job
-// (after a crash or a lost lease), so it must be idempotent. Return an error
-// to retry with backoff, jobs.Cancel(err) to give up and jobs.Snooze(d) to
-// run again later.
+// Work does one attempt of the {% .N.Words %} task. It can run more than once for a
+// job (after a crash or a lost lease). Returning an error retries with
+// backoff, jobs.Cancel(err) gives up, and jobs.Snooze(d) runs again later.
 func (w {% .N.Lower %}Worker) Work(ctx context.Context, j *jobs.Job[{% .N.Name %}]) error {
 	w.logger.InfoContext(ctx, "{% .N.Words %} task ran", log.Int64("job_id", j.ID))
 	return nil

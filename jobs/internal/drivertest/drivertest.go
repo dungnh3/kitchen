@@ -84,6 +84,7 @@ func Run(ctx context.Context, t *testing.T, newStore Factory) {
 	t.Run("ClaimExclusive", func(t *testing.T) { claimExclusive(ctx, t, newStore(t)) })
 	t.Run("SettleFenced", func(t *testing.T) { settleFenced(ctx, t, newStore(t)) })
 	t.Run("SettleStates", func(t *testing.T) { settleStates(ctx, t, newStore(t)) })
+	t.Run("SettleRejectsInvalid", func(t *testing.T) { settleRejectsInvalid(ctx, t, newStore(t)) })
 	t.Run("ErrorsKeepLatest", func(t *testing.T) { errorsKeepLatest(ctx, t, newStore(t)) })
 	t.Run("Extend", func(t *testing.T) { extend(ctx, t, newStore(t)) })
 	t.Run("ReapExhausted", func(t *testing.T) { reapExhausted(ctx, t, newStore(t)) })
@@ -516,5 +517,27 @@ func cleanup(ctx context.Context, t *testing.T, s jobs.Store) {
 	}
 	if r := get(ctx, t, s, pending); r.State != jobs.StateAvailable {
 		t.Fatalf("an unfinished job was deleted or changed: %+v", r)
+	}
+}
+
+func settleRejectsInvalid(ctx context.Context, t *testing.T, s jobs.Store) {
+	id := mustInsert(ctx, t, s, job("a"))[0].ID
+	c := claim(ctx, t, s, "default", kinds, 1)
+	if len(c) != 1 || c[0].ID != id {
+		t.Fatalf("claimed %+v", c)
+	}
+	for _, bad := range []jobs.Settlement{
+		{State: "bogus"},
+		{State: jobs.StateRunning},
+		{State: ""},
+		{State: jobs.StateCompleted, Delay: time.Second},
+		{State: jobs.StateAvailable, Delay: -time.Second},
+	} {
+		if err := s.Settle(ctx, c[0].Ref(), bad); err == nil || errors.Is(err, jobs.ErrClaimLost) {
+			t.Errorf("Settle(%+v) = %v, want a validation error", bad, err)
+		}
+	}
+	if r := get(ctx, t, s, id); r.State != jobs.StateRunning {
+		t.Fatalf("an invalid settlement changed the row: %+v", r)
 	}
 }

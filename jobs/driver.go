@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -58,6 +59,25 @@ type Settlement struct {
 	GiveBackAttempt bool
 	// Error is appended to the row's errors, keeping the latest 10.
 	Error *AttemptError
+}
+
+// Validate reports a settlement a driver must refuse: a state a claim cannot
+// end in, a negative delay, or a delay or a given-back attempt on a final
+// state.
+func (s Settlement) Validate() error {
+	switch s.State {
+	case StateAvailable:
+	case StateCompleted, StateCancelled, StateDiscarded:
+		if s.Delay != 0 || s.GiveBackAttempt {
+			return fmt.Errorf("jobs: settlement to %q takes no delay or given-back attempt", s.State)
+		}
+	default:
+		return fmt.Errorf("jobs: a claim cannot end in state %q", s.State)
+	}
+	if s.Delay < 0 {
+		return errors.New("jobs: negative settlement delay")
+	}
+	return nil
 }
 
 // CleanupParams selects the finished rows to delete.

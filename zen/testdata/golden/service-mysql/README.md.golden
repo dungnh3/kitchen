@@ -103,7 +103,7 @@ from the same image (`/server worker`). It stops gracefully on SIGTERM.
   it exists if and only if the change is stored:
   `client.InsertTx(ctx, tx, task.SendEmail{...}, nil)`. The API process has
   the insert-only client as `deps.jobs` in `internal/app`; pass it to the
-  stores or services that enqueue. A task can run twice, so it must be idempotent; return an
+  stores or services that enqueue. A task can run more than once for a job; return an
   error to retry with backoff and `jobs.Cancel(err)` to give up. A task
   with `-every` also runs on a schedule, once across all worker replicas.
   `zen add task <name> -every 1h` adds one. `JOBS_WORKERS` bounds how many

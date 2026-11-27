@@ -5,12 +5,11 @@
 -- +goose Up
 CREATE TABLE IF NOT EXISTS "jobs" (
     id           bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    kind         text        NOT NULL,
-    queue        text        NOT NULL DEFAULT 'default',
+    kind         varchar(255) NOT NULL,
+    queue        varchar(64) NOT NULL DEFAULT 'default',
     args         jsonb       NOT NULL DEFAULT '{}',
     metadata     jsonb       NOT NULL DEFAULT '{}',
-    state        text        NOT NULL DEFAULT 'available'
-                 CHECK (state IN ('available', 'running', 'completed', 'cancelled', 'discarded')),
+    state        varchar(16) NOT NULL DEFAULT 'available',
     priority     smallint    NOT NULL DEFAULT 1,
     attempt      integer     NOT NULL DEFAULT 0,
     max_attempts integer     NOT NULL,
@@ -18,7 +17,7 @@ CREATE TABLE IF NOT EXISTS "jobs" (
     locked_until timestamptz,
     claim        bigint      NOT NULL DEFAULT 0,
     errors       jsonb       NOT NULL DEFAULT '[]',
-    unique_key   text,
+    unique_key   varchar(255),
     unique_keep  boolean     NOT NULL DEFAULT false,
     created_at   timestamptz NOT NULL DEFAULT now(),
     finalized_at timestamptz

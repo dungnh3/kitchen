@@ -247,7 +247,7 @@ func (c *Client[TTx]) execute(workCtx context.Context, cl Claimed) {
 		span.SetStatus(codes.Error, "claim lost")
 		span.End()
 		c.tel.recordFinish(workCtx, cl, outcomeLost, dur)
-		c.log.WarnContext(wctx, "jobs: lease lost while running; the result is dropped", jobAttrs2(cl)...)
+		c.log.WarnContext(wctx, "jobs: lease lost while running; the result is dropped", logAttrs(cl)...)
 		return
 	}
 	s, outcome := c.decide(cl, err, errors.Is(context.Cause(workCtx), errShutdown))
@@ -266,7 +266,7 @@ func (c *Client[TTx]) execute(workCtx context.Context, cl Claimed) {
 func (c *Client[TTx]) callWork(ctx context.Context, e *entry, cl Claimed) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			c.log.ErrorContext(ctx, "jobs: worker panicked", append(jobAttrs2(cl),
+			c.log.ErrorContext(ctx, "jobs: worker panicked", append(logAttrs(cl),
 				log.Any("panic", r), log.String("stack", string(debug.Stack())))...)
 			err = fmt.Errorf("panic: %v", r)
 		}
@@ -321,15 +321,15 @@ func (c *Client[TTx]) settle(workCtx context.Context, cl Claimed, s Settlement, 
 		}
 	case errors.Is(err, ErrClaimLost):
 		c.tel.recordFinish(ctx, cl, outcomeLost, d)
-		c.log.WarnContext(ctx, "jobs: claim lost before the result was recorded", jobAttrs2(cl)...)
+		c.log.WarnContext(ctx, "jobs: claim lost before the result was recorded", logAttrs(cl)...)
 	default:
 		c.log.ErrorContext(ctx, "jobs: recording the result failed; the job runs again when its lease lapses",
-			append(jobAttrs2(cl), log.Err(err))...)
+			append(logAttrs(cl), log.Err(err))...)
 	}
 }
 
 func (c *Client[TTx]) logFailure(ctx context.Context, cl Claimed, outcome string, err error) {
-	attrs := append(jobAttrs2(cl), log.String("outcome", outcome), log.Err(err))
+	attrs := append(logAttrs(cl), log.String("outcome", outcome), log.Err(err))
 	switch outcome {
 	case outcomeDiscarded:
 		c.log.ErrorContext(ctx, "jobs: job discarded after its last attempt", attrs...)

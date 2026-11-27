@@ -123,9 +123,7 @@ func WithPeriodic(p ...Periodic) Option {
 func WithPollInterval(d time.Duration) Option { return func(o *options) { o.poll = d } }
 
 // WithLease sets how long a claim lasts without renewal (default 30s, at
-// least 1s). It is renewed every lease/3 while the job runs. A shorter lease
-// recovers crashed jobs sooner, and a longer one tolerates longer database
-// pauses.
+// least 1s). It is renewed every lease/3 while the job runs.
 func WithLease(d time.Duration) Option { return func(o *options) { o.lease = d } }
 
 // WithRetryBackoff sets the delay before attempt n+1: base·2^(n-1) capped at

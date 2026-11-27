@@ -3,9 +3,9 @@
 // transaction as the data they belong to, and run by the worker with
 // github.com/dungnh3/kitchen/jobs.
 //
-// A task can run twice (after a crash or a lost lease), so it must be
-// idempotent. Return nil when done, an error to retry with backoff,
-// jobs.Cancel(err) to give up at once and jobs.Snooze(d) to run again later.
+// A task can run more than once for a job (after a crash or a lost lease).
+// Work returns nil when done, an error to retry with backoff,
+// jobs.Cancel(err) to give up at once, or jobs.Snooze(d) to run again later.
 // "zen add task <name>" adds a task.
 package task
 

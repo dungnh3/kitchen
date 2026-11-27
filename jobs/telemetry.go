@@ -100,8 +100,8 @@ func metricAttrs(c Claimed) metric.MeasurementOption {
 	return metric.WithAttributes(jobAttrs(c.Kind, c.Queue)...)
 }
 
-// jobAttrs2 are the log attributes of a claimed job. Args are never logged.
-func jobAttrs2(c Claimed) []any {
+// logAttrs are the log attributes of a claimed job. Args are never logged.
+func logAttrs(c Claimed) []any {
 	return []any{
 		log.Int64("job_id", c.ID), log.String("job_kind", c.Kind), log.String("queue", c.Queue),
 		log.Int("attempt", c.Attempt), log.Int("max_attempts", c.MaxAttempts),

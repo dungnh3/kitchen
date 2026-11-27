@@ -903,3 +903,20 @@ func TestLongErrorsAreCut(t *testing.T) {
 		}
 	})
 }
+
+func TestStateEnum(t *testing.T) {
+	for _, s := range jobs.States {
+		got, err := jobs.ParseState(s.String())
+		if err != nil || got != s || !s.Valid() {
+			t.Errorf("ParseState(%q) = %q, %v", s, got, err)
+		}
+	}
+	for _, bad := range []string{"", "Available", "done", "running "} {
+		if _, err := jobs.ParseState(bad); err == nil {
+			t.Errorf("ParseState(%q) accepted", bad)
+		}
+		if jobs.State(bad).Valid() {
+			t.Errorf("State(%q).Valid()", bad)
+		}
+	}
+}
